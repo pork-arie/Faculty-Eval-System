@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Admin Panel — Teacher Evaluation System</title>
+<link rel="stylesheet" href="../shared/css/styles.css"/>
+<link rel="stylesheet" href="admin-styles.css"/>
+
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyCUD1waV1kPYFKj1zRA7ANVjQkhdP7NJic",
+  authDomain: "studenteval-937f6.firebaseapp.com",
+  projectId: "studenteval-937f6",
+  storageBucket: "studenteval-937f6.firebasestorage.app",
+  messagingSenderId: "899672493371",
+  appId: "1:899672493371:web:600723b0d16bb879067b1e",
+  measurementId: "G-D5WD5LB2E5"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db     = firebase.firestore();
+const fbAuth = firebase.auth();
+
+function setData(key, val) {
+  localStorage.setItem(key, JSON.stringify(val));
+  syncCollectionToFirestore(key, val);
+}
+
+async function syncCollectionToFirestore(key, val) {
+  const MAP = {
+    students: 'students', teachers: 'teachers', subjects: 'subjects',
+    evaluations: 'evaluations', schoolYears: 'schoolYears',
+    auditLog: 'auditLog', evalPeriod: 'settings', adminCreds: 'settings'
+  };
+  const col = MAP[key];
+  if (!col) return;
+  try {
+    if (Array.isArray(val)) {
+      const batch = db.batch();
+      val.forEach(item => { if (item.id) batch.set(db.collection(col).doc(item.id), item); });
+      await batch.commit();
+    } else {
+      await db.collection(col).doc(key).set(val);
+    }
+  } catch(e) { console.warn('Firestore sync error:', e.message); }
+}
+
+async function loadFromFirebase() {
+  updateFirebaseStatus('loading');
+  try {
+    const collections = ['students','teachers','subjects','evaluations','schoolYears','auditLog'];
+    for (const col of collections) {
+      const snap = await db.collection(col).get();
+      if (!snap.empty) {
+        localStorage.setItem(col, JSON.stringify(snap.docs.map(d => ({id: d.id, ...d.data()}))));
+      }
+    }
+    const evalPeriodDoc = await db.collection('settings').doc('evalPeriod').get();
+    if (evalPeriodDoc.exists) localStorage.setItem('evalPeriod', JSON.stringify(evalPeriodDoc.data()));
+    const adminCredsDoc = await db.collection('settings').doc('adminCreds').get();
+    if (adminCredsDoc.exists) localStorage.setItem('adminCreds', JSON.stringify(adminCredsDoc.data()));
+    updateFirebaseStatus('connected');
+    renderDashboard();
+  } catch(e) {
+    console.warn('Firebase load failed, using local data:', e.message);
+    updateFirebaseStatus('error');
+    renderDashboard();
+  }
+}
+
+function updateFirebaseStatus(status) {
+  const el = document.getElementById('fbStatusBadge');
+  if (!el) return;
+  const cfg = {
+    loading:   { icon: '⏳', text: 'Connecting...', color: '#f59e0b' },
+    connected: { icon: '🔥', text: 'Firebase Live', color: '#16a34a' },
+    error:     { icon: '⚠️', text: 'Offline Mode',  color: '#dc2626' }
+  };
+  const c = cfg[status];
+  el.innerHTML = `<span style="color:${c.color};font-size:0.72rem;font-weight:600;">${c.icon} ${c.text}</span>`;
+}
+
+window.addEventListener('load', () => {
+  loadFromFirebase();
+});
+</script>
+
+<style>
+/* Only critical overrides that can't be in external CSS */
+#app { display: flex; min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="overlay-bg" id="sidebarOverlay" onclick="closeSidebar()"></div>
+
+  <aside class="sidebar" id="adminSidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-brand-text">
+        <h2>NwSSU Admin</h2>
+        <p>Faculty Evaluation System</p>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Main</div>
+      <div class="nav-item active" onclick="showPage('dashboard')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Dashboard
+      </div>
+      <div class="nav-item" onclick="showPage('schoolYear')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>School Year & Semester
+      </div>
+
+      <div class="nav-section-label">Management</div>
+      <div class="nav-item" onclick="showPage('students')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Students
+      </div>
+      <div class="nav-item" onclick="showPage('teachers')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Teachers
+      </div>
+      <div class="nav-item" onclick="showPage('subjects')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>Subjects
+      </div>
+
+      <div class="nav-item" id="nav-deptManage" onclick="showDeptManagePage()">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>Departments
+      </div>
+      <div class="nav-item" id="nav-feedback" onclick="showFeedbackPage()">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Feedback
+      </div>
+
+      <div class="nav-section-label">Evaluation</div>
+      <div class="nav-item" onclick="showPage('evalControl')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>Evaluation Control
+      </div>
+      <div class="nav-item" onclick="showPage('reports')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Reports & Analytics
+      </div>
+
+
+      <div class="nav-item" onclick="showPage('supervisor')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Supervisor Evaluation (SEF)
+      </div>
+
+      <div class="nav-item" onclick="showPage('auditLog')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Audit Log
+      </div>
+      
+      
+      <div class="nav-section-label">Departments</div>
+      <div class="nav-item dept-nav-item" onclick="showDeptPage('COED')" id="dept-COED">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+        <span>COED</span><span class="dept-tag">Education</span>
+      </div>
+      <div class="nav-item dept-nav-item" onclick="showDeptPage('CCJS')" id="dept-CCJS">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span>CCJS</span><span class="dept-tag">Criminology</span>
+      </div>
+      <div class="nav-item dept-nav-item" onclick="showDeptPage('CCIS')" id="dept-CCIS">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        <span>CCIS</span><span class="dept-tag">Computing</span>
+      </div>
+      <div class="nav-item dept-nav-item" onclick="showDeptPage('CON')" id="dept-CON">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <span>CON</span><span class="dept-tag">Nursing</span>
+      </div>
+      <div class="nav-item dept-nav-item" onclick="showDeptPage('CEA')" id="dept-CEA">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        <span>CEA</span><span class="dept-tag">Engineering</span>
+      </div>
+      <div class="nav-item dept-nav-item" onclick="showDeptPage('COM')" id="dept-COM">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        <span>COM</span><span class="dept-tag">Management</span>
+      </div>
+      <div class="nav-item dept-nav-item" onclick="showDeptPage('CAT')" id="dept-CAT">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+        <span>CAT</span><span class="dept-tag">Agriculture & Tech</span>
+      </div>
+
+      <!-- ADD THIS RIGHT AFTER CAT -->
+<div class="nav-item dept-nav-item" onclick="showDeptPage('GS')" id="dept-GS">
+    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+    <span>GS</span><span class="dept-tag">Graduate School</span>
+</div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div id="fbStatusBadge" style="padding:6px 10px 8px;"><span style="color:#f59e0b;font-size:0.72rem;font-weight:600;">⏳ Initializing...</span></div>
+      <button class="logout-btn" onclick="doLogout()">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Logout
+      </button>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+      <button class="mobile-menu-btn" onclick="toggleSidebar()">
+        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-header"><div class="page-title"><h1>Dashboard</h1><p>Overview of the teacher evaluation system</p></div></div>
+      <div class="stats-grid" id="dashStats"></div>
+      <div class="period-card" id="dashPeriodCard"></div>
+    </div>
+
+    <!-- SCHOOL YEAR -->
+    <div class="page" id="page-schoolYear">
+      <div class="page-header">
+        <div class="page-title"><h1>School Year & Semester</h1><p>Manage academic periods</p></div>
+        <button class="btn btn-primary" onclick="openModal('addSYModal')">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add School Year
+        </button>
+      </div>
+      <div id="syList"></div>
+    </div>
+
+    <!-- STUDENTS - Grouped by Department with dept filter -->
+    <div class="page" id="page-students">
+      <div class="page-header">
+        <div class="page-title"><h1>Student Management</h1><p>Add, edit, and manage student accounts</p></div>
+        <button class="btn btn-primary" onclick="openAddStudentModal()">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Student
+        </button>
+      </div>
+      <div class="card"><div class="card-body">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+          <div class="search-box" style="flex:1;min-width:200px;margin-bottom:0;">
+            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" placeholder="Search by name, ID, or department..." oninput="renderStudents(this.value)"/>
+          </div>
+        </div>
+        <div id="studentDeptFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID Number</th>
+                <th>Name</th>
+                <th>Year</th>
+                <th>Section</th>
+                <th>Department</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="studentsTbody"></tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- TEACHERS - Fixed with correct columns -->
+    <div class="page" id="page-teachers">
+      <div class="page-header">
+        <div class="page-title"><h1>Teacher Management</h1><p>Add, edit, and manage teacher records</p></div>
+        <button class="btn btn-primary" onclick="openAddTeacherModal()">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Teacher
+        </button>
+      </div>
+      <div class="card"><div class="card-body">
+        <div class="search-box">
+          <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="Search by name or ID..." oninput="renderTeachers(this.value)"/>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Department</th>
+                <th>Subjects</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="teachersTbody"></tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- SUBJECTS - Fixed with correct columns -->
+    <div class="page" id="page-subjects">
+      <div class="page-header">
+        <div class="page-title"><h1>Subject Management</h1><p>Manage subjects and enrollments</p></div>
+        <button class="btn btn-primary" onclick="openAddSubjectModal()">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Subject
+        </button>
+      </div>
+      <div class="card"><div class="card-body">
+        <div class="search-box">
+          <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="Search subjects..." oninput="renderSubjects(this.value)"/>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Subject Name</th>
+                <th>Department</th>
+                <th>Teacher</th>
+                <th>Enrolled</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="subjectsTbody"></tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- EVAL CONTROL -->
+    <div class="page" id="page-evalControl">
+      <div class="page-header"><div class="page-title"><h1>Evaluation Control</h1><p>Manage periods and track submissions</p></div></div>
+      <div id="evalControlContent"></div>
+    </div>
+
+    <!-- REPORTS -->
+    <div class="page" id="page-reports">
+      <div class="page-header">
+        <div class="page-title"><h1>Reports & Analytics</h1><p>View teacher ratings and evaluation results</p></div>
+        <button class="btn btn-ghost" onclick="exportReport()">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV
+        </button>
+      </div>
+      <div id="reportsContent"></div>
+    </div>
+
+    <!-- supervisor-->
+     <div class="page" id="page-supervisor">
+      <div class="page-header">
+        <div class="page-title">
+          <h1>Supervisor Management</h1>
+          <p>Mandatory professional competency evaluations per CMO 19 Annex B</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <div class="search-box">
+            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" placeholder="Search faculty by name..." oninput="renderSupervisorList(this.value)"/>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Faculty Name</th>
+                  <th>Department</th>
+                  <th>Last SEF Rating</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="supervisorTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AUDIT LOG -->
+    <div class="page" id="page-auditLog">
+      <div class="page-header"><div class="page-title"><h1>Audit Log</h1><p>Track all administrative actions</p></div></div>
+      <div class="card"><div class="card-body">
+        <div class="search-box">
+          <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="Search audit logs..." oninput="renderAuditLog(this.value)"/>
+        </div>
+        <div id="auditLogList"></div>
+      </div></div>
+    </div>
+
+    <!-- DEPARTMENTS PAGE -->
+    <div class="page" id="page-dept">
+      <div class="page-header">
+        <div class="page-title">
+          <h1 id="deptPageTitle">Department</h1>
+          <p id="deptPageSubtitle">View teachers, subjects, and evaluations for this department</p>
+        </div>
+      </div>
+      <div class="dept-banner dept-CCIS" id="deptBanner">
+        <div class="dept-banner-icon" id="deptBannerIcon">🏫</div>
+        <div class="dept-banner-info">
+          <h2 id="deptBannerName">Department</h2>
+          <p id="deptBannerDesc">Loading...</p>
+        </div>
+      </div>
+      <div class="dept-stats-row" id="deptStatsRow"></div>
+      <div class="dept-grid">
+        <div class="dept-table-section">
+          <div class="dept-table-header">
+            <h4> Teachers</h4>
+            <span class="count-badge" id="deptTeacherCount">0</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>ID</th><th>Name</th><th>Status</th><th>Avg Score</th></tr>
+              </thead>
+              <tbody id="deptTeachersTbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="dept-table-section">
+          <div class="dept-table-header">
+            <h4> Subjects</h4>
+            <span class="count-badge" id="deptSubjectCount">0</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Code</th><th>Name</th><th>Enrolled</th></tr>
+              </thead>
+              <tbody id="deptSubjectsTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DEPARTMENT MANAGEMENT PAGE -->
+    <div class="page" id="page-deptManage">
+      <div class="page-header">
+        <div class="page-title"><h1>Department Management</h1><p>Create and manage college departments</p></div>
+      </div>
+
+      <!-- Add New Department Form -->
+      <div class="card" style="margin-bottom:24px;">
+        <div class="card-header-bar" style="padding:16px 20px 0;">
+          <h3 style="font-size:1rem;font-weight:700;margin:0 0 4px;">Add New Department</h3>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Department Code <span style="color:var(--danger)">*</span></label>
+              <input class="form-control" id="dmCode" placeholder="e.g. CAS" style="text-transform:uppercase;"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Full Name <span style="color:var(--danger)">*</span></label>
+              <input class="form-control" id="dmName" placeholder="e.g. College of Arts & Sciences"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Short Name</label>
+              <input class="form-control" id="dmShort" placeholder="e.g. CAS"/>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Icon / Emoji</label>
+              <input class="form-control" id="dmIcon" placeholder="🏛️ or emoji"/>
+            </div>
+            <div class="form-group" style="flex:2;">
+              <label class="form-label">Description</label>
+              <input class="form-control" id="dmDesc" placeholder="Short description of this college/department"/>
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="saveDeptFromManagePage()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Department
+          </button>
+        </div>
+      </div>
+
+      <!-- Department Cards Grid -->
+      <div id="deptManageGrid" class="dept-manage-grid"></div>
+    </div>
+
+    <!-- FEEDBACK PAGE -->
+    <div class="page" id="page-feedback">
+      <div class="page-header">
+        <div class="page-title"><h1>Student Feedback</h1><p>Student comments submitted during instructor evaluations</p></div>
+        <div id="feedbackStats"></div>
+      </div>
+
+      <!-- Dept filter pills -->
+      <div id="feedbackDeptBar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;"></div>
+
+      <!-- Search -->
+      <div class="search-box" style="margin-bottom:20px;">
+        <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" placeholder="Search by teacher, student, or subject..." oninput="filterFeedback(null, this.value)"/>
+      </div>
+
+      <div id="feedbackList"></div>
+    </div>
+
+    <!-- MODALS -->
+    <div class="modal-overlay" id="addSYModal">
+      <div class="modal">
+        <div class="modal-header"><h3>Add School Year</h3><button class="modal-close" onclick="closeModal('addSYModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="modal-body"><div class="form-group"><label class="form-label">School Year</label><input class="form-control" id="syYearInput" placeholder="2025-2026"/></div></div>
+        <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('addSYModal')">Cancel</button><button class="btn btn-primary" onclick="addSchoolYear()">Add</button></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="addStudentModal">
+      <div class="modal">
+        <div class="modal-header"><h3 id="studentModalTitle">Add Student</h3><button class="modal-close" onclick="closeModal('addStudentModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ID Number</label><input class="form-control" id="stuId" placeholder="2024001"/></div>
+            <div class="form-group"><label class="form-label">Full Name</label><input class="form-control" id="stuName" placeholder="Juan dela Cruz"/></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Year Level</label><select class="form-control" id="stuYear"><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>4th Year</option></select></div>
+            <div class="form-group"><label class="form-label">Section</label><input class="form-control" id="stuSection" placeholder="A"/></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Department</label>
+            <select class="form-control" id="stuDept">
+              <option value="">-- Select Department --</option>
+              <option value="COED">COED — College of Education</option>
+              <option value="CCJS">CCJS — Criminal Justice & Safety</option>
+              <option value="CCIS">CCIS — Computing & Information Sciences</option>
+              <option value="CON">CON — College of Nursing</option>
+              <option value="CEA">CEA — Engineering & Architecture</option>
+              <option value="COM">COM — College of Management</option>
+              <option value="CAT">CAT — Agriculture & Technology</option>
+              <option value="GS">GS — Graduate School</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">Password (default: ID number)</label><input class="form-control" id="stuPass" placeholder="Leave blank to use ID number"/></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('addStudentModal')">Cancel</button><button class="btn btn-primary" id="saveStudentBtn" onclick="saveStudent()">Add Student</button></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="resetPassModal">
+      <div class="modal">
+        <div class="modal-header"><h3>Reset Password</h3><button class="modal-close" onclick="closeModal('resetPassModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="modal-body">
+          <p style="font-size:0.82rem;color:var(--muted);margin-bottom:16px;">Resetting for: <strong id="resetPassName"></strong></p>
+          <div class="form-group"><label class="form-label">New Password</label><input class="form-control" id="resetPassInput" placeholder="Enter new password"/></div>
+          <div class="form-group" style="margin-bottom:0"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.82rem;font-weight:500;"><input type="checkbox" id="forceResetCheck" style="accent-color:var(--primary)"/>Force student to change password on next login</label></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('resetPassModal')">Cancel</button><button class="btn btn-primary" onclick="saveResetPass()">Reset</button></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="addTeacherModal">
+      <div class="modal">
+        <div class="modal-header"><h3 id="teacherModalTitle">Add Teacher</h3><button class="modal-close" onclick="closeModal('addTeacherModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Teacher ID</label><input class="form-control" id="tchId" placeholder="T001"/></div>
+            <div class="form-group"><label class="form-label">Full Name</label><input class="form-control" id="tchName" placeholder="Prof. Juan Santos"/></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Department</label>
+            <select class="form-control" id="tchDept">
+              <option value="">-- Select Department --</option>
+              <option value="COED">COED — College of Education</option>
+              <option value="CCJS">CCJS — Criminal Justice & Safety</option>
+              <option value="CCIS">CCIS — Computing & Information Sciences</option>
+              <option value="CON">CON — College of Nursing</option>
+              <option value="CEA">CEA — Engineering & Architecture</option>
+              <option value="COM">COM — College of Management</option>
+              <option value="CAT">CAT — Agriculture & Technology</option>
+              <option value="GS">GS — Graduate School</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('addTeacherModal')">Cancel</button><button class="btn btn-primary" id="saveTeacherBtn" onclick="saveTeacher()">Add Teacher</button></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="addSubjectModal">
+      <div class="modal">
+        <div class="modal-header"><h3 id="subjectModalTitle">Add Subject</h3><button class="modal-close" onclick="closeModal('addSubjectModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Subject Code</label><input class="form-control" id="subCode" placeholder="CS301"/></div>
+            <div class="form-group"><label class="form-label">Subject Name</label><input class="form-control" id="subName" placeholder="Data Structures"/></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Department</label>
+            <select class="form-control" id="subDept">
+              <option value="">-- Select Department --</option>
+              <option value="COED">COED — College of Education</option>
+              <option value="CCJS">CCJS — Criminal Justice & Safety</option>
+              <option value="CCIS">CCIS — Computing & Information Sciences</option>
+              <option value="CON">CON — College of Nursing</option>
+              <option value="CEA">CEA — Engineering & Architecture</option>
+              <option value="COM">COM — College of Management</option>
+              <option value="CAT">CAT — Agriculture & Technology</option>
+              <option value="GS">GS — Graduate School</option>
+            </select>
+          </div>
+
+          <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Load Type</label>
+          <select class="form-control" id="subLoad">
+            <option value="Regular">Regular Load</option>
+            <option value="Overload">Overload</option>
+          </select>
+        </div>
+        <div class="form-group" style="display:flex; align-items:flex-end; padding-bottom:10px;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.8rem; font-weight:600;">
+            <input type="checkbox" id="subIsLab" style="accent-color:var(--primary)"> Laboratory School Class
+          </label>
+        </div>
+      </div>
+
+          <div class="form-group"><label class="form-label">Assign Teacher</label><select class="form-control" id="subTeacher"><option value="">-- Select Teacher --</option></select></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('addSubjectModal')">Cancel</button><button class="btn btn-primary" id="saveSubjectBtn" onclick="saveSubject()">Add Subject</button></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="enrollModal">
+      <div class="modal modal-lg">
+        <div class="modal-header"><h3>Manage Enrollment</h3><button class="modal-close" onclick="closeModal('enrollModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="modal-body">
+          <p style="font-size:0.82rem;color:var(--muted);margin-bottom:14px;">Subject: <strong id="enrollSubjectName"></strong></p>
+          <div id="enrollDeptFilter"></div>
+          <div class="search-box" style="margin-bottom:10px;">
+            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="enrollSearchInput" placeholder="Search students..." oninput="filterEnrollList(this.value)"/>
+          </div>
+          <div style="max-height:280px;overflow-y:auto;"><ul class="checklist" id="enrollList"></ul></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('enrollModal')">Cancel</button><button class="btn btn-primary" onclick="saveEnrollment()">Save Enrollment</button></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="confirmModal">
+      <div class="modal confirm-modal">
+        <div class="modal-body" style="text-align:center;padding:28px 24px;">
+          <div class="confirm-icon" style="background:var(--danger-light);"><svg width="24" height="24" fill="none" stroke="var(--danger)" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></div>
+          <h3 style="margin-bottom:8px;" id="confirmTitle">Delete Record</h3>
+          <p style="font-size:0.82rem;color:var(--muted);" id="confirmMsg"></p>
+        </div>
+        <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('confirmModal')">Cancel</button><button class="btn btn-danger" id="confirmActionBtn">Delete</button></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="viewReportModal">
+      <div class="modal modal-lg">
+        <div class="modal-header"><h3 id="reportModalTitle">Teacher Report</h3><button class="modal-close" onclick="closeModal('viewReportModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+        <div class="modal-body" id="reportModalBody"></div>
+      </div>
+    </div>
+
+    <!-- DEPT ENROLLED STUDENTS MODAL -->
+    <div class="modal-overlay" id="deptEnrolledModal">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <div>
+            <h3 id="deptEnrolledTitle">Enrolled Students</h3>
+            <span id="deptEnrolledCount" style="font-size:0.75rem;color:var(--muted);font-weight:500;"></span>
+          </div>
+          <button class="modal-close" onclick="closeModal('deptEnrolledModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <div class="search-box" style="margin-bottom:12px;">
+            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" placeholder="Search by name, ID, year, or section..." oninput="filterDeptEnrolledStudents(this.value)"/>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID Number</th>
+                  <th>Name</th>
+                  <th>Year</th>
+                  <th>Section</th>
+                  <th>Enrolled Subjects</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="deptEnrolledTbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('deptEnrolledModal')">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="../shared/js/data.js"></script>
+    <script src="admin.js"></script>
+    <script src="admindept.js"></script>
+    <script src="adminrate.js"></script>
+    <script src="adminEval.js"></script>
+    <script src="adminfeatures.js"></script>
+    
+  </main>
+</div>
+</body>
+</html>
