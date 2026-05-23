@@ -152,6 +152,8 @@ if (cfg.icon && (cfg.icon.includes('.jpg') || cfg.icon.includes('.png') || cfg.i
   document.getElementById('deptBannerDesc').textContent = cfg.desc;
 
   const allTeachers = getData('teachers', []).filter(t => !t.deleted && t.dept === deptCode);
+  const regularTeachers = allTeachers.filter(t => (t.facultyType || 'regular') !== 'supervisor');
+  const deptSupervisors = allTeachers.filter(t => t.facultyType === 'supervisor');
   const allSubjects = getData('subjects', []).filter(s => s.dept === deptCode);
   const allEvals    = getData('evaluations', []);
   const allStudents = getData('students', []).filter(s => !s.deleted);
@@ -165,23 +167,25 @@ if (cfg.icon && (cfg.icon.includes('.jpg') || cfg.icon.includes('.png') || cfg.i
 
 ///future me kung malimot ka style="background:#fff7ed sudsadi ang pag edit sa bg san icon
   document.getElementById('deptStatsRow').innerHTML = `
-    <div class="dept-stat"><div class="dept-stat-icon" style="background:;"><img src ="../icons/teacher.png" width="28" height="28" alt="Teachers"></div><div><div class="dept-stat-val">${allTeachers.length}</div><div class="dept-stat-label">Teachers</div></div></div>
+    <div class="dept-stat"><div class="dept-stat-icon" style="background:;"><img src ="../icons/teacher.png" width="28" height="28" alt="Teachers"></div><div><div class="dept-stat-val">${regularTeachers.length}</div><div class="dept-stat-label">Teachers</div></div></div>
     <div class="dept-stat"><div class="dept-stat-icon" style="background:;"><img src ="../icons/subject.png" width="28" height="28" alt="Subjects"></div><div><div class="dept-stat-val">${allSubjects.length}</div><div class="dept-stat-label">Subjects</div></div></div>
     <div class="dept-stat"><div class="dept-stat-icon" style="background:;"><img src ="../icons/enrolled.png" width="28" height="28" alt="Enrolled"></div><div><div class="dept-stat-val">${totalEnrolled}</div><div class="dept-stat-label">Enrolled Students</div></div></div>
     <div class="dept-stat"><div class="dept-stat-icon" style="background:;"><img src ="../icons/evaluate.png" width="28" height="28" alt="Evalaute"></div><div><div class="dept-stat-val">${deptEvals.length}</div><div class="dept-stat-label">Evaluations</div></div></div>
   `;
 
-  document.getElementById('deptTeacherCount').textContent = allTeachers.length;
-  document.getElementById('deptTeachersTbody').innerHTML = allTeachers.length
-    ? allTeachers.map(t => {
+  document.getElementById('deptTeacherCount').textContent = regularTeachers.length;
+  document.getElementById('deptTeachersTbody').innerHTML = regularTeachers.length
+    ? regularTeachers.map(t => {
         const tSubs = getData('subjects', []).filter(s => s.teacherId === t.id);
         const tEvals = allEvals.filter(e => tSubs.some(s => s.id === e.subjectId));
-        const rating = calculateFinalRating(t.id);
+        const setSc = calculateWeightedSETRating(t.id);
+        const sefEvs = getData('evaluations', []).filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
+        const sefSc = sefEvs.length > 0 ? sefEvs[sefEvs.length-1].totalScore.toFixed(2) : null;
         return `<tr>
           <td><span style="font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;">${escapeHtml(t.tid)}</span></td>
           <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong></td>
           <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
-          <td><strong style="font-size:0.82rem;">${rating.finalRating}%</strong></td>
+          <td><strong style="font-size:0.82rem;">SET: ${setSc}% | SEF: ${sefSc ? sefSc + '%' : 'N/A'}</strong></td>
           <td>
            <button class="btn btn-ghost btn-sm" onclick="softDeleteTeacher('${t.id}')" title="Archive">🗑️</button>
            </div>
@@ -189,6 +193,34 @@ if (cfg.icon && (cfg.icon.includes('.jpg') || cfg.icon.includes('.png') || cfg.i
         </tr>`;
       }).join('')
     : `<tr><td colspan="5" style="text-align:center;padding:24px;">No teachers found.</td></tr>`;
+
+  // ===== DEPARTMENT SUPERVISORS SECTION =====
+  const deptSupervisorEl = document.getElementById('deptSupervisorsSection');
+  if (deptSupervisorEl) {
+    if (deptSupervisors.length > 0) {
+      deptSupervisorEl.style.display = '';
+      document.getElementById('deptSupervisorCount').textContent = deptSupervisors.length;
+      document.getElementById('deptSupervisorsTbody').innerHTML = deptSupervisors.map(t => {
+        const roleLabel = t.deptRole === 'dean' ? '🎓 Dean' : t.deptRole === 'chairperson' ? '🪑 Chairperson' : '👤 Supervisor';
+        const roleColor = t.deptRole === 'dean' ? '#7c3aed' : t.deptRole === 'chairperson' ? '#0369a1' : '#374151';
+        const sefEvs = getData('evaluations', []).filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
+        const sefCount = sefEvs.length;
+        return `<tr>
+          <td><span style="font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;">${escapeHtml(t.tid)}</span></td>
+          <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong></td>
+          <td><span style="font-size:0.75rem;font-weight:600;color:${roleColor};">${roleLabel}</span></td>
+          <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
+          <td><span style="font-size:0.78rem;">${sefCount} SEF rating${sefCount !== 1 ? 's' : ''} given</span></td>
+          <td>
+            <button class="btn btn-ghost btn-sm" onclick="openSEFModal('${t.id}')" title="Conduct SEF">📋 SEF</button>
+            <button class="btn btn-ghost btn-sm" onclick="softDeleteTeacher('${t.id}')" title="Archive">🗑️</button>
+          </td>
+        </tr>`;
+      }).join('');
+    } else {
+      deptSupervisorEl.style.display = 'none';
+    }
+  }
 
   document.getElementById('deptSubjectCount').textContent = allSubjects.length;
   document.getElementById('deptSubjectsTbody').innerHTML = allSubjects.length

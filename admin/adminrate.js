@@ -122,16 +122,19 @@ window.checkAndAutoFinalize = function() {
     }
 };
 
-// Generate final reports for all faculty
+// Generate final reports for all faculty (CMO 19: SET and SEF displayed separately)
 window.generateFinalReports = function() {
     const teachers = getData('teachers', []).filter(t => !t.deleted);
     const finalReports = teachers.map(teacher => {
-        const rating = calculateFinalRating(teacher.id);
+        const setSc = calculateWeightedSETRating(teacher.id);
+        const sefEvs = getData('evaluations', []).filter(e => e.teacherId === teacher.id && e.evaluatorType === 'supervisor');
+        const sefSc = sefEvs.length > 0 ? sefEvs[sefEvs.length-1].totalScore.toFixed(2) : null;
         return {
             teacherId: teacher.id,
             teacherName: teacher.name,
             teacherDept: teacher.dept,
-            ...rating,
+            setSET: setSc,
+            sefSEF: sefSc,
             generatedAt: new Date().toISOString()
         };
     });
@@ -185,25 +188,67 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Patch saveTeacher to include dept field
 const _origSaveTeacher = window.saveTeacher;
+// Patch saveTeacher to include dept field and properly handle supervisors
+// Patch saveTeacher to perfectly preserve supervisor state and refresh both tables
 window.saveTeacher = function() {
   const tid  = document.getElementById('tchId').value.trim();
   const name = document.getElementById('tchName').value.trim();
   const dept = document.getElementById('tchDept') ? document.getElementById('tchDept').value : '';
+  
+  // Read from the global tracking variable initialized by modal setup
+  const facultyType = window._pendingFacultyType || 'regular';
+  const deptRole = document.getElementById('tchDeptRole') ? document.getElementById('tchDeptRole').value : '';
+  
   if (!tid || !name) { showToast('Fill all fields.', 'error'); return; }
   const teachers = getData('teachers', []);
+  
   if (typeof editTeacherId !== 'undefined' && editTeacherId) {
     const idx = teachers.findIndex(t => t.id === editTeacherId);
-    teachers[idx].tid = tid; teachers[idx].name = name; teachers[idx].dept = dept;
-    addAudit('Edit Teacher', `Updated: ${name} (${tid}) — Dept: ${dept||'None'}`);
-    showToast('Teacher updated!', 'success');
+    teachers[idx].tid = tid; 
+    teachers[idx].name = name; 
+    teachers[idx].dept = dept;
+    teachers[idx].facultyType = facultyType; 
+    teachers[idx].deptRole = deptRole;
+    addAudit('Edit Teacher', `Updated: ${name} (${tid}) — Role: ${facultyType}`);
+    showToast('Record updated successfully!', 'success');
   } else {
-    teachers.push({ id: 'tch'+Date.now(), tid, name, dept, status:'active', deleted:false });
-    addAudit('Add Teacher', `Added: ${name} (${tid}) — Dept: ${dept||'None'}`);
-    showToast('Teacher added!', 'success');
+    if (teachers.find(t => t.tid === tid && !t.deleted)) {
+      showToast('Teacher ID already exists.', 'error');
+      return;
+    }
+
+    const newTeacher = { 
+      id: 'tch'+Date.now(), 
+      tid, 
+      name, 
+      dept, 
+      facultyType, 
+      deptRole, 
+      status:'active', 
+      deleted:false 
+    };
+    
+    // Auto-assign their Teacher ID as password for their dedicated login portal
+    if (facultyType === 'supervisor') {
+      newTeacher.password = tid; 
+    }
+    
+    teachers.push(newTeacher);
+    addAudit('Add Teacher', `Added ${facultyType}: ${name} (${tid})`);
+    showToast(facultyType === 'supervisor' ? `Supervisor Added! Portal PW set to: ${tid}` : 'Faculty added successfully!', 'success');
   }
+  
   setData('teachers', teachers);
   closeModal('addTeacherModal');
-  renderTeachers();
+  
+  // Clear layout filters
+  const teacherDeptBar = document.getElementById('teacherDeptFilterBar');
+  if (teacherDeptBar) teacherDeptBar.dataset.active = '';
+  const supervisorDeptBar = document.getElementById('supervisorDeptFilterBar');
+  if (supervisorDeptBar) supervisorDeptBar.dataset.active = '';
+
+  // Force synchronous UI updates for both tables
+  if (typeof window.renderTeachers === 'function') window.renderTeachers();
 };
 
 // Patch saveSubject to include dept field
@@ -436,11 +481,17 @@ if (typeof window.renderStudents === 'function') {
 }
 
 // Fix renderTeachers
+// Fix renderTeachers: Group Regular Faculty by Department and exclude Supervisors
 if (typeof window.renderTeachers === 'function') {
     window.renderTeachers = function(search = '') {
         const teachers = getData('teachers', []).filter(t => !t.deleted);
         const subjects = getData('subjects', []);
-        const filtered = teachers.filter(t => 
+        
+        // 1. CRITICAL: Filter out supervisors so they don't appear in the Faculty table
+        const regularFaculty = teachers.filter(t => t.facultyType !== 'supervisor');
+        
+        // 2. Apply Search Filter
+        const filtered = regularFaculty.filter(t => 
             t.name.toLowerCase().includes(search.toLowerCase()) || 
             t.tid.toLowerCase().includes(search.toLowerCase())
         );
@@ -449,28 +500,83 @@ if (typeof window.renderTeachers === 'function') {
         if (!tbody) return;
 
         if (!filtered.length) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;">No teachers found.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">No regular faculty found.</td></tr>';
             return;
         }
 
-        tbody.innerHTML = filtered.map(t => {
-            const teacherSubs = subjects.filter(s => s.teacherId === t.id);
-            const deptDisplay = t.dept && DEPT_NAMES[t.dept] ? DEPT_NAMES[t.dept] : (t.dept || '—');
-            
-            return `<tr>
-                <td><span style="font-family:monospace;">${escapeHtml(t.tid)}</span></td>
-                <td><strong>${escapeHtml(t.name)}</strong></td>
-                <td><span class="dept-tag-inline">${escapeHtml(deptDisplay)}</span></td>
-                <td><span class="badge">${teacherSubs.length} Subjects</span></td>
-                <td><span class="badge ${t.status === 'active' ? 'badge-success' : 'badge-danger'}">${t.status}</span></td>
-                <td>
-                    <div class="td-actions" style="display:flex;gap:6px;">
-                        <button class="btn btn-ghost btn-sm" onclick="openEditTeacherModal('${t.id}')">✏️</button>
-                        <button class="btn btn-ghost btn-sm" onclick="deleteTeacher('${t.id}')">🗑️</button>
+        // 3. Group Regular Faculty by Department
+        const groupedByDept = {};
+        filtered.forEach(t => {
+            const deptKey = t.dept || 'UNASSIGNED';
+            if (!groupedByDept[deptKey]) groupedByDept[deptKey] = [];
+            groupedByDept[deptKey].push(t);
+        });
+
+        // 4. Generate HTML with Department Category Headers
+        let html = '';
+        const DEPT_NAMES = {
+            COED: 'College of Education',
+            CCJS: 'Criminal Justice & Safety',
+            CCIS: 'Computing & Information Sciences',
+            CON: 'College of Nursing',
+            CEA: 'Engineering & Architecture',
+            COM: 'College of Management',
+            CAT: 'Agriculture & Technology',
+            GS: 'Graduate School',
+            UNASSIGNED: 'Unassigned Department'
+        };
+
+        // Sort depts in known order
+        const deptOrder = ['COED','CCJS','CCIS','CON','CEA','COM','CAT','GS','UNASSIGNED'];
+        const sortedDepts = [
+            ...deptOrder.filter(d => groupedByDept[d]),
+            ...Object.keys(groupedByDept).filter(d => !deptOrder.includes(d))
+        ];
+
+        sortedDepts.forEach(deptCode => {
+            const facultyList = groupedByDept[deptCode];
+            const deptLabel = DEPT_NAMES[deptCode] || deptCode;
+
+            // Department group header row — matches student grouping style
+            html += `
+            <tr class="dept-group-header-row">
+                <td colspan="6">
+                    <div class="dept-group-header">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        <span>${escapeHtml(deptLabel)}</span>
+                        <span class="dept-group-count">${facultyList.length} teacher${facultyList.length !== 1 ? 's' : ''}</span>
                     </div>
                 </td>
             </tr>`;
-        }).join('');
+
+            facultyList.forEach(t => {
+                const teacherSubs = subjects.filter(s => s.teacherId === t.id);
+                html += `
+                <tr class="dept-group-student-row">
+                    <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
+                    <td><strong>${escapeHtml(t.name)}</strong></td>
+                    <td><span class="dept-tag-inline">${escapeHtml(deptCode)}</span></td>
+                    <td><span class="badge badge-primary">${teacherSubs.length} Subject${teacherSubs.length !== 1 ? 's' : ''}</span></td>
+                    <td><span class="badge ${t.status === 'active' ? 'badge-success' : 'badge-danger'}">${t.status}</span></td>
+                    <td>
+                        <div class="td-actions">
+                            <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditTeacherModal('${t.id}')" title="Edit"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+                            <button class="btn btn-ghost btn-icon btn-sm" onclick="openSEFModal('${t.id}')" title="Conduct SEF">📋</button>
+                            <button class="btn btn-ghost btn-icon btn-sm" onclick="showAnnexDReport('${t.id}')" title="View Annex D">📄</button>
+                            <button class="btn btn-ghost btn-icon btn-sm" onclick="toggleTeacherStatus('${t.id}')" title="Toggle Status"><svg width="14" height="14" fill="none" stroke="${t.status === 'active' ? 'var(--muted)' : 'var(--success)'}" stroke-width="2" viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 11-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
+                            <button class="btn btn-ghost btn-icon btn-sm" onclick="deleteTeacher('${t.id}')" title="Delete"><svg width="14" height="14" fill="none" stroke="var(--danger)" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>
+                        </div>
+                    </td>
+                </tr>`;
+            });
+        });
+        
+        tbody.innerHTML = html;
+        
+        // 5. Always trigger the supervisor table update alongside this one
+        if (typeof window.renderSupervisorTable === 'function') {
+            window.renderSupervisorTable();
+        }
     };
 }
 

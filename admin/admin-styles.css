@@ -2,6 +2,74 @@
 .dept-GS { background: linear-gradient(135deg, #4c1d95, #8b5cf6); }
 .dept-custom { background: linear-gradient(135deg, #0f766e, #14b8a6); }
 
+/* ============================================================
+   TEACHER EXPANDABLE ROW STYLES
+   ============================================================ */
+.teacher-row {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.teacher-row:hover {
+    background: var(--primary-light);
+}
+
+.teacher-details-row td {
+    padding: 0 !important;
+}
+
+.teacher-details-cell {
+    padding: 0 !important;
+}
+
+.teacher-details-container {
+    background: #f8fafc;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    animation: fadeIn 0.2s ease;
+}
+
+/* Report teacher row hover (Annex D click) */
+.report-teacher-row {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.report-teacher-row:hover {
+    background: var(--primary-light);
+}
+
+/* ============================================================
+   ANNEX D PRINT STYLES
+   ============================================================ */
+@media print {
+    .sidebar,
+    .page-header,
+    .btn,
+    .modal-close,
+    .sidebar-footer,
+    .mobile-menu-btn {
+        display: none !important;
+    }
+    .main-content {
+        margin-left: 0 !important;
+        padding: 0 !important;
+    }
+    .modal-overlay {
+        position: relative !important;
+        display: block !important;
+        background: white !important;
+    }
+    .modal {
+        position: relative !important;
+        transform: none !important;
+        margin: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        box-shadow: none !important;
+    }
+}
+
 /* Department tag inline */
 .dept-tag-inline {
     display: inline-block;
@@ -1077,4 +1145,45 @@ body::before {
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .dept-manage-grid { grid-template-columns: 1fr; }
+}
+/* ===== DEPT FILTER PILLS (Students / Teachers / Subjects) ===== */
+.dept-filter-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 14px;
+    border-radius: 20px;
+    border: 1.5px solid var(--border);
+    background: #fff;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.dept-filter-pill:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: var(--primary-light, #eff6ff);
+}
+
+.dept-filter-pill.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(37,99,235,0.18);
+}
+
+.dept-filter-pill .dept-filter-count {
+    background: rgba(0,0,0,0.1);
+    border-radius: 10px;
+    padding: 1px 6px;
+    font-size: 0.68rem;
+}
+
+.dept-filter-pill.active .dept-filter-count {
+    background: rgba(255,255,255,0.3);
 }

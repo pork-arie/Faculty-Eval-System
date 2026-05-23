@@ -44,7 +44,7 @@ async function syncCollectionToFirestore(key, val) {
   try {
     if (Array.isArray(val)) {
       const batch = db.batch();
-      val.forEach(item => { if (item.id) batch.set(db.collection(col).doc(item.id), item); });
+      val.forEach(item => { if (item.id) batch.set(db.collection(col).doc(item.id), item, { merge: true }); });
       await batch.commit();
     } else {
       await db.collection(col).doc(key).set(val);
@@ -59,7 +59,13 @@ async function loadFromFirebase() {
     for (const col of collections) {
       const snap = await db.collection(col).get();
       if (!snap.empty) {
-        localStorage.setItem(col, JSON.stringify(snap.docs.map(d => ({id: d.id, ...d.data()}))));
+        const docs = snap.docs.map(d => {
+          const data = {id: d.id, ...d.data()};
+          // Ensure teachers always have a facultyType field (old records may lack it)
+          if (col === 'teachers' && !data.facultyType) data.facultyType = 'regular';
+          return data;
+        });
+        localStorage.setItem(col, JSON.stringify(docs));
       }
     }
     const evalPeriodDoc = await db.collection('settings').doc('evalPeriod').get();
@@ -144,9 +150,7 @@ window.addEventListener('load', () => {
       </div>
 
 
-      <div class="nav-item" onclick="showPage('supervisor')">
-        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Supervisor Evaluation (SEF)
-      </div>
+
 
       <div class="nav-item" onclick="showPage('auditLog')">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Audit Log
@@ -209,6 +213,7 @@ window.addEventListener('load', () => {
     <div class="page active" id="page-dashboard">
       <div class="page-header"><div class="page-title"><h1>Dashboard</h1><p>Overview of the teacher evaluation system</p></div></div>
       <div class="stats-grid" id="dashStats"></div>
+      <div id="dashDeptRatings"></div>
       <div class="period-card" id="dashPeriodCard"></div>
     </div>
 
@@ -227,9 +232,14 @@ window.addEventListener('load', () => {
     <div class="page" id="page-students">
       <div class="page-header">
         <div class="page-title"><h1>Student Management</h1><p>Add, edit, and manage student accounts</p></div>
-        <button class="btn btn-primary" onclick="openAddStudentModal()">
-          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Student
-        </button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-ghost" onclick="openModal('bulkUploadStudentModal')">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Bulk Upload
+          </button>
+          <button class="btn btn-primary" onclick="openAddStudentModal()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Student
+          </button>
+        </div>
       </div>
       <div class="card"><div class="card-body">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
@@ -258,32 +268,67 @@ window.addEventListener('load', () => {
       </div></div>
     </div>
 
-    <!-- TEACHERS - Fixed with correct columns -->
+    <!-- TEACHERS - Split Faculty / Supervisor with dept filter pills -->
     <div class="page" id="page-teachers">
       <div class="page-header">
         <div class="page-title"><h1>Teacher Management</h1><p>Add, edit, and manage teacher records</p></div>
-        <button class="btn btn-primary" onclick="openAddTeacherModal()">
-          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Teacher
-        </button>
-      </div>
-      <div class="card"><div class="card-body">
-        <div class="search-box">
-          <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" placeholder="Search by name or ID..." oninput="renderTeachers(this.value)"/>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-ghost" onclick="openModal('bulkUploadTeacherModal')">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Bulk Upload
+          </button>
+          <button class="btn btn-primary" onclick="openAddTeacherModal()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Teacher
+          </button>
         </div>
+      </div>
+
+      <!-- Faculty section -->
+      <div class="card" style="margin-bottom:20px;"><div class="card-body">
+        <h3 style="font-size:0.95rem;font-weight:700;margin:0 0 12px;display:flex;align-items:center;gap:8px;">
+          <svg width="16" height="16" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Faculty
+        </h3>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+          <div class="search-box" style="flex:1;min-width:200px;margin-bottom:0;">
+            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="teacherSearchInput" placeholder="Search by name or ID..." oninput="renderTeachers(this.value)"/>
+          </div>
+        </div>
+        <div id="teacherDeptFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
+        <!-- hidden selects keep existing JS working -->
+        <select id="teacherDeptFilter" style="display:none;" onchange="renderTeachers()"><option value="">All Departments</option></select>
+        <select id="teacherTypeFilter" style="display:none;"><option value="regular">Regular Faculty</option></select>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>ID</th>
-                <th>Name</th>
-                <th>Department</th>
-                <th>Subjects</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th>ID</th><th>Name</th><th>Department</th><th>Subjects</th><th>Status</th><th>Actions</th>
               </tr>
             </thead>
             <tbody id="teachersTbody"></tbody>
+          </table>
+        </div>
+      </div></div>
+
+      <!-- Supervisor section -->
+      <div class="card"><div class="card-body">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <h3 style="font-size:0.95rem;font-weight:700;margin:0;display:flex;align-items:center;gap:8px;">
+            <svg width="16" height="16" fill="none" stroke="var(--warning)" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Supervisors
+          </h3>
+          <button class="btn btn-primary btn-sm" onclick="openAddSupervisorModal()" style="font-size:0.8rem;padding:6px 14px;">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="margin-right:4px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Supervisor
+          </button>
+        </div>
+        <div id="supervisorDeptFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
+        <select id="supervisorDeptFilterHidden" style="display:none;"></select>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th><th>Name</th><th>Department</th><th>Role</th><th>Subjects</th><th>Status</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="supervisorsTbody"></tbody>
           </table>
         </div>
       </div></div>
@@ -298,10 +343,14 @@ window.addEventListener('load', () => {
         </button>
       </div>
       <div class="card"><div class="card-body">
-        <div class="search-box">
-          <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" placeholder="Search subjects..." oninput="renderSubjects(this.value)"/>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+          <div class="search-box" style="flex:1;min-width:200px;margin-bottom:0;">
+            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" placeholder="Search subjects..." oninput="renderSubjects(this.value)"/>
+          </div>
         </div>
+        <div id="subjectDeptFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
+        <select id="subjectDeptFilter" style="display:none;" onchange="renderSubjects()"><option value="">All Departments</option></select>
         <div class="table-wrap">
           <table>
             <thead>
@@ -328,7 +377,7 @@ window.addEventListener('load', () => {
 
     <!-- REPORTS -->
     <div class="page" id="page-reports">
-      <div class="page-header">
+      <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;">
         <div class="page-title"><h1>Reports & Analytics</h1><p>View teacher ratings and evaluation results</p></div>
         <button class="btn btn-ghost" onclick="exportReport()">
           <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV
@@ -342,23 +391,27 @@ window.addEventListener('load', () => {
       <div class="page-header">
         <div class="page-title">
           <h1>Supervisor Management</h1>
-          <p>Mandatory professional competency evaluations per CMO 19 Annex B</p>
+          <p>Assigned supervisors who conduct SEF ratings — grouped by department</p>
         </div>
       </div>
       <div class="card">
         <div class="card-body">
-          <div class="search-box">
-            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" placeholder="Search faculty by name..." oninput="renderSupervisorList(this.value)"/>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+            <div class="search-box" style="flex:1;min-width:200px;margin-bottom:0;">
+              <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" placeholder="Search supervisor by name or ID..." oninput="renderSupervisorList(this.value)"/>
+            </div>
           </div>
+          <div id="supervisorPageDeptFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Faculty Name</th>
+                  <th>Name</th>
                   <th>Department</th>
-                  <th>Last SEF Rating</th>
-                  <th>Status</th>
+                  <th>Role</th>
+                  <th>SEF Status</th>
+                  <th>Login Info</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -400,13 +453,13 @@ window.addEventListener('load', () => {
       <div class="dept-grid">
         <div class="dept-table-section">
           <div class="dept-table-header">
-            <h4> Teachers</h4>
+            <h4>👨‍🏫 Faculty</h4>
             <span class="count-badge" id="deptTeacherCount">0</span>
           </div>
           <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>ID</th><th>Name</th><th>Status</th><th>Avg Score</th></tr>
+                <tr><th>ID</th><th>Name</th><th>Status</th><th>Avg Score</th><th>Actions</th></tr>
               </thead>
               <tbody id="deptTeachersTbody"></tbody>
             </table>
@@ -414,16 +467,40 @@ window.addEventListener('load', () => {
         </div>
         <div class="dept-table-section">
           <div class="dept-table-header">
-            <h4> Subjects</h4>
+            <h4>📚 Subjects</h4>
             <span class="count-badge" id="deptSubjectCount">0</span>
           </div>
           <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>Code</th><th>Name</th><th>Enrolled</th></tr>
+                <tr><th>Code</th><th>Name</th><th>Teacher</th><th>Enrolled</th><th>Actions</th></tr>
               </thead>
               <tbody id="deptSubjectsTbody"></tbody>
             </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dept Supervisors Section (shown only when dept has supervisors) -->
+      <div id="deptSupervisorsSection" style="display:none;margin-top:20px;">
+        <div class="card">
+          <div class="card-body">
+            <div class="dept-table-header" style="margin-bottom:12px;">
+              <h4 style="font-size:0.95rem;font-weight:700;display:flex;align-items:center;gap:8px;">
+                <svg width="15" height="15" fill="none" stroke="var(--warning)" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                Department Supervisors
+              </h4>
+              <span class="count-badge" id="deptSupervisorCount">0</span>
+            </div>
+            <p style="font-size:0.75rem;color:var(--muted);margin-bottom:12px;">Supervisors assigned to this department. They log in using their Teacher ID to conduct SEF ratings.</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>ID</th><th>Name</th><th>Role</th><th>Status</th><th>SEF Conducted</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="deptSupervisorsTbody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -569,6 +646,27 @@ window.addEventListener('load', () => {
               <option value="GS">GS — Graduate School</option>
             </select>
           </div>
+          <!-- Hidden field = source of truth. saveTeacher() reads this, NOT the select. -->
+          <input type="hidden" id="tchFacultyTypeHidden" value="regular"/>
+          <div class="form-group" id="tchFacultyTypeGroup">
+            <label class="form-label">Faculty Type</label>
+            <select class="form-control" id="tchFacultyType" onchange="onFacultyTypeChange(this.value)">
+              <option value="regular">Regular Faculty</option>
+              <option value="supervisor">Supervisor (Dean / Chairperson)</option>
+            </select>
+          </div>
+          <div class="form-group" id="tchDeptRoleGroup" style="display:none;">
+            <label class="form-label">Department Role</label>
+            <select class="form-control" id="tchDeptRole">
+              <option value="">-- Select Role --</option>
+              <option value="dean">🎓 Dean</option>
+              <option value="chairperson">🪑 Chairperson</option>
+              <option value="supervisor">👤 General Supervisor</option>
+            </select>
+            <small style="color:var(--muted);font-size:0.72rem;margin-top:4px;display:block;">
+              Default login password will be set to their Teacher ID. They can rate teachers from the supervisor login portal.
+            </small>
+          </div>
         </div>
         <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('addTeacherModal')">Cancel</button><button class="btn btn-primary" id="saveTeacherBtn" onclick="saveTeacher()">Add Teacher</button></div>
       </div>
@@ -689,6 +787,73 @@ window.addEventListener('load', () => {
       </div>
     </div>
 
+    <!-- ANNEX D MODAL -->
+    <div class="modal-overlay" id="annexDModal">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <h3 id="annexDModalTitle">Faculty Evaluation & Development Acknowledgement Form</h3>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn btn-ghost btn-sm" onclick="printAnnexD()">🖨️ Print</button>
+            <button class="modal-close" onclick="closeModal('annexDModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+        </div>
+        <div class="modal-body" id="annexDModalBody"></div>
+      </div>
+    </div>
+
+    <!-- BULK UPLOAD STUDENTS MODAL -->
+    <div class="modal-overlay" id="bulkUploadStudentModal">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <h3>Bulk Upload Students</h3>
+          <button class="modal-close" onclick="closeModal('bulkUploadStudentModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;margin-bottom:16px;font-size:0.8rem;">
+            <strong>CSV Format:</strong> ID Number, Full Name, Year Level, Section, Department, Subject Codes (semicolon-separated)<br>
+            <code style="display:block;margin-top:6px;color:#166534;background:#dcfce7;padding:6px 10px;border-radius:4px;">2024001,Juan dela Cruz,1st Year,A,CCIS,CS301;CS302</code>
+            <span style="color:var(--muted);">Year Level options: 1st Year / 2nd Year / 3rd Year / 4th Year</span>
+          </div>
+          <div style="border:2px dashed var(--border);border-radius:10px;padding:28px;text-align:center;margin-bottom:14px;cursor:pointer;" onclick="document.getElementById('bulkStudentFile').click()" id="bulkStudentDropZone">
+            <svg width="32" height="32" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24" style="margin-bottom:8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <p style="color:var(--muted);font-size:0.82rem;margin:0;">Click to select CSV file or drag & drop here</p>
+            <input type="file" id="bulkStudentFile" accept=".csv" style="display:none;" onchange="previewBulkStudents(this)"/>
+          </div>
+          <div id="bulkStudentPreview"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('bulkUploadStudentModal')">Cancel</button>
+          <button class="btn btn-primary" id="bulkStudentImportBtn" onclick="importBulkStudents()" style="display:none;">Import Students</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- BULK UPLOAD TEACHERS MODAL -->
+    <div class="modal-overlay" id="bulkUploadTeacherModal">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <h3>Bulk Upload Teachers</h3>
+          <button class="modal-close" onclick="closeModal('bulkUploadTeacherModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px;margin-bottom:16px;font-size:0.8rem;">
+            <strong>CSV Format:</strong> Teacher ID, Full Name, Department, Faculty Type (regular/supervisor), Subject Codes (semicolon-separated)<br>
+            <code style="display:block;margin-top:6px;color:#1e40af;background:#dbeafe;padding:6px 10px;border-radius:4px;">T001,Prof. Maria Santos,CCIS,regular,CS301;CS302</code>
+          </div>
+          <div style="border:2px dashed var(--border);border-radius:10px;padding:28px;text-align:center;margin-bottom:14px;cursor:pointer;" onclick="document.getElementById('bulkTeacherFile').click()" id="bulkTeacherDropZone">
+            <svg width="32" height="32" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24" style="margin-bottom:8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <p style="color:var(--muted);font-size:0.82rem;margin:0;">Click to select CSV file or drag & drop here</p>
+            <input type="file" id="bulkTeacherFile" accept=".csv" style="display:none;" onchange="previewBulkTeachers(this)"/>
+          </div>
+          <div id="bulkTeacherPreview"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('bulkUploadTeacherModal')">Cancel</button>
+          <button class="btn btn-primary" id="bulkTeacherImportBtn" onclick="importBulkTeachers()" style="display:none;">Import Teachers</button>
+        </div>
+      </div>
+    </div>
+
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="../shared/js/data.js"></script>
@@ -697,6 +862,8 @@ window.addEventListener('load', () => {
     <script src="adminrate.js"></script>
     <script src="adminEval.js"></script>
     <script src="adminfeatures.js"></script>
+
+    
     
   </main>
 </div>
