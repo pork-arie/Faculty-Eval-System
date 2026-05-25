@@ -254,7 +254,7 @@ window.buildStudentDeptFilterBar = function() {
     container.innerHTML = html;
 };
 
-// Patch showPage to rebuild filter bar when navigating to students
+// Patch showPage to rebuild filter bars when navigating to students or teachers
 const _origShowPage = window.showPage;
 window.showPage = function(page) {
     _origShowPage(page);
@@ -264,6 +264,19 @@ window.showPage = function(page) {
         setTimeout(() => {
             buildStudentDeptFilterBar();
             renderStudents();
+        }, 0);
+    }
+    if (page === 'teachers') {
+        _teacherDeptFilter = '';
+        _supervisorDeptFilter = '';
+        setTimeout(() => {
+            buildTeacherDeptFilterBar();
+            buildSupervisorDeptFilterBar();
+            const input = document.getElementById('teacherSearchInput');
+            if (input) input.value = '';
+            const supInput = document.getElementById('supervisorSearchInput');
+            if (supInput) supInput.value = '';
+            renderTeachers('');
         }, 0);
     }
 };
@@ -533,4 +546,96 @@ window.filterFeedback = function(dept, search) {
     });
 
     _renderFeedbackList();
+};
+// ============================================================
+// TEACHER DEPT FILTER BAR — Faculty only (mirrors student pattern)
+// ============================================================
+
+let _teacherDeptFilter = '';
+
+window.buildTeacherDeptFilterBar = function() {
+    const container = document.getElementById('teacherDeptFilterBar');
+    if (!container) return;
+    const DEPT_CONFIG = getDepartments();
+    // Faculty only — supervisors have their own separate bar
+    const allFaculty = getData('teachers', []).filter(t => !t.deleted && t.facultyType !== 'supervisor');
+
+    const counts = {};
+    allFaculty.forEach(t => { counts[t.dept || 'UNASSIGNED'] = (counts[t.dept || 'UNASSIGNED'] || 0) + 1; });
+
+    let html = `<button class="student-dept-filter-btn ${!_teacherDeptFilter ? 'active' : ''}" data-dept="" onclick="filterTeachersByDept('')">
+        All <span class="dept-filter-count">${allFaculty.length}</span>
+    </button>`;
+
+    const deptOrder = Object.keys(DEPT_CONFIG);
+    deptOrder.forEach(code => {
+        if (!counts[code]) return;
+        const cfg = DEPT_CONFIG[code];
+        html += `<button class="student-dept-filter-btn ${_teacherDeptFilter === code ? 'active' : ''}" data-dept="${code}" onclick="filterTeachersByDept('${code}')">
+            ${escapeHtml(cfg.short)} <span class="dept-filter-count">${counts[code]}</span>
+        </button>`;
+    });
+
+    if (counts['UNASSIGNED']) {
+        html += `<button class="student-dept-filter-btn ${_teacherDeptFilter === 'UNASSIGNED' ? 'active' : ''}" data-dept="UNASSIGNED" onclick="filterTeachersByDept('UNASSIGNED')">
+            No Dept <span class="dept-filter-count">${counts['UNASSIGNED']}</span>
+        </button>`;
+    }
+
+    container.innerHTML = html;
+};
+
+window.filterTeachersByDept = function(deptCode) {
+    _teacherDeptFilter = deptCode;
+    document.querySelectorAll('#teacherDeptFilterBar .student-dept-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.dept === deptCode ||
+            (!btn.dataset.dept && !deptCode));
+    });
+    const search = document.getElementById('teacherSearchInput')?.value || '';
+    renderTeachers(search);
+};
+
+// ============================================================
+// SUPERVISOR DEPT FILTER BAR — Supervisors only, independent
+// ============================================================
+
+let _supervisorDeptFilter = '';
+
+window.buildSupervisorDeptFilterBar = function() {
+    const container = document.getElementById('supervisorDeptFilterBar');
+    if (!container) return;
+    const DEPT_CONFIG = getDepartments();
+    const allSupervisors = getData('teachers', []).filter(t => !t.deleted && t.facultyType === 'supervisor');
+
+    const counts = {};
+    allSupervisors.forEach(t => { counts[t.dept || 'UNASSIGNED'] = (counts[t.dept || 'UNASSIGNED'] || 0) + 1; });
+
+    let html = `<button class="student-dept-filter-btn ${!_supervisorDeptFilter ? 'active' : ''}" data-dept="" onclick="filterSupervisorsByDept('')">
+        All <span class="dept-filter-count">${allSupervisors.length}</span>
+    </button>`;
+
+    Object.entries(DEPT_CONFIG).forEach(([code, cfg]) => {
+        if (!counts[code]) return;
+        html += `<button class="student-dept-filter-btn ${_supervisorDeptFilter === code ? 'active' : ''}" data-dept="${code}" onclick="filterSupervisorsByDept('${code}')">
+            ${escapeHtml(cfg.short)} <span class="dept-filter-count">${counts[code]}</span>
+        </button>`;
+    });
+
+    if (counts['UNASSIGNED']) {
+        html += `<button class="student-dept-filter-btn ${_supervisorDeptFilter === 'UNASSIGNED' ? 'active' : ''}" data-dept="UNASSIGNED" onclick="filterSupervisorsByDept('UNASSIGNED')">
+            No Dept <span class="dept-filter-count">${counts['UNASSIGNED']}</span>
+        </button>`;
+    }
+
+    container.innerHTML = html;
+};
+
+window.filterSupervisorsByDept = function(deptCode) {
+    _supervisorDeptFilter = deptCode;
+    document.querySelectorAll('#supervisorDeptFilterBar .student-dept-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.dept === deptCode ||
+            (!btn.dataset.dept && !deptCode));
+    });
+    const search = document.getElementById('supervisorSearchInput')?.value || '';
+    renderSupervisorTable(search);
 };

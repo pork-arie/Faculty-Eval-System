@@ -76,7 +76,6 @@ if (!document.querySelector('#toastStyles')) {
 }
 
 // ===== CMO COMPLIANT SCORING SYSTEM =====
-// CMO 19 compliant interpretation scale
 window.getRemarks = function(percentage) {
     if (percentage >= 90) return 'Outstanding';
     if (percentage >= 75) return 'Very Satisfactory';
@@ -86,11 +85,11 @@ window.getRemarks = function(percentage) {
 };
 
 window.getRemarksColor = function(percentage) {
-    if (percentage >= 90) return '#16a34a';  // green
-    if (percentage >= 75) return '#2563eb';  // blue
-    if (percentage >= 60) return '#d97706';  // amber
-    if (percentage >= 50) return '#ea580c';  // orange
-    return '#dc2626';                        // red
+    if (percentage >= 90) return '#16a34a';
+    if (percentage >= 75) return '#2563eb';
+    if (percentage >= 60) return '#d97706';
+    if (percentage >= 50) return '#ea580c';
+    return '#dc2626';
 };
 
 window.getActiveSY = function() {
@@ -105,8 +104,6 @@ window.getActiveSY = function() {
 };
 
 // ===== CMO COMPLIANT: Calculate Weighted SET Rating =====
-// totalScore from students is already 0-100% (user.js: Math.round((rawTotal/75)*100))
-// Weighted average across classes by enrolled count → result is already a percentage
 window.calculateWeightedSETRating = function(facultyId) {
     const subjects = getData('subjects', []).filter(s =>
         s.teacherId === facultyId &&
@@ -125,14 +122,12 @@ window.calculateWeightedSETRating = function(facultyId) {
         const enrolledCount = (sub.enrolledIds || []).filter(id => students.find(s => s.id === id)).length;
 
         if (classEvals.length > 0) {
-            // totalScore is already 0-100%, so classAvg is already a percentage
             const classAvg = classEvals.reduce((a, b) => a + b.totalScore, 0) / classEvals.length;
             totalWeightedScore += (enrolledCount * classAvg);
             totalStudentsAcrossClasses += enrolledCount;
         }
     });
 
-    // Result is already a percentage (0-100)
     return totalStudentsAcrossClasses > 0
         ? Math.min(100, (totalWeightedScore / totalStudentsAcrossClasses)).toFixed(2)
         : 0;
@@ -140,19 +135,14 @@ window.calculateWeightedSETRating = function(facultyId) {
 
 // ===== CMO COMPLIANT: Calculate Final Rating (60% Student + 40% Supervisor) =====
 window.calculateFinalRating = function(teacherId) {
-    // studentPercentage: weighted average of already-percentage totalScores → already 0-100
     const studentPercentage = parseFloat(calculateWeightedSETRating(teacherId));
-
-    // supervisorPercentage: saved as (totalScore/75)*100 → already 0-100
     const evals = getData('evaluations', []);
     const sefData = evals.filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor');
     const supervisorPercentage = sefData.length > 0 ? sefData[sefData.length - 1].totalScore : 0;
-
-    // CMO Formula: 60% Student + 40% Supervisor — both inputs are 0-100, result is 0-100
     const finalPercentage = Math.min(100, (studentPercentage * 0.60) + (supervisorPercentage * 0.40));
 
     return {
-        weightedSET: studentPercentage.toFixed(2),   // kept for UI display
+        weightedSET: studentPercentage.toFixed(2),
         studentPercentage: studentPercentage.toFixed(2),
         supervisorPercentage: supervisorPercentage.toFixed(2),
         finalPercentage: finalPercentage.toFixed(2),
@@ -176,12 +166,11 @@ window.checkAndAutoFinalize = function() {
         }
     }
 };
-
 setInterval(checkAndAutoFinalize, 3600000);
 
 // ===== STATE =====
 let editStudentId = null, editTeacherId = null, editSubjectId = null;
-let _pendingFacultyType = "regular"; // tracks faculty type for the open modal
+let _pendingFacultyType = "regular";
 let enrollSubjectId = null, resetPassStudentId = null;
 
 // ===== NAV =====
@@ -243,7 +232,6 @@ function renderDashboard() {
     <div class="stat-card"><div class="stat-icon" style="background:#fff7ed;"><svg width="20" height="20" fill="none" stroke="#ea580c" stroke-width="2" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/></svg></div><div class="value">${evals.length}</div><div class="label">Evaluations</div></div>
   `;
 
-  // Department Ratings Section — SET and SEF displayed separately (CMO 19 compliant)
   const deptMap = {};
   teachers.forEach(t => {
     if (!t.dept) return;
@@ -365,13 +353,22 @@ function setActiveSem(syId, semId) {
   showToast('Active semester updated!', 'success');
 }
 
+// ===== STUDENTS DEPT PILLS =====
 function renderStudentDeptFilterBar() {
   const bar = document.getElementById('studentDeptFilterBar');
   if (!bar) return;
   const depts = ['COED','CCJS','CCIS','CON','CEA','COM','CAT','GS'];
   const current = bar.dataset.active || '';
-  bar.innerHTML = `<button class="dept-filter-pill ${current===''?'active':''}" onclick="setStudentDeptFilter('')">All</button>` +
-    depts.map(d => `<button class="dept-filter-pill ${current===d?'active':''}" onclick="setStudentDeptFilter('${d}')">${d}</button>`).join('');
+  const allStudents = getData('students', []).filter(s => !s.deleted);
+  const totalCount = allStudents.length;
+  const deptCounts = {};
+  allStudents.forEach(s => { if (s.dept) deptCounts[s.dept] = (deptCounts[s.dept] || 0) + 1; });
+  const activeDepts = depts.filter(d => deptCounts[d] > 0);
+  bar.innerHTML =
+    `<button class="dept-filter-pill ${current===''?'active':''}" onclick="setStudentDeptFilter('')">All <span class="dept-filter-count">${totalCount}</span></button>` +
+    activeDepts.map(d =>
+      `<button class="dept-filter-pill ${current===d?'active':''}" onclick="setStudentDeptFilter('${d}')">${d} <span class="dept-filter-count">${deptCounts[d]}</span></button>`
+    ).join('');
 }
 
 window.setStudentDeptFilter = function(dept) {
@@ -505,57 +502,79 @@ function saveResetPass() {
 }
 
 // ===== TEACHER DEPT FILTER PILLS =====
-function buildTeacherDeptPills(barId, hiddenSelectId, onChangeFn) {
-  const bar = document.getElementById(barId);
-  if (!bar) return;
-  const depts = ['COED','CCJS','CCIS','CON','CEA','COM','CAT','GS'];
-  const current = bar.dataset.active || '';
-  bar.innerHTML = `<button class="dept-filter-pill ${current===''?'active':''}" onclick="${onChangeFn}('')">All</button>` +
-    depts.map(d => `<button class="dept-filter-pill ${current===d?'active':''}" onclick="${onChangeFn}('${d}')">${d}</button>`).join('');
+// Rebuilt by adminfeatures.js buildTeacherDeptFilterBar — these are kept as
+// pass-through stubs so any legacy callers still work.
+function buildTeacherDeptPills() {
+  if (typeof buildTeacherDeptFilterBar === 'function') buildTeacherDeptFilterBar();
+  if (typeof buildSupervisorDeptFilterBar === 'function') buildSupervisorDeptFilterBar();
 }
 
 window.setTeacherDeptFilter = function(dept) {
+  if (typeof filterTeachersByDept === 'function') { filterTeachersByDept(dept); return; }
+  // Fallback if adminfeatures not loaded yet
   const bar = document.getElementById('teacherDeptFilterBar');
-  if (bar) { bar.dataset.active = dept; }
-  const sel = document.getElementById('teacherDeptFilter');
-  if (sel) sel.value = dept;
-  buildTeacherDeptPills('teacherDeptFilterBar', 'teacherDeptFilter', 'setTeacherDeptFilter');
-  renderTeachers(document.getElementById('teacherSearchInput')?.value || '');
-};
-
-window.setSupervisorDeptFilter = function(dept) {
-  const bar = document.getElementById('supervisorDeptFilterBar');
   if (bar) bar.dataset.active = dept;
-  buildTeacherDeptPills('supervisorDeptFilterBar', 'supervisorDeptFilterHidden', 'setSupervisorDeptFilter');
-  renderSupervisorTable();
+  const currentSearch = document.getElementById('teacherSearchInput')?.value || '';
+  renderTeachers(currentSearch);
 };
 
-// ===== TEACHERS =====
-// ===== TEACHERS =====
-function renderTeachers(search = '') {
-  buildTeacherDeptPills('teacherDeptFilterBar', 'teacherDeptFilter', 'setTeacherDeptFilter');
-  const deptActive = (document.getElementById('teacherDeptFilterBar') || {}).dataset?.active || '';
+// ===== RENDER TEACHERS =====
+window.renderTeachers = function(search = '') {
+  const searchInput = document.getElementById('teacherSearchInput');
+  // If a search string was passed in, sync it to the input.
+  // Then always read the live input value so filtering is consistent
+  // regardless of which call site triggered the render.
+  if (searchInput && search && searchInput.value !== search) {
+    searchInput.value = search;
+  }
+  // Always use the live input value — this makes dept pill clicks work correctly
+  // even when called from toggleTeacherStatus / deleteTeacher with no args.
+  const liveSearch = searchInput ? searchInput.value : search;
 
+  // Rebuild dept filter bar (delegates to adminfeatures.js)
+  buildTeacherDeptPills();
+
+  // Use _teacherDeptFilter from adminfeatures.js if available, fallback to dataset
+  const deptActive = (typeof _teacherDeptFilter !== 'undefined' ? _teacherDeptFilter : null) ??
+    (document.getElementById('teacherDeptFilterBar')?.dataset.active || '');
   const teachers = getData('teachers', []).filter(t => !t.deleted);
   const subjects = getData('subjects', []);
 
-  // FACULTY: regular teachers (NOT supervisors) matching search parameters and filter parameters
-  const faculty = teachers.filter(t =>
-    (t.facultyType !== 'supervisor') &&
-    (t.name.toLowerCase().includes(search.toLowerCase()) || t.tid.toLowerCase().includes(search.toLowerCase())) &&
-    (!deptActive || t.dept === deptActive)
-  );
+  // Filter Regular Faculty — searchable by name, ID, or department (code or full name)
+  const DEPT_NAME_MAP = {
+    COED: 'college of education',
+    CCJS: 'college of criminal justice',
+    CCIS: 'college of computing',
+    CON: 'college of nursing',
+    CEA: 'college of engineering',
+    COM: 'college of management',
+    CAT: 'college of agriculture',
+    GS: 'graduate school'
+  };
+  const q = liveSearch.toLowerCase();
+  const faculty = teachers.filter(t => {
+    if (t.facultyType === 'supervisor') return false;
+    const deptCode = (t.dept || '').toLowerCase();
+    const deptFull = DEPT_NAME_MAP[(t.dept || '').toUpperCase()] || '';
+    const matchesSearch = !q ||
+      t.name.toLowerCase().includes(q) ||
+      t.tid.toLowerCase().includes(q) ||
+      deptCode.includes(q) ||
+      deptFull.includes(q);
+    const matchesDept = !deptActive || t.dept === deptActive;
+    return matchesSearch && matchesDept;
+  });
 
   const tbody = document.getElementById('teachersTbody');
   if (!tbody) return;
 
   if (!faculty.length) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">No faculty found. Found ${teachers.length} total teachers. If you added a supervisor, check the Supervisor table below.</td></tr>`;
-    if (typeof renderSupervisorTable === 'function') renderSupervisorTable();
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">No matching regular faculty found.</td></tr>`;
+    renderSupervisorTable(liveSearch);
     return;
   }
 
-  // Group matched regular faculty by their department
+  // Group regular faculty by department
   const deptGroups = {};
   faculty.forEach(t => {
     const dept = t.dept || 'UNASSIGNED';
@@ -563,9 +582,6 @@ function renderTeachers(search = '') {
     deptGroups[dept].push(t);
   });
 
-  let html = '';
-  
-  // Mapping system to print out the official department labels
   const DEPT_NAMES = {
       COED: 'College of Education',
       CCJS: 'College of Criminal Justice & Safety',
@@ -578,10 +594,10 @@ function renderTeachers(search = '') {
       UNASSIGNED: 'No Department Assigned'
   };
 
+  let html = '';
   Object.entries(deptGroups).forEach(([dept, facultyList]) => {
     const deptLabel = DEPT_NAMES[dept] || dept;
 
-    // EXACT STYLE AND DESIGN FORMAT EXTRACTION FROM YOUR DEPT CONTAINER LAYOUT
     html += `
     <tr class="dept-group-header-row">
         <td colspan="6">
@@ -591,92 +607,151 @@ function renderTeachers(search = '') {
                     <circle cx="9" cy="7" r="4"/>
                 </svg>
                 <span>${escapeHtml(deptLabel)}</span>
-                <span class="dept-group-count">${facultyList.length} faculty member${facultyList.length !== 1 ? 's' : ''}</span>
+                <span class="dept-group-count">${facultyList.length} teacher${facultyList.length !== 1 ? 's' : ''}</span>
             </div>
         </td>
     </tr>`;
 
-    // Render each faculty row nested under their styled department block header
     facultyList.forEach(t => {
       const tSubs = subjects.filter(s => s.teacherId === t.id);
       html += `
-      <tr class="teacher-row dept-group-student-row" onclick="toggleTeacherDetails('${t.id}')">
+      <tr class="teacher-row dept-group-student-row" onclick="showAnnexDReport('${t.id}')" title="Click to view Annex D" style="cursor:pointer;">
         <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
         <td><strong>${escapeHtml(t.name)}</strong></td>
         <td><span class="dept-tag-inline">${escapeHtml(t.dept || '—')}</span></td>
-        <td>${tSubs.map(s=>`<span class="badge badge-primary" style="margin:1px;">${escapeHtml(s.code)}</span>`).join('')||'<span style="color:var(--muted)">None</span>'}</td>
-        <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}">${t.status}</span></td>
+        <td>${tSubs.map(s => `<span class="badge badge-primary" style="margin:1px;">${escapeHtml(s.code)}</span>`).join('') || '<span style="color:var(--muted)">None</span>'}</td>
+        <td><span class="badge ${t.status === 'active' ? 'badge-success' : 'badge-danger'}">${t.status}</span></td>
         <td><div class="td-actions" onclick="event.stopPropagation()">
           <button class="btn btn-ghost btn-icon btn-sm" title="Edit" onclick="openEditTeacherModal('${t.id}')"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
           <button class="btn btn-ghost btn-icon btn-sm" title="Move to Supervisor table" onclick="forceSetSupervisor('${t.id}')" style="color:var(--warning);font-size:11px;padding:2px 6px;">⬇️ Sup</button>
-          <button class="btn btn-ghost btn-icon btn-sm" title="Conduct SEF" onclick="openSEFModal('${t.id}')">📋</button>
-          <button class="btn btn-ghost btn-icon btn-sm" title="View Annex D" onclick="showAnnexDReport('${t.id}')">📄</button>
-          <button class="btn btn-ghost btn-icon btn-sm" title="Toggle Status" onclick="toggleTeacherStatus('${t.id}')"><svg width="14" height="14" fill="none" stroke="${t.status==='active'?'var(--muted)':'var(--success)'}" stroke-width="2" viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 11-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
+          <button class="btn btn-ghost btn-icon btn-sm" title="Toggle Status" onclick="toggleTeacherStatus('${t.id}')"><svg width="14" height="14" fill="none" stroke="${t.status === 'active' ? 'var(--muted)' : 'var(--success)'}" stroke-width="2" viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 11-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
           <button class="btn btn-ghost btn-icon btn-sm" title="Delete" onclick="deleteTeacher('${t.id}')"><svg width="14" height="14" fill="none" stroke="var(--danger)" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>
         </div></td>
-      </tr>
-      <tr id="teacher-details-${t.id}" class="teacher-details-row" style="display:none;">
-        <td colspan="6" class="teacher-details-cell">
-          <div class="teacher-details-container" id="teacher-details-content-${t.id}">Loading...</div>
-        </td>
       </tr>`;
     });
   });
 
   tbody.innerHTML = html;
 
-  // Render supervisor table synchronously to keep both views perfectly updated
-  if (typeof renderSupervisorTable === 'function') {
-    renderSupervisorTable();
-  }
-}
+  // Render supervisor table filtering simultaneously
+  renderSupervisorTable(liveSearch);
+};
 
-window.renderSupervisorTable = function() {
-  buildTeacherDeptPills('supervisorDeptFilterBar', 'supervisorDeptFilterHidden', 'setSupervisorDeptFilter');
-  const deptActive = (document.getElementById('supervisorDeptFilterBar') || {}).dataset?.active || '';
+window.setSupervisorDeptFilter = function(dept) {
+  if (typeof filterTeachersByDept === 'function') { filterTeachersByDept(dept); return; }
+  renderSupervisorTable();
+};
+
+// ===== SUPERVISOR TABLE =====
+window.renderSupervisorTable = function(search) {
+  // Rebuild supervisor dept filter bar so pills stay in sync
+  if (typeof buildSupervisorDeptFilterBar === 'function') buildSupervisorDeptFilterBar();
+
+  // Use the supervisor-specific search input; ignore the passed value so it
+  // doesn't bleed over from the faculty search box.
+  const supInput = document.getElementById('supervisorSearchInput');
+  if (supInput && search !== undefined && supInput.value !== search) {
+    supInput.value = search;
+  }
+  const sq = (supInput ? supInput.value : (search || '')).toLowerCase();
+
+  // Use the supervisor-specific dept filter (set by filterSupervisorsByDept)
+  const deptActive = (typeof _supervisorDeptFilter !== 'undefined' ? _supervisorDeptFilter : null) ?? '';
+
   const teachers = getData('teachers', []).filter(t => !t.deleted);
   const subjects = getData('subjects', []);
-  
-  // SUPERVISORS: facultyType exactly equals 'supervisor'
+
+  const DEPT_NAME_MAP_SUP = {
+    COED: 'college of education',
+    CCJS: 'college of criminal justice',
+    CCIS: 'college of computing',
+    CON: 'college of nursing',
+    CEA: 'college of engineering',
+    COM: 'college of management',
+    CAT: 'college of agriculture',
+    GS: 'graduate school'
+  };
+
+  const DEPT_NAMES_SUP = {
+    COED: 'College of Education',
+    CCJS: 'College of Criminal Justice & Safety',
+    CCIS: 'College of Computing & Info. Sciences',
+    CON: 'College of Nursing',
+    CEA: 'College of Engineering & Architecture',
+    COM: 'College of Management',
+    CAT: 'College of Agriculture & Technology',
+    GS: 'Graduate School',
+    UNASSIGNED: 'No Department Assigned'
+  };
+
   const supervisors = teachers.filter(t => {
-    const isSupervisor = t.facultyType === 'supervisor';
+    if (t.facultyType !== 'supervisor') return false;
+    const deptCode = (t.dept || '').toLowerCase();
+    const deptFull = DEPT_NAME_MAP_SUP[(t.dept || '').toUpperCase()] || '';
+    const matchesSearch = !sq ||
+      t.name.toLowerCase().includes(sq) ||
+      t.tid.toLowerCase().includes(sq) ||
+      deptCode.includes(sq) ||
+      deptFull.includes(sq);
     const matchesDept = !deptActive || t.dept === deptActive;
-    return isSupervisor && matchesDept;
+    return matchesSearch && matchesDept;
   });
-  
+
   const tbody = document.getElementById('supervisorsTbody');
   if (!tbody) return;
-  
+
   if (!supervisors.length) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted);">No supervisors found. To add a supervisor, go to "Add Teacher" and select Faculty Type = "Supervisor".</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted);">No matching supervisors found for this criteria.</td></tr>`;
     return;
   }
-  
-  tbody.innerHTML = supervisors.map(t => {
-    const tSubs = subjects.filter(s => s.teacherId === t.id);
-    const roleLabel = t.deptRole === 'dean' ? '🎓 Dean' : t.deptRole === 'chairperson' ? '🪑 Chairperson' : '👤 Supervisor';
-    const roleColor = t.deptRole === 'dean' ? '#7c3aed' : t.deptRole === 'chairperson' ? '#0369a1' : '#374151';
-    return `<tr class="teacher-row" onclick="toggleTeacherDetails('${t.id}')">
-      <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
-      <td><strong>${escapeHtml(t.name)}</strong></td>
-      <td>${escapeHtml(t.dept || '—')}</td>
-      <td><span style="font-size:0.75rem;font-weight:600;color:${roleColor};">${roleLabel}</span></td>
-      <td>${tSubs.map(s=>`<span class="badge badge-primary" style="margin:1px;">${escapeHtml(s.code)}</span>`).join('')||'<span style="color:var(--muted)">None</span>'}</td>
-      <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}">${t.status}</span></td>
-      <td><div class="td-actions" onclick="event.stopPropagation()">
-        <button class="btn btn-ghost btn-icon btn-sm" title="Edit" onclick="openEditTeacherModal('${t.id}')"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-        <button class="btn btn-ghost btn-icon btn-sm" title="Conduct SEF" onclick="openSEFModal('${t.id}')">📋</button>
-        <button class="btn btn-ghost btn-icon btn-sm" title="View Annex D" onclick="showAnnexDReport('${t.id}')">📄</button>
-        <button class="btn btn-ghost btn-icon btn-sm" title="Toggle Status" onclick="toggleTeacherStatus('${t.id}')"><svg width="14" height="14" fill="none" stroke="${t.status==='active'?'var(--muted)':'var(--success)'}" stroke-width="2" viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 11-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
-        <button class="btn btn-ghost btn-icon btn-sm" title="Delete" onclick="deleteTeacher('${t.id}')"><svg width="14" height="14" fill="none" stroke="var(--danger)" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>
-      </div></td>
-    </tr>
-    <tr id="teacher-details-${t.id}" class="teacher-details-row" style="display:none;">
-      <td colspan="7" class="teacher-details-cell">
-        <div class="teacher-details-container" id="teacher-details-content-${t.id}">Loading...</div>
+
+  // Group supervisors by department (mirrors faculty grouping)
+  const deptGroups = {};
+  supervisors.forEach(t => {
+    const dept = t.dept || 'UNASSIGNED';
+    if (!deptGroups[dept]) deptGroups[dept] = [];
+    deptGroups[dept].push(t);
+  });
+
+  let html = '';
+  Object.entries(deptGroups).forEach(([dept, supList]) => {
+    const deptLabel = DEPT_NAMES_SUP[dept] || dept;
+    const colorStyle = dept === 'UNASSIGNED' ? 'background:#f1f5f9;color:#475569;' : '';
+
+    html += `
+    <tr class="dept-group-header-row">
+      <td colspan="7">
+        <div class="dept-group-header" style="${colorStyle}">
+          <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          <span>${escapeHtml(deptLabel)}</span>
+          <span class="dept-group-count">${supList.length} supervisor${supList.length !== 1 ? 's' : ''}</span>
+        </div>
       </td>
     </tr>`;
-  }).join('');
+
+    supList.forEach(t => {
+      const tSubs = subjects.filter(s => s.teacherId === t.id);
+      const roleLabel = t.deptRole === 'dean' ? '🎓 Dean' : t.deptRole === 'chairperson' ? '🪑 Chairperson' : '👤 Supervisor';
+      const roleColor = t.deptRole === 'dean' ? '#7c3aed' : t.deptRole === 'chairperson' ? '#0369a1' : '#374151';
+      html += `<tr class="teacher-row dept-group-student-row" onclick="showAnnexDReport('${t.id}')" title="Click to view Annex D" style="cursor:pointer;">
+        <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
+        <td><strong>${escapeHtml(t.name)}</strong></td>
+        <td><span class="dept-tag-inline">${escapeHtml(t.dept || '—')}</span></td>
+        <td><span style="font-size:0.75rem;font-weight:600;color:${roleColor};">${roleLabel}</span></td>
+        <td>${tSubs.map(s => `<span class="badge badge-primary" style="margin:1px;">${escapeHtml(s.code)}</span>`).join('') || '<span style="color:var(--muted)">None</span>'}</td>
+        <td><span class="badge ${t.status === 'active' ? 'badge-success' : 'badge-danger'}">${t.status}</span></td>
+        <td><div class="td-actions" onclick="event.stopPropagation()">
+          <button class="btn btn-ghost btn-icon btn-sm" title="Edit" onclick="openEditTeacherModal('${t.id}')"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="btn btn-ghost btn-icon btn-sm" title="Toggle Status" onclick="toggleTeacherStatus('${t.id}')"><svg width="14" height="14" fill="none" stroke="${t.status === 'active' ? 'var(--muted)' : 'var(--success)'}" stroke-width="2" viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 11-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
+          <button class="btn btn-ghost btn-icon btn-sm" title="Delete" onclick="deleteTeacher('${t.id}')"><svg width="14" height="14" fill="none" stroke="var(--danger)" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>
+        </div></td>
+      </tr>`;
+    });
+  });
+
+  tbody.innerHTML = html;
 };
 
 window.toggleTeacherDetails = function(teacherId) {
@@ -751,6 +826,8 @@ function openAddTeacherModal() {
   document.getElementById('tchId').value = '';
   document.getElementById('tchName').value = '';
   document.getElementById('tchDept').value = '';
+  const catEl = document.getElementById('tchCategory');
+  if (catEl) catEl.value = '';
   const ftEl = document.getElementById('tchFacultyType');
   if (ftEl) ftEl.value = 'regular';
   const hidden = document.getElementById('tchFacultyTypeHidden');
@@ -764,7 +841,6 @@ function openAddTeacherModal() {
   openModal('addTeacherModal');
 }
 
-// Opens modal locked to Supervisor — Faculty Type selector is hidden so it cannot revert
 window.openAddSupervisorModal = function() {
   editTeacherId = null;
   _pendingFacultyType = 'supervisor';
@@ -775,22 +851,19 @@ window.openAddSupervisorModal = function() {
   document.getElementById('tchDept').value = '';
   const ftEl = document.getElementById('tchFacultyType');
   if (ftEl) ftEl.value = 'supervisor';
-  // Hidden field is what saveTeacher() reads — this is the critical assignment
   const hidden = document.getElementById('tchFacultyTypeHidden');
   if (hidden) hidden.value = 'supervisor';
   const drEl = document.getElementById('tchDeptRole');
   const drGrp = document.getElementById('tchDeptRoleGroup');
   if (drEl) drEl.value = '';
   if (drGrp) drGrp.style.display = '';
-  // Hide the selector row entirely so the user cannot flip it back to regular
   const ftGrp = document.getElementById('tchFacultyTypeGroup');
   if (ftGrp) ftGrp.style.display = 'none';
   openModal('addTeacherModal');
 };
 
-// Keep hidden field in sync whenever user manually changes the dropdown
 window.onFacultyTypeChange = function(val) {
-  window._pendingFacultyType = val; // Saves it to global window state
+  window._pendingFacultyType = val;
   const hidden = document.getElementById('tchFacultyTypeHidden');
   if (hidden) hidden.value = val;
   
@@ -813,6 +886,8 @@ function openEditTeacherModal(id) {
   document.getElementById('tchId').value = t.tid;
   document.getElementById('tchName').value = t.name;
   document.getElementById('tchDept').value = t.dept || '';
+  const catEl = document.getElementById('tchCategory');
+  if (catEl) catEl.value = t.category || '';
   const resolvedType = t.facultyType || 'regular';
   _pendingFacultyType = resolvedType;
   const ftEl = document.getElementById('tchFacultyType');
@@ -828,7 +903,6 @@ function openEditTeacherModal(id) {
   openModal('addTeacherModal');
 }
 
-// Fix a misclassified teacher — move them from Faculty table to Supervisor table
 window.forceSetSupervisor = function(id) {
   const teachers = getData('teachers', []);
   const idx = teachers.findIndex(t => t.id === id);
@@ -836,7 +910,7 @@ window.forceSetSupervisor = function(id) {
   const t = teachers[idx];
   if (!confirm('Move "' + t.name + '" to the Supervisors table?\nThis will set their Faculty Type to Supervisor and cannot be undone from here (use Edit to change back).')) return;
   teachers[idx].facultyType = 'supervisor';
-  if (!teachers[idx].password) teachers[idx].password = t.tid; // set default login password
+  if (!teachers[idx].password) teachers[idx].password = t.tid;
   setData('teachers', teachers);
   addAudit('Fix Supervisor', 'Moved ' + t.name + ' (' + t.tid + ') to Supervisor table');
   showToast(t.name + ' moved to Supervisors table!', 'success');
@@ -847,9 +921,13 @@ function saveTeacher() {
   const tid = document.getElementById('tchId').value.trim();
   const name = document.getElementById('tchName').value.trim();
   const dept = document.getElementById('tchDept').value;
-  // Use JS variable — immune to browser DOM resets
+  const category = (document.getElementById('tchCategory') || {}).value || '';
   const facultyType = _pendingFacultyType || 'regular';
-  const deptRole = (document.getElementById('tchDeptRole') || {}).value || '';
+  // If saving as regular faculty, always clear deptRole — a stale supervisor deptRole
+  // would cause the migration to re-promote them back to supervisor on next page load.
+  const deptRole = facultyType === 'supervisor'
+    ? ((document.getElementById('tchDeptRole') || {}).value || '')
+    : '';
   
   if (!tid || !name) { 
     showToast('Fill all fields.', 'error'); 
@@ -863,12 +941,12 @@ function saveTeacher() {
     teachers[idx].tid = tid; 
     teachers[idx].name = name; 
     teachers[idx].dept = dept;
+    teachers[idx].category = category;
     teachers[idx].facultyType = facultyType; 
     teachers[idx].deptRole = deptRole;
     addAudit('Edit Teacher', `Updated: ${name} (${tid})`);
     showToast('Teacher updated!', 'success');
   } else {
-    // Check if teacher ID already exists
     if (teachers.find(t => t.tid === tid && !t.deleted)) {
       showToast('Teacher ID already exists.', 'error');
       return;
@@ -878,16 +956,16 @@ function saveTeacher() {
       id: 'tch'+Date.now(), 
       tid, 
       name, 
-      dept, 
+      dept,
+      category,
       facultyType, 
       deptRole, 
       status:'active', 
       deleted: false 
     };
     
-    // Set default password for supervisors
     if (facultyType === 'supervisor') {
-      newTeacher.password = tid; // Default password is their teacher ID
+      newTeacher.password = tid;
     }
     
     teachers.push(newTeacher);
@@ -898,30 +976,13 @@ function saveTeacher() {
   setData('teachers', teachers);
   closeModal('addTeacherModal');
   
-  // Clear search input
   const searchInput = document.getElementById('teacherSearchInput');
   if (searchInput) searchInput.value = '';
   
-  // Reset department filter bars completely to show the new record everywhere
   const teacherDeptBar = document.getElementById('teacherDeptFilterBar');
   if (teacherDeptBar) teacherDeptBar.dataset.active = '';
   
-  const supervisorDeptBar = document.getElementById('supervisorDeptFilterBar');
-  if (supervisorDeptBar) supervisorDeptBar.dataset.active = '';
-  
-  // RE-RENDER BOTH TABLES IMMEDIATELY
   renderTeachers();
-  if (typeof renderSupervisorTable === 'function') {
-    renderSupervisorTable(); 
-  }
-  
-  // If a supervisor was added, also refresh the standalone supervisor page if it's active
-  if (facultyType === 'supervisor') {
-    const supervisorPage = document.getElementById('page-supervisor');
-    if (supervisorPage && supervisorPage.classList.contains('active')) {
-      if (typeof renderSupervisorList === 'function') renderSupervisorList();
-    }
-  }
 }
 
 function toggleTeacherStatus(id) {
@@ -962,7 +1023,6 @@ function renderSubjects(search = '') {
   const tbody = document.getElementById('subjectsTbody');
   if (!filtered.length) { tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">No subjects found.</td></tr>`; return; }
 
-  // Group by department
   const groups = {};
   filtered.forEach(sub => {
     const dept = sub.dept || 'Unassigned';
@@ -1025,7 +1085,6 @@ function openEditSubjectModal(id) {
 window.populateTeacherSelect = function(selectedId = '') {
     const teachers = getData('teachers', []).filter(t => !t.deleted);
     const deptFilter = document.getElementById('subDept') ? document.getElementById('subDept').value : '';
-    
     let filteredTeachers = teachers;
     if (deptFilter) {
         filteredTeachers = teachers.filter(t => t.dept === deptFilter);
@@ -1114,7 +1173,7 @@ function saveEnrollment() {
   showToast('Enrollment saved!', 'success');
 }
 
-// ===== EVAL CONTROL - NO SUBMISSION LIMITATIONS =====
+// ===== EVAL CONTROL =====
 function renderEvalControl() {
   const period = getData('evalPeriod', { open: false, deadline: '' });
   const subjects = getData('subjects', []);
@@ -1148,11 +1207,11 @@ function renderEvalControl() {
           const pending = enrolled - submitted;
           const pct = enrolled ? Math.round((submitted/enrolled)*100) : 0;
           return `<tr>
-            <td><strong>${escapeHtml(sub.code)}</strong> - ${escapeHtml(sub.name)}</div></td>
-            <td>${enrolled}</div></td>
-            <td><span class="badge badge-success">${submitted}</span></div></td>
-            <td><span class="badge badge-warning">${pending}</span></div></td>
-            <td style="min-width:120px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div class="progress-fill" style="width:${pct}%"></div></div><span style="font-size:0.72rem;font-weight:700;">${pct}%</span></div></div>
+            <td><strong>${escapeHtml(sub.code)}</strong> - ${escapeHtml(sub.name)}</td>
+            <td>${enrolled}</td>
+            <td><span class="badge badge-success">${submitted}</span></td>
+            <td><span class="badge badge-warning">${pending}</span></td>
+            <td style="min-width:120px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div class="progress-fill" style="width:${pct}%"></div></div><span style="font-size:0.72rem;font-weight:700;">${pct}%</span></div></td>
           </tr>`;
         }).join('')}</tbody>
       </table></div>
@@ -1176,7 +1235,7 @@ function updatePeriodSettings() {
   addAudit('Update Eval Settings', `Deadline: ${period.deadline}`);
 }
 
-// ===== REPORTS - CMO 19 COMPLIANT: Separate SET and SEF, NO combined final score =====
+// ===== REPORTS - CMO 19 COMPLIANT =====
 window.renderReports = function() {
     const teachers = getData('teachers', []).filter(t => !t.deleted);
     const subjects = getData('subjects', []);
@@ -1285,7 +1344,6 @@ window.renderReports = function() {
     renderInstitutionalFER();
 };
 
-// Toggle class details visibility
 window.toggleClassDetails = function(teacherId) {
     const row = document.getElementById(`class-details-${teacherId}`);
     if (row) row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
@@ -1424,59 +1482,6 @@ window.importBulkTeachers = function() {
   showToast(`Imported ${added} teachers! ${skipped ? skipped + ' skipped.' : ''}`, 'success');
 };
 
-window.renderInstitutionalFER = function() {
-    const teachers = getData('teachers', []).filter(t => !t.deleted);
-    const deptMap = {};
-    teachers.forEach(t => {
-        if (!t.dept) return;
-        if (!deptMap[t.dept]) deptMap[t.dept] = { setTotal: 0, setCount: 0, sefTotal: 0, sefCount: 0 };
-        const set = parseFloat(calculateWeightedSETRating(t.id));
-        const sefEvals = getData('evaluations', []).filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
-        const sef = sefEvals.length > 0 ? sefEvals[sefEvals.length-1].totalScore : 0;
-        if (set > 0) { deptMap[t.dept].setTotal += set; deptMap[t.dept].setCount++; }
-        if (sef > 0) { deptMap[t.dept].sefTotal += sef; deptMap[t.dept].sefCount++; }
-    });
-
-    const stats = Object.entries(deptMap).map(([deptCode, d]) => ({
-        name: deptCode,
-        avgSET: d.setCount > 0 ? (d.setTotal / d.setCount).toFixed(2) : '—',
-        avgSEF: d.sefCount > 0 ? (d.sefTotal / d.sefCount).toFixed(2) : '—',
-        count: d.setCount || d.sefCount
-    })).sort((a,b) => parseFloat(b.avgSET||0) - parseFloat(a.avgSET||0));
-
-    const container = document.getElementById('institutionalFERContainer');
-    if (container) {
-        container.innerHTML = `
-            <div class="card">
-                <div class="card-header-bar"><h3>Institutional Statistical Trends (FER)</h3></div>
-                <div class="card-body">
-                    <p style="font-size:0.8rem;color:var(--muted);margin-bottom:15px;">SET and SEF per department — displayed separately per CMO 19. Used by President and VPAA for institutional decision-making.</p>
-                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:15px;">
-                        ${stats.map(s => `
-                            <div style="padding:15px;border:1px solid var(--border);border-radius:8px;text-align:center;">
-                                <div style="font-size:0.75rem;font-weight:700;margin-bottom:8px;">${escapeHtml(s.name)}</div>
-                                <div style="display:flex;justify-content:space-around;">
-                                    <div>
-                                        <div style="font-size:0.62rem;color:var(--muted);">SET</div>
-                                        <div style="font-size:1.2rem;font-weight:800;color:#16a34a;">${s.avgSET}${s.avgSET !== '—' ? '%' : ''}</div>
-                                    </div>
-                                    <div style="border-left:1px solid var(--border);"></div>
-                                    <div>
-                                        <div style="font-size:0.62rem;color:var(--muted);">SEF</div>
-                                        <div style="font-size:1.2rem;font-weight:800;color:#d97706;">${s.avgSEF}${s.avgSEF !== '—' ? '%' : ''}</div>
-                                    </div>
-                                </div>
-                                <div style="font-size:0.62rem;color:var(--muted);margin-top:6px;">${s.count} faculty</div>
-                            </div>
-                        `).join('')}
-                        ${stats.length === 0 ? '<p style="text-align:center;color:var(--muted);">No department data available.</p>' : ''}
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-};
-
 // ===== ANNEX D REPORT MODAL (CMO 19 format) =====
 window.showAnnexDReport = function(teacherId) {
     const t = getData('teachers', []).find(t => t.id === teacherId);
@@ -1553,14 +1558,14 @@ window.showAnnexDReport = function(teacherId) {
                 </tbody>
             </table>
 
-            <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">D. Development Plan (to be jointly accomplished by Supervisor and Faculty)</h4>
+            <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">D. Development Plan</h4>
             <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #ccc;">
                 <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;width:40%;border:1px solid #ccc;">Areas for Improvement</td><td style="padding:30px 8px;border:1px solid #ccc;"></td></tr>
                 <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;border:1px solid #ccc;">Proposed Learning and Development Activities</td><td style="padding:30px 8px;border:1px solid #ccc;"></td></tr>
                 <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;border:1px solid #ccc;">Action Plan</td><td style="padding:30px 8px;border:1px solid #ccc;"></td></tr>
             </table>
 
-            <p style="font-size:0.75rem;margin-bottom:16px;">I acknowledge that I have received and reviewed the faculty evaluation conducted for the period mentioned above. I understand that my signature below does not necessarily indicate agreement with the evaluation but confirms that I have been given the opportunity to discuss it with my supervisor.</p>
+            <p style="font-size:0.75rem;margin-bottom:16px;">I acknowledge that I have received and reviewed the faculty evaluation conducted for the period mentioned above...</p>
 
             <table style="width:100%;border-collapse:collapse;">
                 <tr>
@@ -1592,7 +1597,7 @@ window.printAnnexD = function() {
     w.print();
 };
 
-// Export enhanced report
+// Export detailed breakdown report
 window.exportEnhancedReport = function() {
     const teachers = getData('teachers', []).filter(t => !t.deleted);
     const subjects = getData('subjects', []);
@@ -1605,21 +1610,10 @@ window.exportEnhancedReport = function() {
         const teacherSubjects = subjects.filter(s => s.teacherId === teacher.id);
         const rating = calculateFinalRating(teacher.id);
         
-        // Calculate overall weighted SET
-        let totalWeightedScore = 0;
-        let totalStudentsCount = 0;
-        
         teacherSubjects.forEach(sub => {
             const classEvals = evals.filter(e => e.subjectId === sub.id && e.evaluatorType !== 'supervisor');
             const enrolledCount = (sub.enrolledIds || []).filter(id => students.find(s => s.id === id)).length;
             const avgScore = classEvals.length > 0 ? (classEvals.reduce((a,b)=>a+b.totalScore,0)/classEvals.length) : 0;
-
-            if (avgScore > 0) {
-                totalWeightedScore += (avgScore * enrolledCount);
-                totalStudentsCount += enrolledCount;
-            }
-
-            // avgScore already %, no /20 needed
             const classPercentage = Math.min(100, avgScore).toFixed(2);
             
             csv += `"${teacher.tid}","${teacher.name}","${teacher.dept || 'N/A'}","${sub.code}","${sub.name}",${enrolledCount},${classEvals.length},${avgScore.toFixed(2)},${classPercentage}%,${rating.weightedSET},${rating.studentPercentage}%,${rating.supervisorPercentage}%,${rating.finalPercentage}%,${rating.remarks}\n`;
@@ -1639,26 +1633,26 @@ window.exportEnhancedReport = function() {
     showToast('Enhanced report exported!', 'success');
 };
 
+// ===== INSTITUTIONAL FER GRAPH DATA TRENDS =====
 window.renderInstitutionalFER = function() {
     const teachers = getData('teachers', []).filter(t => !t.deleted);
-    // Group by department
     const deptMap = {};
     teachers.forEach(t => {
-        if (t.dept) {
-            if (!deptMap[t.dept]) deptMap[t.dept] = { totalScore: 0, count: 0 };
-            const rating = calculateFinalRating(t.id);
-            if (parseFloat(rating.finalPercentage) > 0) {
-                deptMap[t.dept].totalScore += parseFloat(rating.finalPercentage);
-                deptMap[t.dept].count++;
-            }
-        }
+        if (!t.dept) return;
+        if (!deptMap[t.dept]) deptMap[t.dept] = { setTotal: 0, setCount: 0, sefTotal: 0, sefCount: 0 };
+        const set = parseFloat(calculateWeightedSETRating(t.id));
+        const sefEvals = getData('evaluations', []).filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
+        const sef = sefEvals.length > 0 ? sefEvals[sefEvals.length-1].totalScore : 0;
+        if (set > 0) { deptMap[t.dept].setTotal += set; deptMap[t.dept].setCount++; }
+        if (sef > 0) { deptMap[t.dept].sefTotal += sef; deptMap[t.dept].sefCount++; }
     });
-    
-    const stats = Object.entries(deptMap).map(([deptCode, data]) => ({
+
+    const stats = Object.entries(deptMap).map(([deptCode, d]) => ({
         name: deptCode,
-        avg: data.count > 0 ? (data.totalScore / data.count).toFixed(2) : 0,
-        count: data.count
-    })).sort((a, b) => b.avg - a.avg);
+        avgSET: d.setCount > 0 ? (d.setTotal / d.setCount).toFixed(2) : '—',
+        avgSEF: d.sefCount > 0 ? (d.sefTotal / d.sefCount).toFixed(2) : '—',
+        count: d.setCount || d.sefCount
+    })).sort((a,b) => parseFloat(b.avgSET||0) - parseFloat(a.avgSET||0));
 
     const container = document.getElementById('institutionalFERContainer');
     if (container) {
@@ -1666,18 +1660,26 @@ window.renderInstitutionalFER = function() {
             <div class="card">
                 <div class="card-header-bar"><h3>Institutional Statistical Trends (FER)</h3></div>
                 <div class="card-body">
-                    <p style="font-size:0.8rem; color:var(--muted); margin-bottom:15px;">
-                        Broad performance patterns used by the President and VPAA for decision-making per CMO guidelines.
-                    </p>
-                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:15px;">
+                    <p style="font-size:0.8rem;color:var(--muted);margin-bottom:15px;">SET and SEF per department — displayed separately per CMO 19. Used by President and VPAA for institutional decision-making.</p>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:15px;">
                         ${stats.map(s => `
-                            <div style="padding:15px; border:1px solid var(--border); border-radius:8px; text-align:center;">
-                                <div style="font-size:0.7rem; font-weight:700;">${escapeHtml(s.name)}</div>
-                                <div style="font-size:1.4rem; font-weight:800; color:var(--primary);">${s.avg}%</div>
-                                <div style="font-size:0.65rem; color:var(--muted);">${s.count} faculty</div>
+                            <div style="padding:15px;border:1px solid var(--border);border-radius:8px;text-align:center;">
+                                <div style="font-size:0.75rem;font-weight:700;margin-bottom:8px;">${escapeHtml(s.name)}</div>
+                                <div style="display:flex;justify-content:space-around;">
+                                    <div>
+                                        <div style="font-size:0.62rem;color:var(--muted);">SET</div>
+                                        <div style="font-size:1.2rem;font-weight:800;color:#16a34a;">${s.avgSET}${s.avgSET !== '—' ? '%' : ''}</div>
+                                    </div>
+                                    <div style="border-left:1px solid var(--border);"></div>
+                                    <div>
+                                        <div style="font-size:0.62rem;color:var(--muted);">SEF</div>
+                                        <div style="font-size:1.2rem;font-weight:800;color:#d97706;">${s.avgSEF}${s.avgSEF !== '—' ? '%' : ''}</div>
+                                    </div>
+                                </div>
+                                <div style="font-size:0.62rem;color:var(--muted);margin-top:6px;">${s.count} faculty</div>
                             </div>
                         `).join('')}
-                        ${stats.length === 0 ? '<p style="text-align:center; color:var(--muted);">No department data available.</p>' : ''}
+                        ${stats.length === 0 ? '<p style="text-align:center;color:var(--muted);">No department data available.</p>' : ''}
                     </div>
                 </div>
             </div>
@@ -1746,9 +1748,8 @@ function exportReport() {
   showToast('Report exported!', 'success');
 }
 
-// ===== SUPERVISOR LIST (Supervisor Page) =====
+// ===== SUPERVISOR LIST =====
 window.renderSupervisorList = function(search = '') {
-  // Build dept filter pills for supervisor page
   const pillBar = document.getElementById('supervisorPageDeptFilterBar');
   if (pillBar) {
     const depts = ['COED','CCJS','CCIS','CON','CEA','COM','CAT','GS'];
@@ -1772,7 +1773,6 @@ window.renderSupervisorList = function(search = '') {
     return;
   }
 
-  // Group supervisors by department
   const deptGroups = {};
   filtered.forEach(t => {
     const dept = t.dept || 'Unassigned';
@@ -1782,7 +1782,6 @@ window.renderSupervisorList = function(search = '') {
 
   let html = '';
   Object.entries(deptGroups).forEach(([dept, supervisors]) => {
-    // Department header row
     html += `<tr style="background:linear-gradient(90deg,var(--primary-light,#eff6ff),transparent);">
       <td colspan="6" style="padding:8px 14px;">
         <div style="display:flex;align-items:center;gap:8px;">
@@ -1796,12 +1795,11 @@ window.renderSupervisorList = function(search = '') {
     supervisors.forEach(t => {
       const evals = getData('evaluations', []);
       const lastSef = evals.filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor').pop();
-      const rating = calculateWeightedSETRating(t.id);
       const roleLabel = t.deptRole === 'dean' ? '🎓 Dean' : t.deptRole === 'chairperson' ? '🪑 Chairperson' : '👤 Supervisor';
       const roleColor = t.deptRole === 'dean' ? '#7c3aed' : t.deptRole === 'chairperson' ? '#0369a1' : '#374151';
       const hasPassword = !!t.password;
 
-      html += `<tr>
+      html += `<tr onclick="showAnnexDReport('${t.id}')" title="Click to view Annex D" style="cursor:pointer;">
         <td>
           <strong>${escapeHtml(t.name)}</strong><br>
           <small style="font-family:'JetBrains Mono',monospace;color:var(--muted);">${escapeHtml(t.tid)}</small>
@@ -1820,11 +1818,7 @@ window.renderSupervisorList = function(search = '') {
           </div>
         </td>
         <td>
-          <div class="td-actions" style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn btn-primary btn-sm" onclick="openSEFModal('${t.id}')">
-              ${lastSef ? '📋 Update SEF' : '📋 Conduct SEF'}
-            </button>
-            <button class="btn btn-ghost btn-sm" onclick="showAnnexDReport('${t.id}')">📄 Annex D</button>
+          <div class="td-actions" style="display:flex;gap:6px;flex-wrap:wrap;" onclick="event.stopPropagation()">
             <button class="btn btn-ghost btn-sm" onclick="resetSupervisorPassword('${t.id}')">🔑 Reset PW</button>
           </div>
         </td>
@@ -1835,13 +1829,12 @@ window.renderSupervisorList = function(search = '') {
   tbody.innerHTML = html;
 };
 
-// Reset supervisor password (similar to student reset)
 window.resetSupervisorPassword = function(supervisorId) {
   const teachers = getData('teachers', []);
   const t = teachers.find(t => t.id === supervisorId);
   if (!t) return;
   const newPass = prompt(`Reset password for ${t.name}.\nLeave blank to reset to default (their ID: ${t.tid}):`);
-  if (newPass === null) return; // cancelled
+  if (newPass === null) return;
   const finalPass = newPass.trim() || t.tid;
   t.password = finalPass;
   setData('teachers', teachers);
@@ -1925,9 +1918,7 @@ window.saveSEFRating = function(teacherId) {
         return;
     }
 
-    // Formula: (Total Score / 75) x 100
     const computedRating = ((totalScore / 75) * 100).toFixed(2);
-
     const evals = getData('evaluations', []);
     evals.push({
         id: 'sef_' + Date.now(),
@@ -2032,34 +2023,36 @@ window.softDeleteSubject = function(id) {
 };
 
 // ===== SUPERVISOR DATA MIGRATION =====
-// Fixes any teachers already saved with facultyType missing or wrong.
-// Detects supervisors by: password set to their tid (default supervisor password),
-// or deptRole being dean/chairperson/supervisor, and marks them correctly.
-(function migrateSupervisorRecords() {
+// IMPORTANT: Only touches records where facultyType was NEVER set (null/undefined).
+// If facultyType is already 'regular' or 'supervisor' it means an admin explicitly
+// chose that value — we must never override it, or a supervisor demoted to regular
+// will flip back every page load.
+window.migrateSupervisorRecords = function() {
   const teachers = getData('teachers', []);
   let changed = false;
   teachers.forEach(t => {
     if (t.deleted) return;
+    // Skip any record that already has an explicit facultyType — admin set it intentionally.
+    if (t.facultyType === 'regular' || t.facultyType === 'supervisor') return;
+    // Only here: facultyType is missing/null (old record from before the field existed).
+    // Use deptRole to decide what it should be.
     const hasSupervisorRole = t.deptRole === 'dean' || t.deptRole === 'chairperson' || t.deptRole === 'supervisor';
-    const hasDefaultSupervisorPass = t.password && t.password === t.tid;
-    // If facultyType is wrong/missing but other indicators say supervisor, fix it
-    if (t.facultyType !== 'supervisor' && (hasSupervisorRole || hasDefaultSupervisorPass)) {
-      t.facultyType = 'supervisor';
-      // Ensure they have a password
-      if (!t.password) t.password = t.tid;
-      changed = true;
-    }
+    t.facultyType = hasSupervisorRole ? 'supervisor' : 'regular';
+    if (hasSupervisorRole && !t.password) t.password = t.tid;
+    changed = true;
   });
   if (changed) {
     setData('teachers', teachers);
-    console.log('Migration: fixed supervisor facultyType for affected records.');
+    console.log('Migration: assigned facultyType to legacy records that lacked it.');
   }
-})();
+};
+// Run once on initial script load (handles localStorage data before Firebase arrives)
+migrateSupervisorRecords();
 
 // Initialize Dashboard
 renderDashboard();
 
-// Firestore Sync Functions (from dashboard.html)
+// Firestore Sync Functions
 window.syncCollectionToFirestore = async function(key, value) {
     const MAP = {
         students: 'students', 

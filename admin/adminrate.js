@@ -484,27 +484,46 @@ if (typeof window.renderStudents === 'function') {
 // Fix renderTeachers: Group Regular Faculty by Department and exclude Supervisors
 if (typeof window.renderTeachers === 'function') {
     window.renderTeachers = function(search = '') {
+        // 1. Sync search input (same pattern as admin.js)
+        const searchInput = document.getElementById('teacherSearchInput');
+        if (searchInput && search && searchInput.value !== search) searchInput.value = search;
+        const liveSearch = searchInput ? searchInput.value : search;
+
+        // 2. Rebuild dept filter pills (delegates to adminfeatures.js)
+        if (typeof buildTeacherDeptPills === 'function') buildTeacherDeptPills();
+
+        // 3. Read active dept filter — prefer the _teacherDeptFilter variable from
+        //    adminfeatures.js; fall back to the dataset attribute on the bar element.
+        const deptActive = (typeof _teacherDeptFilter !== 'undefined' ? _teacherDeptFilter : null)
+            ?? (document.getElementById('teacherDeptFilterBar')?.dataset.active || '');
+
         const teachers = getData('teachers', []).filter(t => !t.deleted);
         const subjects = getData('subjects', []);
         
-        // 1. CRITICAL: Filter out supervisors so they don't appear in the Faculty table
+        // 4. CRITICAL: Filter out supervisors so they don't appear in the Faculty table
         const regularFaculty = teachers.filter(t => t.facultyType !== 'supervisor');
         
-        // 2. Apply Search Filter
-        const filtered = regularFaculty.filter(t => 
-            t.name.toLowerCase().includes(search.toLowerCase()) || 
-            t.tid.toLowerCase().includes(search.toLowerCase())
-        );
+        // 5. Apply Search + Dept Filter
+        const q = liveSearch.toLowerCase();
+        const filtered = regularFaculty.filter(t => {
+            const matchesSearch = !q ||
+                t.name.toLowerCase().includes(q) ||
+                t.tid.toLowerCase().includes(q) ||
+                (t.dept || '').toLowerCase().includes(q);
+            const matchesDept = !deptActive || t.dept === deptActive;
+            return matchesSearch && matchesDept;
+        });
         
         const tbody = document.getElementById('teachersTbody');
         if (!tbody) return;
 
         if (!filtered.length) {
             tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">No regular faculty found.</td></tr>';
+            if (typeof renderSupervisorTable === 'function') renderSupervisorTable(liveSearch);
             return;
         }
 
-        // 3. Group Regular Faculty by Department
+        // 6. Group Regular Faculty by Department
         const groupedByDept = {};
         filtered.forEach(t => {
             const deptKey = t.dept || 'UNASSIGNED';
@@ -573,9 +592,9 @@ if (typeof window.renderTeachers === 'function') {
         
         tbody.innerHTML = html;
         
-        // 5. Always trigger the supervisor table update alongside this one
+        // 7. Always trigger the supervisor table update alongside this one
         if (typeof window.renderSupervisorTable === 'function') {
-            window.renderSupervisorTable();
+            window.renderSupervisorTable(liveSearch);
         }
     };
 }

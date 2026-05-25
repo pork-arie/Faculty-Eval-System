@@ -181,14 +181,13 @@ if (cfg.icon && (cfg.icon.includes('.jpg') || cfg.icon.includes('.png') || cfg.i
         const setSc = calculateWeightedSETRating(t.id);
         const sefEvs = getData('evaluations', []).filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
         const sefSc = sefEvs.length > 0 ? sefEvs[sefEvs.length-1].totalScore.toFixed(2) : null;
-        return `<tr>
+        return `<tr onclick="showAnnexDReport('${t.id}')" title="Click to view Annex D" style="cursor:pointer;">
           <td><span style="font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;">${escapeHtml(t.tid)}</span></td>
           <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong></td>
           <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
           <td><strong style="font-size:0.82rem;">SET: ${setSc}% | SEF: ${sefSc ? sefSc + '%' : 'N/A'}</strong></td>
-          <td>
+          <td onclick="event.stopPropagation()">
            <button class="btn btn-ghost btn-sm" onclick="softDeleteTeacher('${t.id}')" title="Archive">🗑️</button>
-           </div>
           </td>
         </tr>`;
       }).join('')
@@ -205,14 +204,13 @@ if (cfg.icon && (cfg.icon.includes('.jpg') || cfg.icon.includes('.png') || cfg.i
         const roleColor = t.deptRole === 'dean' ? '#7c3aed' : t.deptRole === 'chairperson' ? '#0369a1' : '#374151';
         const sefEvs = getData('evaluations', []).filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
         const sefCount = sefEvs.length;
-        return `<tr>
+        return `<tr onclick="showAnnexDReport('${t.id}')" title="Click to view Annex D" style="cursor:pointer;">
           <td><span style="font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;">${escapeHtml(t.tid)}</span></td>
           <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong></td>
           <td><span style="font-size:0.75rem;font-weight:600;color:${roleColor};">${roleLabel}</span></td>
           <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
           <td><span style="font-size:0.78rem;">${sefCount} SEF rating${sefCount !== 1 ? 's' : ''} given</span></td>
-          <td>
-            <button class="btn btn-ghost btn-sm" onclick="openSEFModal('${t.id}')" title="Conduct SEF">📋 SEF</button>
+          <td onclick="event.stopPropagation()">
             <button class="btn btn-ghost btn-sm" onclick="softDeleteTeacher('${t.id}')" title="Archive">🗑️</button>
           </td>
         </tr>`;
