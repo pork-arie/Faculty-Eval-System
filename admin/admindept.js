@@ -7,7 +7,7 @@ const DEFAULT_DEPT_CONFIG = {
   CEA:  { name: 'College of Engineering & Architecture', short: 'CEA', desc: 'Covers civil, electrical, and architectural engineering disciplines.', icon: '../icons/cea.png', colorClass: 'dept-CEA' },
   COM:  { name: 'College of Management', short: 'COM', desc: 'Business administration, entrepreneurship, and management studies.', icon: '../icons/com.png', colorClass: 'dept-COM' },
   CAT:  { name: 'College of Agriculture & Technology', short: 'CAT', desc: 'Synthesizes agricultural sciences, technological innovation, and sustainable development to drive global food security', icon: '../icons/cat.jpg', colorClass: 'dept-CAT' },
-  GS:   { name: 'Graduate School', short: 'GS', desc: 'Advanced studies and research programs for masteral and doctoral degrees.', icon: '../icons/gradaute.png', colorClass: 'dept-GS' }
+  GS:   { name: 'Graduate School', short: 'GS', desc: 'Advanced studies and research programs for masteral and doctoral degrees.', icon: '../icons/GS.jpg', colorClass: 'dept-GS' }
 };
 
 

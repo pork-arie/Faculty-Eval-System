@@ -105,6 +105,21 @@ window.addEventListener('load', () => {
 <style>
 /* Only critical overrides that can't be in external CSS */
 #app { display: flex; min-height: 100vh; }
+/* Annex tab styles */
+.annex-tab {
+  padding: 10px 18px;
+  border: none;
+  background: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.annex-tab:hover { color: var(--primary); }
+.annex-tab-active { color: var(--primary) !important; border-bottom-color: var(--primary) !important; }
 </style>
 </head>
 <body>
@@ -672,7 +687,19 @@ window.addEventListener('load', () => {
               <option value="supervisor">👤 General Supervisor</option>
             </select>
             <small style="color:var(--muted);font-size:0.72rem;margin-top:4px;display:block;">
-              Default login password will be set to their Teacher ID. They can rate teachers from the supervisor login portal.
+              Supervisors log in using their Teacher ID and the password below.
+            </small>
+          </div>
+          <!-- Password field — only visible when facultyType is supervisor -->
+          <div class="form-group" id="tchPasswordGroup" style="display:none;">
+            <label class="form-label">Supervisor Login Password</label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input class="form-control" id="tchPassword" type="text" placeholder="Leave blank to keep current password" style="flex:1;"/>
+              <button type="button" class="btn btn-ghost btn-sm" style="white-space:nowrap;font-size:0.75rem;" onclick="resetPasswordToId()">🔑 Reset to ID</button>
+            </div>
+            <small style="color:var(--muted);font-size:0.72rem;margin-top:4px;display:block;">
+              When adding a new supervisor, leave blank to auto-set password to their Teacher ID.
+              When editing, leave blank to keep the existing password unchanged. Click "Reset to ID" to restore default.
             </small>
           </div>
         </div>
@@ -795,15 +822,22 @@ window.addEventListener('load', () => {
       </div>
     </div>
 
-    <!-- ANNEX D MODAL -->
+    <!-- ANNEX C & D MODAL -->
     <div class="modal-overlay" id="annexDModal">
       <div class="modal modal-lg">
         <div class="modal-header">
-          <h3 id="annexDModalTitle">Faculty Evaluation & Development Acknowledgement Form</h3>
+          <div>
+            <h3 id="annexDModalTitle">Faculty Evaluation Reports</h3>
+            <span style="font-size:0.72rem;color:var(--muted);" id="annexModalSubtitle"></span>
+          </div>
           <div style="display:flex;gap:8px;align-items:center;">
-            <button class="btn btn-ghost btn-sm" onclick="printAnnexD()">🖨️ Print</button>
+            <button class="btn btn-ghost btn-sm" onclick="printActiveAnnex()">🖨️ Print</button>
             <button class="modal-close" onclick="closeModal('annexDModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
+        </div>
+        <div style="display:flex;gap:0;border-bottom:2px solid var(--border);padding:0 20px;">
+          <button id="annexTabC" class="annex-tab annex-tab-active" onclick="switchAnnexTab('C')">📊 Annex C — IFER</button>
+          <button id="annexTabD" class="annex-tab" onclick="switchAnnexTab('D')">📋 Annex D — FEDAF</button>
         </div>
         <div class="modal-body" id="annexDModalBody"></div>
       </div>

@@ -84,6 +84,7 @@
 /* Improved table responsiveness */
 .table-wrap {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     border-radius: var(--radius);
 }
 
@@ -98,12 +99,16 @@
     padding: 10px 12px;
     text-align: left;
     border-bottom: 1px solid var(--border);
+    vertical-align: middle;
 }
 
 .data-table th {
     background: var(--bg);
     font-weight: 700;
     color: var(--muted-foreground);
+    white-space: normal;
+    word-break: break-word;
+    vertical-align: bottom;
 }
 
 /* Class details expandable row */

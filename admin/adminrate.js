@@ -571,17 +571,15 @@ if (typeof window.renderTeachers === 'function') {
             facultyList.forEach(t => {
                 const teacherSubs = subjects.filter(s => s.teacherId === t.id);
                 html += `
-                <tr class="dept-group-student-row">
+                <tr class="dept-group-student-row teacher-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
                     <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
                     <td><strong>${escapeHtml(t.name)}</strong></td>
                     <td><span class="dept-tag-inline">${escapeHtml(deptCode)}</span></td>
                     <td><span class="badge badge-primary">${teacherSubs.length} Subject${teacherSubs.length !== 1 ? 's' : ''}</span></td>
                     <td><span class="badge ${t.status === 'active' ? 'badge-success' : 'badge-danger'}">${t.status}</span></td>
                     <td>
-                        <div class="td-actions">
+                        <div class="td-actions" onclick="event.stopPropagation()">
                             <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditTeacherModal('${t.id}')" title="Edit"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-                            <button class="btn btn-ghost btn-icon btn-sm" onclick="openSEFModal('${t.id}')" title="Conduct SEF">📋</button>
-                            <button class="btn btn-ghost btn-icon btn-sm" onclick="showAnnexDReport('${t.id}')" title="View Annex D">📄</button>
                             <button class="btn btn-ghost btn-icon btn-sm" onclick="toggleTeacherStatus('${t.id}')" title="Toggle Status"><svg width="14" height="14" fill="none" stroke="${t.status === 'active' ? 'var(--muted)' : 'var(--success)'}" stroke-width="2" viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 11-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
                             <button class="btn btn-ghost btn-icon btn-sm" onclick="deleteTeacher('${t.id}')" title="Delete"><svg width="14" height="14" fill="none" stroke="var(--danger)" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>
                         </div>

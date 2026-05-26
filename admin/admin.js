@@ -615,7 +615,7 @@ window.renderTeachers = function(search = '') {
     facultyList.forEach(t => {
       const tSubs = subjects.filter(s => s.teacherId === t.id);
       html += `
-      <tr class="teacher-row dept-group-student-row" onclick="showAnnexDReport('${t.id}')" title="Click to view Annex D" style="cursor:pointer;">
+      <tr class="teacher-row dept-group-student-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
         <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
         <td><strong>${escapeHtml(t.name)}</strong></td>
         <td><span class="dept-tag-inline">${escapeHtml(t.dept || '—')}</span></td>
@@ -735,7 +735,7 @@ window.renderSupervisorTable = function(search) {
       const tSubs = subjects.filter(s => s.teacherId === t.id);
       const roleLabel = t.deptRole === 'dean' ? '🎓 Dean' : t.deptRole === 'chairperson' ? '🪑 Chairperson' : '👤 Supervisor';
       const roleColor = t.deptRole === 'dean' ? '#7c3aed' : t.deptRole === 'chairperson' ? '#0369a1' : '#374151';
-      html += `<tr class="teacher-row dept-group-student-row" onclick="showAnnexDReport('${t.id}')" title="Click to view Annex D" style="cursor:pointer;">
+      html += `<tr class="teacher-row dept-group-student-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
         <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
         <td><strong>${escapeHtml(t.name)}</strong></td>
         <td><span class="dept-tag-inline">${escapeHtml(t.dept || '—')}</span></td>
@@ -859,6 +859,11 @@ window.openAddSupervisorModal = function() {
   if (drGrp) drGrp.style.display = '';
   const ftGrp = document.getElementById('tchFacultyTypeGroup');
   if (ftGrp) ftGrp.style.display = 'none';
+  // Show password field, clear it (will auto-set to TID on save if blank)
+  const pwGrp = document.getElementById('tchPasswordGroup');
+  const pwEl  = document.getElementById('tchPassword');
+  if (pwGrp) pwGrp.style.display = '';
+  if (pwEl)  pwEl.value = '';
   openModal('addTeacherModal');
 };
 
@@ -866,10 +871,14 @@ window.onFacultyTypeChange = function(val) {
   window._pendingFacultyType = val;
   const hidden = document.getElementById('tchFacultyTypeHidden');
   if (hidden) hidden.value = val;
-  
+
   const grp = document.getElementById('tchDeptRoleGroup');
   if (grp) grp.style.display = val === 'supervisor' ? '' : 'none';
-  
+
+  // Show password field only for supervisors
+  const pwGrp = document.getElementById('tchPasswordGroup');
+  if (pwGrp) pwGrp.style.display = val === 'supervisor' ? '' : 'none';
+
   if (!editTeacherId) {
     const titleEl = document.getElementById('teacherModalTitle');
     const btnEl = document.getElementById('saveTeacherBtn');
@@ -900,6 +909,11 @@ function openEditTeacherModal(id) {
   if (drGrp) drGrp.style.display = (resolvedType === 'supervisor') ? '' : 'none';
   const ftGrp = document.getElementById('tchFacultyTypeGroup');
   if (ftGrp) ftGrp.style.display = '';
+  // Password field: only for supervisors, pre-fill with current password so admin can see/change it
+  const pwGrp = document.getElementById('tchPasswordGroup');
+  const pwEl  = document.getElementById('tchPassword');
+  if (pwGrp) pwGrp.style.display = resolvedType === 'supervisor' ? '' : 'none';
+  if (pwEl)  pwEl.value = resolvedType === 'supervisor' ? (t.password || t.tid || '') : '';
   openModal('addTeacherModal');
 }
 
@@ -936,41 +950,66 @@ function saveTeacher() {
   
   const teachers = getData('teachers', []);
   
+  // Read the optional supervisor password field
+  const pwFieldVal = (document.getElementById('tchPassword') || {}).value?.trim() || '';
+
   if (editTeacherId) {
     const idx = teachers.findIndex(t => t.id === editTeacherId);
-    teachers[idx].tid = tid; 
-    teachers[idx].name = name; 
+    const existing = teachers[idx];
+    teachers[idx].tid = tid;
+    teachers[idx].name = name;
     teachers[idx].dept = dept;
     teachers[idx].category = category;
-    teachers[idx].facultyType = facultyType; 
+    teachers[idx].facultyType = facultyType;
     teachers[idx].deptRole = deptRole;
-    addAudit('Edit Teacher', `Updated: ${name} (${tid})`);
-    showToast('Teacher updated!', 'success');
+
+    if (facultyType === 'supervisor') {
+      if (pwFieldVal) {
+        // Admin explicitly set a new password
+        teachers[idx].password = pwFieldVal;
+        addAudit('Edit Supervisor', `Updated: ${name} (${tid}) — password changed`);
+        showToast(`Supervisor updated! New password: ${pwFieldVal}`, 'success');
+      } else {
+        // Keep existing password; if none exists (e.g. promoted from regular), default to TID
+        if (!existing.password) teachers[idx].password = tid;
+        addAudit('Edit Supervisor', `Updated: ${name} (${tid})`);
+        showToast('Supervisor updated!', 'success');
+      }
+    } else {
+      // Demoted to regular — clear supervisor password
+      delete teachers[idx].password;
+      addAudit('Edit Teacher', `Updated: ${name} (${tid}) — now regular faculty`);
+      showToast('Teacher updated!', 'success');
+    }
   } else {
     if (teachers.find(t => t.tid === tid && !t.deleted)) {
       showToast('Teacher ID already exists.', 'error');
       return;
     }
-    
-    const newTeacher = { 
-      id: 'tch'+Date.now(), 
-      tid, 
-      name, 
+
+    const newTeacher = {
+      id: 'tch'+Date.now(),
+      tid,
+      name,
       dept,
       category,
-      facultyType, 
-      deptRole, 
-      status:'active', 
-      deleted: false 
+      facultyType,
+      deptRole,
+      status:'active',
+      deleted: false
     };
-    
+
     if (facultyType === 'supervisor') {
-      newTeacher.password = tid;
+      // Use the password field value if provided, otherwise default to TID
+      newTeacher.password = pwFieldVal || tid;
+      addAudit('Add Supervisor', `Added: ${name} (${tid}) — login password: ${newTeacher.password}`);
+      showToast(`Supervisor added! Login password: ${newTeacher.password}`, 'success');
+    } else {
+      addAudit('Add Teacher', `Added: ${name} (${tid})`);
+      showToast('Teacher added!', 'success');
     }
-    
+
     teachers.push(newTeacher);
-    addAudit('Add Teacher', `Added: ${name} (${tid})${facultyType === 'supervisor' ? ' [Supervisor — default password: ' + tid + ']' : ''}`);
-    showToast(facultyType === 'supervisor' ? `Supervisor added! Default login password: ${tid}` : 'Teacher added!', 'success');
   }
   
   setData('teachers', teachers);
@@ -1280,28 +1319,28 @@ window.renderReports = function() {
                 <span class="badge badge-primary" style="font-size:0.7rem;">CMO 19 — SET &amp; SEF Displayed Separately</span>
             </div>
             <div class="table-wrap">
-                <table class="data-table">
+                <table class="data-table" style="table-layout:auto;width:100%;">
                     <thead>
                         <tr>
-                            <th>Rank</th>
+                            <th style="text-align:center;width:52px;">Rank</th>
                             <th>Faculty Name</th>
                             <th>Department</th>
-                            <th>Classes</th>
-                            <th>Evaluations</th>
-                            <th style="color:#16a34a;">SET Rating</th>
-                            <th style="color:#d97706;">SEF Rating</th>
+                            <th style="text-align:center;">Classes</th>
+                            <th style="text-align:center;">Evals</th>
+                            <th style="color:#16a34a;text-align:center;">SET Rating</th>
+                            <th style="color:#d97706;text-align:center;">SEF Rating</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${regularFaculty.map((teacher, idx) => `
-                            <tr class="report-teacher-row" onclick="showAnnexDReport('${teacher.id}')" title="Click to view Annex D">
-                                <td><span class="rank-badge rank-${idx+1}">${idx+1}</span></td>
-                                <td><strong>${escapeHtml(teacher.name)}</strong><br><small>${teacher.tid}</small></td>
+                            <tr class="report-teacher-row" onclick="showAnnexReports('${teacher.id}')" title="Click to view Annex C &amp; D">
+                                <td style="text-align:center;"><span class="rank-badge rank-${idx+1}">${idx+1}</span></td>
+                                <td><strong>${escapeHtml(teacher.name)}</strong><br><small style="color:var(--muted);">${teacher.tid}</small></td>
                                 <td>${escapeHtml(teacher.dept || '—')}</td>
-                                <td><span class="badge badge-info">${teacher.totalClasses}</span></td>
-                                <td><span class="badge badge-secondary">${teacher.totalEvaluations}</span></td>
-                                <td><strong style="color:#16a34a;font-size:1.1rem;">${teacher.overallSET}${teacher.overallSET !== '—' ? '%' : ''}</strong></td>
-                                <td><strong style="color:#d97706;font-size:1.1rem;">${teacher.sefScore}${teacher.sefScore !== '—' ? '%' : ''}</strong></td>
+                                <td style="text-align:center;"><span class="badge badge-info">${teacher.totalClasses}</span></td>
+                                <td style="text-align:center;"><span class="badge badge-secondary">${teacher.totalEvaluations}</span></td>
+                                <td style="text-align:center;"><strong style="color:#16a34a;font-size:1.05rem;">${teacher.overallSET}${teacher.overallSET !== '—' ? '%' : ''}</strong></td>
+                                <td style="text-align:center;"><strong style="color:#d97706;font-size:1.05rem;">${teacher.sefScore}${teacher.sefScore !== '—' ? '%' : ''}</strong></td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -1313,24 +1352,24 @@ window.renderReports = function() {
         <div class="card" style="margin-bottom:20px;">
             <div class="card-header-bar"><h3>Supervisors</h3></div>
             <div class="table-wrap">
-                <table class="data-table">
+                <table class="data-table" style="table-layout:auto;width:100%;">
                     <thead>
                         <tr>
                             <th>Faculty Name</th>
                             <th>Department</th>
-                            <th style="color:#16a34a;">SET Rating</th>
-                            <th style="color:#d97706;">SEF Rating</th>
-                            <th>Status</th>
+                            <th style="color:#16a34a;text-align:center;">SET Rating</th>
+                            <th style="color:#d97706;text-align:center;">SEF Rating</th>
+                            <th style="text-align:center;">Status</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${supervisorFaculty.map(teacher => `
-                            <tr class="report-teacher-row" onclick="showAnnexDReport('${teacher.id}')" title="Click to view Annex D">
-                                <td><strong>${escapeHtml(teacher.name)}</strong><br><small>${teacher.tid}</small></td>
+                            <tr class="report-teacher-row" onclick="showAnnexReports('${teacher.id}')" title="Click to view Annex C &amp; D">
+                                <td><strong>${escapeHtml(teacher.name)}</strong><br><small style="color:var(--muted);">${teacher.tid}</small></td>
                                 <td>${escapeHtml(teacher.dept || '—')}</td>
-                                <td><strong style="color:#16a34a;">${teacher.overallSET}${teacher.overallSET !== '—' ? '%' : ''}</strong></td>
-                                <td><strong style="color:#d97706;">${teacher.sefScore}${teacher.sefScore !== '—' ? '%' : ''}</strong></td>
-                                <td><span class="badge ${teacher.status === 'active' ? 'badge-success' : 'badge-danger'}">${teacher.status}</span></td>
+                                <td style="text-align:center;"><strong style="color:#16a34a;">${teacher.overallSET}${teacher.overallSET !== '—' ? '%' : ''}</strong></td>
+                                <td style="text-align:center;"><strong style="color:#d97706;">${teacher.sefScore}${teacher.sefScore !== '—' ? '%' : ''}</strong></td>
+                                <td style="text-align:center;"><span class="badge ${teacher.status === 'active' ? 'badge-success' : 'badge-danger'}">${teacher.status}</span></td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -1597,7 +1636,314 @@ window.printAnnexD = function() {
     w.print();
 };
 
-// Export detailed breakdown report
+// ===== COMBINED ANNEX C & D VIEWER =====
+// Stores current teacher id for tab switching
+window._currentAnnexTeacherId = null;
+
+window.showAnnexReports = function(teacherId) {
+    window._currentAnnexTeacherId = teacherId;
+    const t = getData('teachers', []).find(t => t.id === teacherId);
+    if (!t) return;
+
+    // Set modal title
+    const titleEl = document.getElementById('annexDModalTitle');
+    const subtitleEl = document.getElementById('annexModalSubtitle');
+    if (titleEl) titleEl.textContent = 'Faculty Evaluation Reports';
+    if (subtitleEl) subtitleEl.textContent = t.name + ' — ' + (t.dept || '—');
+
+    // Reset tabs
+    const tabC = document.getElementById('annexTabC');
+    const tabD = document.getElementById('annexTabD');
+    if (tabC) { tabC.className = 'annex-tab annex-tab-active'; }
+    if (tabD) { tabD.className = 'annex-tab'; }
+
+    // Default: show Annex C
+    buildAnnexCContent(teacherId);
+    openModal('annexDModal');
+};
+
+window.switchAnnexTab = function(tab) {
+    const teacherId = window._currentAnnexTeacherId;
+    if (!teacherId) return;
+    const tabC = document.getElementById('annexTabC');
+    const tabD = document.getElementById('annexTabD');
+    if (tab === 'C') {
+        if (tabC) tabC.className = 'annex-tab annex-tab-active';
+        if (tabD) tabD.className = 'annex-tab';
+        buildAnnexCContent(teacherId);
+    } else {
+        if (tabC) tabC.className = 'annex-tab';
+        if (tabD) tabD.className = 'annex-tab annex-tab-active';
+        buildAnnexDContent(teacherId);
+    }
+};
+
+window.printActiveAnnex = function() {
+    const printContent = document.getElementById('annexPrintArea');
+    if (!printContent) return;
+    const tabD = document.getElementById('annexTabD');
+    const isD = tabD && tabD.classList.contains('annex-tab-active');
+    const w = window.open('', '_blank');
+    w.document.write(`<html><head><title>${isD ? 'Annex D — FEDAF' : 'Annex C — IFER'}</title><style>body{font-family:serif;margin:30px;font-size:12px;}table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ccc;padding:6px 8px;}@media print{button{display:none}}</style></head><body>${printContent.innerHTML}</body></html>`);
+    w.document.close();
+    w.print();
+};
+
+// Annex C — Individual Faculty Evaluation Report
+window.buildAnnexCContent = function(teacherId) {
+    const t = getData('teachers', []).find(t => t.id === teacherId);
+    if (!t) return;
+    const sy = getActiveSY();
+    const subjects = getData('subjects', []).filter(s => s.teacherId === teacherId && s.loadType !== 'Overload' && !s.isLabSchool);
+    const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor');
+    const students = getData('students', []).filter(s => !s.deleted);
+    const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor');
+    const sefScore = sefEvals.length > 0 ? sefEvals[sefEvals.length-1].totalScore.toFixed(2) : '—';
+
+    let totalStudents = 0;
+    let totalWeightedScore = 0;
+
+    const classBreakdown = subjects.map((sub, idx) => {
+        const classEvals = evals.filter(e => e.subjectId === sub.id);
+        const enrolledIds = (sub.enrolledIds || []).filter(id => students.find(s => s.id === id));
+        const enrolledCount = enrolledIds.length;
+        const avgScore = classEvals.length > 0 ? classEvals.reduce((a, b) => a + b.totalScore, 0) / classEvals.length : 0;
+        const weightedScore = avgScore * enrolledCount;
+        totalStudents += enrolledCount;
+        totalWeightedScore += weightedScore;
+        return { seq: idx + 1, sub, enrolledCount, evalCount: classEvals.length, avgScore: avgScore.toFixed(2), weightedScore: weightedScore.toFixed(0) };
+    });
+
+    const overallSET = totalStudents > 0 ? (totalWeightedScore / totalStudents).toFixed(2) : '0.00';
+
+    document.getElementById('annexDModalBody').innerHTML = `
+    <div id="annexPrintArea" style="font-family:serif;font-size:0.88rem;padding:4px 0;min-width:0;">
+        <div style="text-align:center;font-weight:700;font-size:1rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.03em;">Individual Faculty Evaluation Report</div>
+        <div style="text-align:center;font-size:0.75rem;color:#666;margin-bottom:16px;">(ANNEX C — CMO No. 19, Series of 2025)</div>
+
+        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">A. Faculty Information</h4>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;table-layout:fixed;">
+            <colgroup><col style="width:42%"/><col style="width:58%"/></colgroup>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Name of Faculty Evaluated</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.name)}</td></tr>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Department/College</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.dept || '—')}</td></tr>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Current Faculty Rank</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.rank || '—')}</td></tr>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Semester/Term &amp; Academic Year</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${sy ? sy.activeSem + ' / ' + sy.year : '—'}</td></tr>
+        </table>
+
+        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">B. Summary of Average SET Rating</h4>
+        <p style="font-size:0.75rem;color:#555;margin:0 0 8px;padding:0 4px;">
+            <strong>Step 1:</strong> Get the average SET rating for each class. &nbsp;
+            <strong>Step 2:</strong> Multiply the number of students in each class with its average SET rating to get the Weighted SET Score per class. &nbsp;
+            <strong>Step 3:</strong> Get the total number of students and the total weighted SET score.
+        </p>
+        <div style="overflow-x:auto;margin-bottom:16px;">
+        <table style="width:100%;min-width:480px;border-collapse:collapse;border:1px solid #ccc;table-layout:fixed;">
+            <colgroup>
+                <col style="width:6%"/>
+                <col style="width:16%"/>
+                <col style="width:28%"/>
+                <col style="width:14%"/>
+                <col style="width:18%"/>
+                <col style="width:18%"/>
+            </colgroup>
+            <thead>
+                <tr style="background:#e8e8e8;">
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">SEQ</th>
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;white-space:normal;word-break:break-word;vertical-align:top;">(1) COURSE CODE</th>
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;white-space:normal;word-break:break-word;vertical-align:top;">(2) COURSE / SUBJECT</th>
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">(3) NO. OF STUDENTS</th>
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">(4) AVG SET RATING</th>
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">(3×4) WEIGHTED SCORE</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${classBreakdown.length > 0 ? classBreakdown.map(cr => `
+                <tr>
+                    <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.seq}</td>
+                    <td style="padding:5px;border:1px solid #ccc;font-style:italic;font-size:0.78rem;word-break:break-word;">${escapeHtml(cr.sub.code)}</td>
+                    <td style="padding:5px;border:1px solid #ccc;font-size:0.78rem;word-break:break-word;">${escapeHtml(cr.sub.name)}</td>
+                    <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.enrolledCount}</td>
+                    <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.avgScore}</td>
+                    <td style="padding:5px;border:1px solid #ccc;text-align:center;font-weight:600;font-size:0.78rem;">${cr.weightedScore}</td>
+                </tr>`).join('') : `<tr><td colspan="6" style="padding:10px;text-align:center;color:#888;font-size:0.8rem;">No regular-load subjects.</td></tr>`}
+                <tr style="background:#f8f8f8;font-weight:700;">
+                    <td colspan="3" style="padding:6px 8px;border:1px solid #ccc;text-align:right;font-size:0.78rem;">TOTAL</td>
+                    <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${totalStudents}</td>
+                    <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">TOTAL</td>
+                    <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${totalWeightedScore.toFixed(0)}</td>
+                </tr>
+            </tbody>
+        </table>
+        </div>
+
+        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">C. SET and SEF Ratings</h4>
+        <p style="font-size:0.75rem;color:#555;margin:0 0 8px;padding:0 4px;">
+            <strong>Computation:</strong> Calculate the Overall SET Rating by dividing the total Weighted SET Score by the total number of students (${totalWeightedScore.toFixed(0)} ÷ ${totalStudents} = ${overallSET}).
+        </p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #ccc;table-layout:fixed;">
+            <colgroup><col style="width:50%"/><col style="width:50%"/></colgroup>
+            <thead>
+                <tr style="background:#e8e8e8;">
+                    <th style="padding:8px;text-align:center;border:1px solid #ccc;font-size:0.8rem;">SET Rating</th>
+                    <th style="padding:8px;text-align:center;border:1px solid #ccc;font-size:0.8rem;">*SEF Rating</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="padding:16px 8px;text-align:center;border:1px solid #ccc;">
+                        <div style="font-size:0.7rem;color:#555;margin-bottom:4px;">Student Evaluation of Teachers</div>
+                        <strong style="font-size:1.6rem;color:#16a34a;">${overallSET}</strong>
+                    </td>
+                    <td style="padding:16px 8px;text-align:center;border:1px solid #ccc;">
+                        <div style="font-size:0.7rem;color:#555;margin-bottom:4px;">Supervisor's Evaluation of Faculty</div>
+                        <strong style="font-size:1.6rem;color:#d97706;">${sefScore !== '—' ? sefScore : '—'}</strong>
+                    </td>
+                </tr>
+                <tr style="background:#f8f8f8;font-weight:700;">
+                    <td colspan="2" style="padding:7px;text-align:center;border:1px solid #ccc;font-size:0.78rem;">OVERALL RATING</td>
+                </tr>
+            </tbody>
+        </table>
+        <p style="font-size:0.72rem;color:#666;margin-bottom:16px;font-style:italic;">*Note: rating given by the supervisor using the SEF instrument (Annex B)</p>
+
+        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">D. Summary of Qualitative Comments and Suggestions</h4>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:10px;border:1px solid #ccc;table-layout:fixed;">
+            <colgroup><col style="width:10%"/><col style="width:90%"/></colgroup>
+            <thead>
+                <tr style="background:#e8e8e8;">
+                    <th style="padding:7px 8px;border:1px solid #ccc;font-size:0.78rem;text-align:center;">Seq</th>
+                    <th style="padding:7px 8px;border:1px solid #ccc;font-size:0.78rem;">Comments and Suggestions from the Students</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${[1,2,3,4,5].map(n => `<tr><td style="padding:12px 8px;border:1px solid #ccc;text-align:center;">${n}</td><td style="padding:12px 8px;border:1px solid #ccc;"></td></tr>`).join('')}
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;text-align:center;color:#888;font-style:italic;" colspan="2">(add additional rows if necessary)</td></tr>
+            </tbody>
+        </table>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #ccc;table-layout:fixed;">
+            <colgroup><col style="width:10%"/><col style="width:90%"/></colgroup>
+            <thead>
+                <tr style="background:#e8e8e8;">
+                    <th style="padding:7px 8px;border:1px solid #ccc;font-size:0.78rem;text-align:center;">Seq</th>
+                    <th style="padding:7px 8px;border:1px solid #ccc;font-size:0.78rem;">Comments and Suggestions from the Supervisor</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${[1,2,3,4,5].map(n => `<tr><td style="padding:12px 8px;border:1px solid #ccc;text-align:center;">${n}</td><td style="padding:12px 8px;border:1px solid #ccc;"></td></tr>`).join('')}
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;text-align:center;color:#888;font-style:italic;" colspan="2">(add additional rows if necessary)</td></tr>
+            </tbody>
+        </table>
+
+        <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:180px;">
+                <div style="font-size:0.75rem;font-weight:600;margin-bottom:4px;">Prepared by:</div>
+                <div style="margin-bottom:6px;font-size:0.75rem;">Signature of Staff: <span style="border-bottom:1px solid #333;display:inline-block;width:55%;"></span></div>
+                <div style="margin-bottom:6px;font-size:0.75rem;">Name of Staff: <span style="border-bottom:1px solid #333;display:inline-block;width:58%;"></span></div>
+                <div style="font-size:0.75rem;">Date: <span style="border-bottom:1px solid #333;display:inline-block;width:70%;"></span></div>
+            </div>
+            <div style="flex:1;min-width:180px;">
+                <div style="font-size:0.75rem;font-weight:600;margin-bottom:4px;">Reviewed by:</div>
+                <div style="margin-bottom:6px;font-size:0.75rem;">Signature of Authorized Official: <span style="border-bottom:1px solid #333;display:inline-block;width:35%;"></span></div>
+                <div style="margin-bottom:6px;font-size:0.75rem;">Name of Authorized Official: <span style="border-bottom:1px solid #333;display:inline-block;width:38%;"></span></div>
+                <div style="font-size:0.75rem;">Date: <span style="border-bottom:1px solid #333;display:inline-block;width:70%;"></span></div>
+            </div>
+        </div>
+    </div>`;
+};
+
+// Annex D — Faculty Evaluation and Development Acknowledgement Form
+window.buildAnnexDContent = function(teacherId) {
+    const t = getData('teachers', []).find(t => t.id === teacherId);
+    if (!t) return;
+    const sy = getActiveSY();
+    const setScore = calculateWeightedSETRating(teacherId);
+    const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor');
+    const sefScore = sefEvals.length > 0 ? sefEvals[sefEvals.length-1].totalScore.toFixed(2) : '—';
+
+    document.getElementById('annexDModalBody').innerHTML = `
+    <div id="annexPrintArea" style="font-family:serif;font-size:0.88rem;padding:4px 0;min-width:0;">
+        <div style="text-align:center;font-weight:700;font-size:1rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.03em;">
+            Faculty Evaluation and Development Acknowledgement Form
+        </div>
+        <div style="text-align:center;font-size:0.75rem;color:#666;margin-bottom:16px;">(ANNEX D — CMO No. 19, Series of 2025)</div>
+
+        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">A. Faculty Member Information</h4>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;table-layout:fixed;">
+            <colgroup><col style="width:42%"/><col style="width:58%"/></colgroup>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Name of Faculty</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.name)}</td></tr>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Department/College</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.dept || '—')}</td></tr>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Current Faculty Rank</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.rank || '—')}</td></tr>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Semester/Term &amp; Academic Year</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${sy ? sy.activeSem + ' / ' + sy.year : '—'}</td></tr>
+        </table>
+
+        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">B. Faculty Evaluation Summary</h4>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #ccc;table-layout:fixed;">
+            <colgroup><col style="width:50%"/><col style="width:50%"/></colgroup>
+            <thead>
+                <tr style="background:#e8e8e8;">
+                    <th colspan="2" style="padding:8px;text-align:center;border:1px solid #ccc;font-size:0.8rem;">Overall Rating</th>
+                </tr>
+                <tr style="background:#f0f0f0;">
+                    <th style="padding:8px;text-align:center;border:1px solid #ccc;font-size:0.77rem;white-space:normal;word-break:break-word;vertical-align:top;">STUDENT EVALUATION<br>OF TEACHERS (SET)</th>
+                    <th style="padding:8px;text-align:center;border:1px solid #ccc;font-size:0.77rem;white-space:normal;word-break:break-word;vertical-align:top;">SUPERVISOR'S EVALUATION<br>OF FACULTY (SAF)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="padding:14px 8px;text-align:center;border:1px solid #ccc;font-size:1.6rem;font-weight:800;color:#16a34a;">${setScore}${setScore !== '0' && setScore !== 0 ? '%' : '—'}</td>
+                    <td style="padding:14px 8px;text-align:center;border:1px solid #ccc;font-size:1.6rem;font-weight:800;color:#d97706;">${sefScore !== '—' ? sefScore + '%' : '—'}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">C. Development Plan <span style="font-weight:400;font-size:0.72rem;">(to be jointly accomplished by the Supervisor and Faculty)</span></h4>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #ccc;table-layout:fixed;">
+            <colgroup><col style="width:38%"/><col style="width:62%"/></colgroup>
+            <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;border:1px solid #ccc;vertical-align:top;word-break:break-word;">Areas for Improvement</td><td style="padding:50px 8px;border:1px solid #ccc;"></td></tr>
+            <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;border:1px solid #ccc;vertical-align:top;word-break:break-word;">Proposed Learning and Development Activities</td><td style="padding:50px 8px;border:1px solid #ccc;"></td></tr>
+            <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;border:1px solid #ccc;vertical-align:top;word-break:break-word;">Action Plan</td><td style="padding:50px 8px;border:1px solid #ccc;"></td></tr>
+        </table>
+
+        <p style="font-size:0.75rem;margin-bottom:16px;font-style:italic;">I acknowledge that I have received and reviewed the faculty evaluation conducted for the period mentioned above. I understand that my signature below does not necessarily indicate agreement with the evaluation but confirms that I have been given the opportunity to discuss it with my supervisor.</p>
+
+        <table style="width:100%;border-collapse:collapse;border:1px solid #ccc;table-layout:fixed;">
+            <colgroup><col style="width:30%"/><col style="width:70%"/></colgroup>
+            <thead>
+                <tr style="background:#e0e0e0;">
+                    <th colspan="2" style="padding:8px;text-align:center;border:1px solid #ccc;font-size:0.8rem;">SUPERVISOR</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Signature</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Name</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Date Signed</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
+            </tbody>
+        </table>
+        <table style="width:100%;border-collapse:collapse;margin-top:0;border:1px solid #ccc;border-top:none;table-layout:fixed;">
+            <colgroup><col style="width:30%"/><col style="width:70%"/></colgroup>
+            <thead>
+                <tr style="background:#d0d0d0;">
+                    <th colspan="2" style="padding:8px;text-align:center;border:1px solid #ccc;font-size:0.8rem;">FACULTY</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Signature</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Name</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Date Signed</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
+            </tbody>
+        </table>
+    </div>`;
+};
+
+// Reset password to Teacher ID — called from edit teacher modal
+window.resetPasswordToId = function() {
+    const tid = document.getElementById('tchId') ? document.getElementById('tchId').value : '';
+    const pwInput = document.getElementById('tchPassword');
+    if (pwInput && tid) {
+        pwInput.value = tid;
+        showToast('Password field set to Teacher ID. Save to apply.', 'info');
+    }
+};
 window.exportEnhancedReport = function() {
     const teachers = getData('teachers', []).filter(t => !t.deleted);
     const subjects = getData('subjects', []);
@@ -1797,9 +2143,8 @@ window.renderSupervisorList = function(search = '') {
       const lastSef = evals.filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor').pop();
       const roleLabel = t.deptRole === 'dean' ? '🎓 Dean' : t.deptRole === 'chairperson' ? '🪑 Chairperson' : '👤 Supervisor';
       const roleColor = t.deptRole === 'dean' ? '#7c3aed' : t.deptRole === 'chairperson' ? '#0369a1' : '#374151';
-      const hasPassword = !!t.password;
 
-      html += `<tr onclick="showAnnexDReport('${t.id}')" title="Click to view Annex D" style="cursor:pointer;">
+      html += `<tr onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
         <td>
           <strong>${escapeHtml(t.name)}</strong><br>
           <small style="font-family:'JetBrains Mono',monospace;color:var(--muted);">${escapeHtml(t.tid)}</small>
@@ -1812,14 +2157,10 @@ window.renderSupervisorList = function(search = '') {
           </span>
         </td>
         <td>
-          <div style="font-size:0.72rem;color:var(--muted);">
-            ${hasPassword ? '🔑 Password set' : '⚠️ No password'}<br>
-            <span style="font-style:italic;">Login ID: ${escapeHtml(t.tid)}</span>
-          </div>
-        </td>
-        <td>
           <div class="td-actions" style="display:flex;gap:6px;flex-wrap:wrap;" onclick="event.stopPropagation()">
-            <button class="btn btn-ghost btn-sm" onclick="resetSupervisorPassword('${t.id}')">🔑 Reset PW</button>
+            <button class="btn btn-ghost btn-icon btn-sm" title="Edit" onclick="openEditTeacherModal('${t.id}')"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+            <button class="btn btn-ghost btn-icon btn-sm" title="Toggle Status" onclick="toggleTeacherStatus('${t.id}')"><svg width="14" height="14" fill="none" stroke="${t.status === 'active' ? 'var(--muted)' : 'var(--success)'}" stroke-width="2" viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 11-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
+            <button class="btn btn-ghost btn-icon btn-sm" title="Delete" onclick="deleteTeacher('${t.id}')"><svg width="14" height="14" fill="none" stroke="var(--danger)" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>
           </div>
         </td>
       </tr>`;
