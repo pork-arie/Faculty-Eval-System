@@ -154,7 +154,7 @@ window.renderStudents = function(search) {
     if (!tbody) return;
 
     if (!filtered.length) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted);">No students found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--muted);">No students found.</td></tr>`;
         return;
     }
 
@@ -182,7 +182,7 @@ window.renderStudents = function(search) {
 
         html += `
         <tr class="dept-group-header-row">
-            <td colspan="7">
+            <td colspan="8">
                 <div class="dept-group-header" style="${colorStyle}">
                     <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
                     <span>${escapeHtml(deptLabel)}</span>
@@ -195,6 +195,7 @@ window.renderStudents = function(search) {
             html += `<tr class="dept-group-student-row">
                 <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(s.sid)}</span></td>
                 <td><strong>${escapeHtml(s.name)}</strong></td>
+                <td style="font-size:0.78rem;max-width:160px;white-space:normal;line-height:1.3;">${escapeHtml(s.course || '—')}</td>
                 <td>${escapeHtml(s.year)}</td>
                 <td>Sec ${escapeHtml(s.section)}</td>
                 <td><span class="dept-tag-inline">${escapeHtml(s.dept || '—')}</span></td>
@@ -277,6 +278,16 @@ window.showPage = function(page) {
             const supInput = document.getElementById('supervisorSearchInput');
             if (supInput) supInput.value = '';
             renderTeachers('');
+        }, 0);
+    }
+    if (page === 'subjects') {
+        if (typeof _subjectDeptFilter !== 'undefined') _subjectDeptFilter = '';
+        window._subjectDeptFilter = '';
+        const searchInput = document.querySelector('#page-subjects input[type="text"]');
+        if (searchInput) searchInput.value = '';
+        setTimeout(() => {
+            if (typeof buildSubjectDeptPills === 'function') buildSubjectDeptPills();
+            if (typeof renderSubjects === 'function') renderSubjects('');
         }, 0);
     }
 };

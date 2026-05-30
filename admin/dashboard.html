@@ -356,6 +356,7 @@ window.addEventListener('load', () => {
               <tr>
                 <th>ID Number</th>
                 <th>Name</th>
+                <th>Course</th>
                 <th>Year</th>
                 <th>Section</th>
                 <th>Department</th>
@@ -443,9 +444,14 @@ window.addEventListener('load', () => {
     <div class="page" id="page-subjects">
       <div class="page-header">
         <div class="page-title"><h1>Subject Management</h1><p>Manage subjects and enrollments</p></div>
-        <button class="btn btn-primary" onclick="openAddSubjectModal()">
-          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Subject
-        </button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-ghost" onclick="openModal('bulkUploadSubjectModal')">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Bulk Upload
+          </button>
+          <button class="btn btn-primary" onclick="openAddSubjectModal()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Subject
+          </button>
+        </div>
       </div>
       <div class="card"><div class="card-body">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
@@ -463,6 +469,7 @@ window.addEventListener('load', () => {
                 <th>Code</th>
                 <th>Subject Name</th>
                 <th>Department</th>
+                <th>Category</th>
                 <th>Teacher</th>
                 <th>Enrolled</th>
                 <th>Actions</th>
@@ -726,13 +733,20 @@ window.addEventListener('load', () => {
             <div class="form-group"><label class="form-label">ID Number</label><input class="form-control" id="stuId" placeholder="2024001"/></div>
             <div class="form-group"><label class="form-label">Full Name</label><input class="form-control" id="stuName" placeholder="Juan dela Cruz"/></div>
           </div>
+          <div class="form-group">
+            <label class="form-label">Course</label>
+            <div id="stuCourseDeptBar" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;"></div>
+            <select class="form-control" id="stuCourse">
+              <option value="">— Select Department above first —</option>
+            </select>
+          </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">Year Level</label><select class="form-control" id="stuYear"><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>4th Year</option></select></div>
             <div class="form-group"><label class="form-label">Section</label><input class="form-control" id="stuSection" placeholder="A"/></div>
           </div>
           <div class="form-group">
             <label class="form-label">Department</label>
-            <select class="form-control" id="stuDept">
+            <select class="form-control" id="stuDept" onchange="syncStuDeptToCourseBar(this.value)">
               <option value="">-- Select Department --</option>
             </select>
           </div>
@@ -813,10 +827,11 @@ window.addEventListener('load', () => {
           <div class="form-row">
             <div class="form-group"><label class="form-label">Subject Code</label><input class="form-control" id="subCode" placeholder="CS301"/></div>
             <div class="form-group"><label class="form-label">Subject Name</label><input class="form-control" id="subName" placeholder="Data Structures"/></div>
+            <div class="form-group"><label class="form-label">Category</label><select class="form-control" id="subCategory"><option value="">-- Select Category --</option><option value="Major">Major</option><option value="Minor">Minor</option><option value="GE">General Education</option><option value="PE">Physical Education</option><option value="NSTP">NSTP</option><option value="Elective">Elective</option></select></div>
           </div>
           <div class="form-group">
             <label class="form-label">Department</label>
-            <select class="form-control" id="subDept">
+            <select class="form-control" id="subDept" onchange="populateTeacherSelect()">
               <option value="">-- Select Department --</option>
             </select>
           </div>
@@ -943,9 +958,9 @@ window.addEventListener('load', () => {
         </div>
         <div class="modal-body">
           <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;margin-bottom:16px;font-size:0.8rem;">
-            <strong>CSV Format:</strong> ID Number, Full Name, Year Level, Section, Department, Subject Codes (semicolon-separated)<br>
-            <code style="display:block;margin-top:6px;color:#166534;background:#dcfce7;padding:6px 10px;border-radius:4px;">2024001,Juan dela Cruz,1st Year,A,CCIS,CS301;CS302</code>
-            <span style="color:var(--muted);">Year Level options: 1st Year / 2nd Year / 3rd Year / 4th Year</span>
+            <strong>CSV Format:</strong> ID Number, Full Name, Year Level, Section, Course, Department, Subject Codes (semicolon-separated)<br>
+            <code style="display:block;margin-top:6px;color:#166534;background:#dcfce7;padding:6px 10px;border-radius:4px;">2024001,Juan dela Cruz,1st Year,A,BSINFOT (Bachelor of Science in Information Technology),CCIS,CS301;CS302</code>
+            <span style="color:var(--muted);">Year Level options: 1st Year / 2nd Year / 3rd Year / 4th Year &nbsp;|&nbsp; Course column can be full name or short code</span>
           </div>
           <div style="border:2px dashed var(--border);border-radius:10px;padding:28px;text-align:center;margin-bottom:14px;cursor:pointer;" onclick="document.getElementById('bulkStudentFile').click()" id="bulkStudentDropZone">
             <svg width="32" height="32" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24" style="margin-bottom:8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -983,6 +998,33 @@ window.addEventListener('load', () => {
         <div class="modal-footer">
           <button class="btn btn-ghost" onclick="closeModal('bulkUploadTeacherModal')">Cancel</button>
           <button class="btn btn-primary" id="bulkTeacherImportBtn" onclick="importBulkTeachers()" style="display:none;">Import Teachers</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- BULK UPLOAD SUBJECTS MODAL -->
+    <div class="modal-overlay" id="bulkUploadSubjectModal">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <h3>Bulk Upload Subjects</h3>
+          <button class="modal-close" onclick="closeModal('bulkUploadSubjectModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <div style="background:#fdf4ff;border:1px solid #e9d5ff;border-radius:8px;padding:14px;margin-bottom:16px;font-size:0.8rem;">
+            <strong>CSV Format:</strong> Subject Code, Subject Name, Department, Category, Load Type, Teacher ID (TID), Student IDs (semicolon-separated SIDs)<br>
+            <code style="display:block;margin-top:6px;color:#6b21a8;background:#f3e8ff;padding:6px 10px;border-radius:4px;">CS101,Introduction to Computing,CCIS,GE,Regular,T001,S001;S002;S003</code>
+            <span style="color:var(--muted);">Teacher ID and Student IDs are optional — leave blank if not yet assigned. Duplicate subject codes are skipped automatically. Matched students are auto-enrolled.</span>
+          </div>
+          <div style="border:2px dashed var(--border);border-radius:10px;padding:28px;text-align:center;margin-bottom:14px;cursor:pointer;" onclick="document.getElementById('bulkSubjectFile').click()" id="bulkSubjectDropZone">
+            <svg width="32" height="32" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24" style="margin-bottom:8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <p style="color:var(--muted);font-size:0.82rem;margin:0;">Click to select CSV file or drag &amp; drop here</p>
+            <input type="file" id="bulkSubjectFile" accept=".csv" style="display:none;" onchange="previewBulkSubjects(this)"/>
+          </div>
+          <div id="bulkSubjectPreview"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('bulkUploadSubjectModal')">Cancel</button>
+          <button class="btn btn-primary" id="bulkSubjectImportBtn" onclick="importBulkSubjects()" style="display:none;">Import Subjects</button>
         </div>
       </div>
     </div>

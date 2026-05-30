@@ -393,6 +393,7 @@ function renderStudents(search = '') {
     <tr>
       <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(s.sid)}</span></td>
       <td><strong>${escapeHtml(s.name)}</strong></td>
+      <td>${escapeHtml(s.course || '—')}</td>
       <td>${escapeHtml(s.year)}</td>
       <td>Sec ${escapeHtml(s.section)}</td>
       <td>${escapeHtml(s.dept || '—')}</td>
@@ -421,17 +422,20 @@ function populateDeptDropdown(selectId, selectedValue) {
 
 function openAddStudentModal() {
   editStudentId = null;
+  _stuCourseActiveDept = '';
   document.getElementById('studentModalTitle').textContent = 'Add Student';
   document.getElementById('saveStudentBtn').textContent = 'Add Student';
-  ['stuId','stuName','stuSection','stuPass'].forEach(id => document.getElementById(id).value = '');
+  ['stuId','stuName','stuSection','stuPass'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
   document.getElementById('stuYear').value = '1st Year';
   populateDeptDropdown('stuDept', '');
+  buildStuCourseDeptBar('');
   openModal('addStudentModal');
 }
 
 function openEditStudentModal(id) {
   const s = getData('students', []).find(s => s.id === id);
   editStudentId = id;
+  _stuCourseActiveDept = '';
   document.getElementById('studentModalTitle').textContent = 'Edit Student';
   document.getElementById('saveStudentBtn').textContent = 'Save Changes';
   document.getElementById('stuId').value = s.sid;
@@ -440,12 +444,14 @@ function openEditStudentModal(id) {
   document.getElementById('stuSection').value = s.section;
   populateDeptDropdown('stuDept', s.dept || '');
   document.getElementById('stuPass').value = '';
+  buildStuCourseDeptBar(s.course || '');
   openModal('addStudentModal');
 }
 
 function saveStudent() {
   const sid = document.getElementById('stuId').value.trim();
   const name = document.getElementById('stuName').value.trim();
+  const course = (document.getElementById('stuCourse') ? document.getElementById('stuCourse').value.trim() : '');
   const year = document.getElementById('stuYear').value;
   const section = document.getElementById('stuSection').value.trim();
   const dept = document.getElementById('stuDept').value;
@@ -454,13 +460,13 @@ function saveStudent() {
   const students = getData('students', []);
   if (editStudentId) {
     const idx = students.findIndex(s => s.id === editStudentId);
-    Object.assign(students[idx], { sid, name, year, section, dept });
+    Object.assign(students[idx], { sid, name, course, year, section, dept });
     if (pass) students[idx].password = pass;
     addAudit('Edit Student', `Updated: ${name} (${sid})`);
     showToast('Student updated!', 'success');
   } else {
     if (students.find(s => s.sid === sid && !s.deleted)) { showToast('ID already exists.', 'error'); return; }
-    students.push({ id: 'stu'+Date.now(), sid, name, year, section, dept, password: pass||sid, status:'active', forceReset:false, deleted:false });
+    students.push({ id: 'stu'+Date.now(), sid, name, course, year, section, dept, password: pass||sid, status:'active', forceReset:false, deleted:false });
     addAudit('Add Student', `Added: ${name} (${sid})`);
     showToast('Student added!', 'success');
   }
@@ -1064,7 +1070,7 @@ function renderSubjects(search = '') {
   const subjects = getData('subjects', []);
   const teachers = getData('teachers', []);
   const students = getData('students', []);
-  const _deptBar = document.getElementById('subjectDeptFilterBar'); const deptFilter = (_deptBar && _deptBar.dataset.active) || '';
+  const deptFilter = (window._subjectDeptFilter || '');
 
   let filtered = subjects.filter(s =>
     (s.name.toLowerCase().includes(search.toLowerCase()) || s.code.toLowerCase().includes(search.toLowerCase())) &&
@@ -1083,7 +1089,7 @@ function renderSubjects(search = '') {
 
   let html = '';
   Object.entries(groups).forEach(([dept, subs]) => {
-    html += `<tr class="dept-group-header-row"><td colspan="6"><div class="dept-group-header">
+    html += `<tr class="dept-group-header-row"><td colspan="7"><div class="dept-group-header">
       <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
       ${escapeHtml(dept)}<span class="dept-group-count">${subs.length} subject${subs.length !== 1 ? 's' : ''}</span>
     </div></td></tr>`;
@@ -1094,6 +1100,7 @@ function renderSubjects(search = '') {
         <td><span style="font-family:'JetBrains Mono',monospace;font-weight:700;">${escapeHtml(sub.code)}</span></td>
         <td><strong>${escapeHtml(sub.name)}</strong></td>
         <td>${escapeHtml(sub.dept || '—')}</td>
+        <td>${escapeHtml(sub.category || '—')}</td>
         <td>${teacher?escapeHtml(teacher.name):'<span style="color:var(--muted)">Not assigned</span>'}</td>
         <td><span class="badge badge-primary">${enrolled} student${enrolled!==1?'s':''}</span></td>
         <td><div class="td-actions">
@@ -1113,6 +1120,7 @@ function openAddSubjectModal() {
   document.getElementById('saveSubjectBtn').textContent = 'Add Subject';
   ['subCode','subName'].forEach(id => document.getElementById(id).value = '');
   populateDeptDropdown('subDept', '');
+  const catEl = document.getElementById('subCategory'); if (catEl) catEl.value = '';
   document.getElementById('subLoad').value = 'Regular';
   document.getElementById('subIsLab').checked = false;
   populateTeacherSelect();
@@ -1127,6 +1135,7 @@ function openEditSubjectModal(id) {
   document.getElementById('subCode').value = sub.code;
   document.getElementById('subName').value = sub.name;
   populateDeptDropdown('subDept', sub.dept || '');
+  const catEl2 = document.getElementById('subCategory'); if (catEl2) catEl2.value = sub.category || '';
   document.getElementById('subLoad').value = sub.loadType || 'Regular';
   document.getElementById('subIsLab').checked = sub.isLabSchool || false;
   populateTeacherSelect(sub.teacherId);
@@ -1134,6 +1143,7 @@ function openEditSubjectModal(id) {
 }
 
 window.populateTeacherSelect = function(selectedId = '') {
+    // Include supervisors — they can also be assigned as teachers on subjects
     const teachers = getData('teachers', []).filter(t => !t.deleted);
     const deptFilter = document.getElementById('subDept') ? document.getElementById('subDept').value : '';
     let filteredTeachers = teachers;
@@ -1144,7 +1154,7 @@ window.populateTeacherSelect = function(selectedId = '') {
     const select = document.getElementById('subTeacher');
     if (select) {
         select.innerHTML = '<option value="">-- Select Teacher --</option>' +
-            filteredTeachers.map(t => `<option value="${t.id}" ${t.id === selectedId ? 'selected' : ''}>${escapeHtml(t.name)} (${t.tid})${t.dept ? ' - ' + t.dept : ''}</option>`).join('');
+            filteredTeachers.map(t => `<option value="${t.id}" ${t.id === selectedId ? 'selected' : ''}>${escapeHtml(t.name)} (${t.tid})${t.dept ? ' - ' + t.dept : ''}${t.facultyType === 'supervisor' ? ' [Supervisor]' : ''}</option>`).join('');
     }
 };
 
@@ -1155,16 +1165,30 @@ function saveSubject() {
   const dept = document.getElementById('subDept').value;
   const loadType = document.getElementById('subLoad').value;
   const isLabSchool = document.getElementById('subIsLab').checked;
+  const category = (document.getElementById('subCategory') ? document.getElementById('subCategory').value : '') || '';
   
   if (!code || !name) { showToast('Fill all fields.', 'error'); return; }
   const subjects = getData('subjects', []);
   if (editSubjectId) {
     const idx = subjects.findIndex(s => s.id === editSubjectId);
-    Object.assign(subjects[idx], { code, name, teacherId, dept, loadType, isLabSchool });
+    const oldTeacherId = subjects[idx].teacherId;
+    // If teacher changed, delete evaluations for enrolled students on this subject
+    if (oldTeacherId && oldTeacherId !== teacherId) {
+      const evaluations = getData('evaluations', []);
+      const enrolledIds = subjects[idx].enrolledIds || [];
+      const filtered = evaluations.filter(e => !(e.subjectId === editSubjectId && enrolledIds.includes(e.studentId)));
+      const removed = evaluations.length - filtered.length;
+      if (removed > 0) {
+        setData('evaluations', filtered);
+        addAudit('Reset Evaluations', `Teacher changed on ${code} — cleared ${removed} student evaluation(s)`);
+        showToast(`Teacher changed — ${removed} student rating(s) reset.`, 'info');
+      }
+    }
+    Object.assign(subjects[idx], { code, name, teacherId, dept, loadType, isLabSchool, category });
     addAudit('Edit Subject', `Updated: ${name} (${code})`);
     showToast('Subject updated!', 'success');
   } else {
-    subjects.push({ id: 'sub'+Date.now(), code, name, teacherId, dept, loadType, isLabSchool, enrolledIds: [] });
+    subjects.push({ id: 'sub'+Date.now(), code, name, teacherId, dept, loadType, isLabSchool, category, enrolledIds: [] });
     addAudit('Add Subject', `Added: ${name} (${code})`);
     showToast('Subject added!', 'success');
   }
@@ -1200,7 +1224,7 @@ function renderEnrollList(students, enrolledIds, search = '') {
     <li style="padding:8px 0;border-bottom:1px solid var(--border);">
       <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:0.82rem;">
         <input type="checkbox" value="${s.id}" ${enrolledIds.includes(s.id)?'checked':''} style="accent-color:var(--primary);"/>
-        <div><div style="font-weight:600;">${escapeHtml(s.name)}</div><div style="font-size:0.72rem;color:var(--muted);">${s.sid} · ${s.year} Sec ${s.section} · ${s.dept || '—'}</div></div>
+        <div><div style="font-weight:600;">${escapeHtml(s.name)}</div><div style="font-size:0.72rem;color:var(--muted);">${s.sid} · ${s.course ? escapeHtml(s.course)+' · ' : ''}${s.year} Sec ${s.section} · ${s.dept || '—'}</div></div>
       </label>
     </li>
   `).join('');
@@ -1401,31 +1425,37 @@ window.toggleClassDetails = function(teacherId) {
 };
 
 // ===== SUBJECT DEPT FILTER PILLS =====
+window._subjectDeptFilter = '';
+
 function buildSubjectDeptPills() {
   const bar = document.getElementById('subjectDeptFilterBar');
   if (!bar) return;
   const DEPT_CONFIG = (typeof getDepartments === 'function') ? getDepartments() : {};
   const subjects = getData('subjects', []);
   const depts = Object.keys(DEPT_CONFIG);
-  const current = bar.dataset.active || '';
-  // Count subjects per dept
+  const current = window._subjectDeptFilter || '';
   const counts = {};
-  subjects.forEach(s => { const d = s.dept || ''; counts[d] = (counts[d]||0)+1; });
+  subjects.forEach(s => { const d = s.dept || 'UNASSIGNED'; counts[d] = (counts[d]||0)+1; });
   const allCount = subjects.length;
-  bar.innerHTML =
-    `<button class="dept-filter-pill ${current===''?'active':''}" onclick="setSubjectDeptFilter('')">All <span class="dept-filter-count">${allCount}</span></button>` +
-    depts.filter(d => counts[d] > 0 || current === d).map(d =>
-      `<button class="dept-filter-pill ${current===d?'active':''}" onclick="setSubjectDeptFilter('${d}')">${d} <span class="dept-filter-count">${counts[d]||0}</span></button>`
-    ).join('');
+
+  let html = `<button class="student-dept-filter-btn ${current===''?'active':''}" data-dept="" onclick="setSubjectDeptFilter('')">All <span class="dept-filter-count">${allCount}</span></button>`;
+  depts.forEach(d => {
+    if (!counts[d]) return;
+    const cfg = DEPT_CONFIG[d];
+    html += `<button class="student-dept-filter-btn ${current===d?'active':''}" data-dept="${d}" onclick="setSubjectDeptFilter('${d}')">${cfg ? escapeHtml(cfg.short) : d} <span class="dept-filter-count">${counts[d]}</span></button>`;
+  });
+  if (counts['UNASSIGNED']) {
+    html += `<button class="student-dept-filter-btn ${current==='UNASSIGNED'?'active':''}" data-dept="UNASSIGNED" onclick="setSubjectDeptFilter('UNASSIGNED')">No Dept <span class="dept-filter-count">${counts['UNASSIGNED']}</span></button>`;
+  }
+  bar.innerHTML = html;
 }
 
 window.setSubjectDeptFilter = function(dept) {
-  const bar = document.getElementById('subjectDeptFilterBar');
-  if (bar) bar.dataset.active = dept;
-  const sel = document.getElementById('subjectDeptFilter');
-  if (sel) sel.value = dept;
+  window._subjectDeptFilter = dept;
   buildSubjectDeptPills();
-  renderSubjects();
+  const searchEl = document.querySelector('#page-subjects input[type="text"]');
+  const search = searchEl ? searchEl.value : '';
+  renderSubjects(search);
 };
 
 // ===== BULK UPLOAD =====
@@ -1439,9 +1469,11 @@ window.previewBulkStudents = function(input) {
     lines.forEach(line => {
       const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g,''));
       if (cols.length < 4) return;
+      // CSV format: ID, Name, Year, Section, Course, Department, Subject Codes
       parsed.push({
         sid: cols[0], name: cols[1], year: cols[2] || '1st Year',
-        section: cols[3], dept: cols[4] || '', subjectCodes: cols[5] ? cols[5].split(';').map(s=>s.trim()).filter(Boolean) : []
+        section: cols[3], course: cols[4] || '', dept: cols[5] || '',
+        subjectCodes: cols[6] ? cols[6].split(';').map(s=>s.trim()).filter(Boolean) : []
       });
     });
     window._bulkStudentData = parsed;
@@ -1451,8 +1483,24 @@ window.previewBulkStudents = function(input) {
     preview.innerHTML = `<p style="font-size:0.8rem;color:var(--muted);margin-bottom:8px;">Preview: ${parsed.length} student(s) to import</p>
       <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
         <table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
-          <thead><tr style="background:var(--bg);"><th style="padding:6px 8px;text-align:left;">ID</th><th style="padding:6px 8px;text-align:left;">Name</th><th style="padding:6px 8px;text-align:left;">Year</th><th style="padding:6px 8px;text-align:left;">Sec</th><th style="padding:6px 8px;text-align:left;">Dept</th><th style="padding:6px 8px;text-align:left;">Subjects</th></tr></thead>
-          <tbody>${parsed.map(r=>`<tr style="border-bottom:1px solid var(--border);"><td style="padding:6px 8px;">${escapeHtml(r.sid)}</td><td style="padding:6px 8px;">${escapeHtml(r.name)}</td><td style="padding:6px 8px;">${escapeHtml(r.year)}</td><td style="padding:6px 8px;">${escapeHtml(r.section)}</td><td style="padding:6px 8px;">${escapeHtml(r.dept)}</td><td style="padding:6px 8px;">${r.subjectCodes.join(', ')||'—'}</td></tr>`).join('')}</tbody>
+          <thead><tr style="background:var(--bg);">
+            <th style="padding:6px 8px;text-align:left;">ID</th>
+            <th style="padding:6px 8px;text-align:left;">Name</th>
+            <th style="padding:6px 8px;text-align:left;">Year</th>
+            <th style="padding:6px 8px;text-align:left;">Sec</th>
+            <th style="padding:6px 8px;text-align:left;">Course</th>
+            <th style="padding:6px 8px;text-align:left;">Dept</th>
+            <th style="padding:6px 8px;text-align:left;">Subjects</th>
+          </tr></thead>
+          <tbody>${parsed.map(r=>`<tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:6px 8px;">${escapeHtml(r.sid)}</td>
+            <td style="padding:6px 8px;">${escapeHtml(r.name)}</td>
+            <td style="padding:6px 8px;">${escapeHtml(r.year)}</td>
+            <td style="padding:6px 8px;">${escapeHtml(r.section)}</td>
+            <td style="padding:6px 8px;font-size:0.72rem;">${escapeHtml(r.course||'—')}</td>
+            <td style="padding:6px 8px;">${escapeHtml(r.dept)}</td>
+            <td style="padding:6px 8px;">${r.subjectCodes.join(', ')||'—'}</td>
+          </tr>`).join('')}</tbody>
         </table>
       </div>`;
     btn.style.display = '';
@@ -1470,7 +1518,7 @@ window.importBulkStudents = function() {
     if (!r.sid || !r.name) { skipped++; return; }
     if (students.find(s => s.sid === r.sid && !s.deleted)) { skipped++; return; }
     const newId = 'stu' + Date.now() + Math.random().toString(36).slice(2,6);
-    students.push({ id: newId, sid: r.sid, name: r.name, year: r.year, section: r.section, dept: r.dept, password: r.sid, status:'active', forceReset:false, deleted:false });
+    students.push({ id: newId, sid: r.sid, name: r.name, course: r.course || '', year: r.year, section: r.section, dept: r.dept, password: r.sid, status:'active', forceReset:false, deleted:false });
     r.subjectCodes.forEach(code => {
       const sub = subjects.find(s => s.code.toLowerCase() === code.toLowerCase());
       if (sub) { if (!sub.enrolledIds) sub.enrolledIds = []; if (!sub.enrolledIds.includes(newId)) sub.enrolledIds.push(newId); }
@@ -1540,6 +1588,118 @@ window.importBulkTeachers = function() {
   closeModal('bulkUploadTeacherModal');
   renderTeachers();
   showToast(`Imported ${added} teachers! ${skipped ? skipped + ' skipped.' : ''}`, 'success');
+};
+
+// ===== BULK UPLOAD SUBJECTS =====
+// CSV: Subject Code, Subject Name, Department, Category, Load Type, Teacher ID (TID), Student IDs (semicolon-separated SIDs)
+window.previewBulkSubjects = function(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const lines = e.target.result.split('\n').map(l => l.trim()).filter(Boolean);
+    const parsed = [];
+    lines.forEach((line, i) => {
+      if (i === 0 && line.toLowerCase().startsWith('subject')) return;
+      const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+      if (cols.length < 2) return;
+      parsed.push({
+        code:        cols[0] || '',
+        name:        cols[1] || '',
+        dept:        cols[2] || '',
+        category:    cols[3] || '',
+        loadType:    cols[4] || 'Regular',
+        teacherTid:  cols[5] || '',
+        studentSids: cols[6] ? cols[6].split(';').map(s => s.trim()).filter(Boolean) : []
+      });
+    });
+    window._bulkSubjectData = parsed;
+    const preview = document.getElementById('bulkSubjectPreview');
+    const btn = document.getElementById('bulkSubjectImportBtn');
+    if (!parsed.length) { preview.innerHTML = '<p style="color:var(--danger);font-size:0.8rem;">No valid rows found.</p>'; btn.style.display = 'none'; return; }
+
+    const teachers = getData('teachers', []).filter(t => !t.deleted);
+    const students = getData('students', []).filter(s => !s.deleted);
+    const existing = new Set(getData('subjects', []).map(s => s.code.toLowerCase()));
+    const newCount  = parsed.filter(r => r.code && !existing.has(r.code.toLowerCase())).length;
+    const skipCount = parsed.length - newCount;
+
+    preview.innerHTML = `
+      <p style="font-size:0.8rem;color:var(--muted);margin-bottom:8px;">Preview: <strong>${parsed.length}</strong> row(s) — <span style="color:#16a34a;font-weight:600;">${newCount} new</span>${skipCount ? `, <span style="color:#d97706;font-weight:600;">${skipCount} skipped (code exists)</span>` : ''}</p>
+      <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
+          <thead><tr style="background:var(--bg);">
+            <th style="padding:6px 8px;text-align:left;">Code</th>
+            <th style="padding:6px 8px;text-align:left;">Subject Name</th>
+            <th style="padding:6px 8px;text-align:left;">Dept</th>
+            <th style="padding:6px 8px;text-align:left;">Load</th>
+            <th style="padding:6px 8px;text-align:left;">Teacher</th>
+            <th style="padding:6px 8px;text-align:left;">Students</th>
+            <th style="padding:6px 8px;text-align:left;">Status</th>
+          </tr></thead>
+          <tbody>${parsed.map(r => {
+            const isDup = existing.has((r.code || '').toLowerCase());
+            const teacher = r.teacherTid ? teachers.find(t => t.tid.toLowerCase() === r.teacherTid.toLowerCase()) : null;
+            const tchLabel = r.teacherTid ? (teacher ? escapeHtml(teacher.name) : `\u26a0 "${escapeHtml(r.teacherTid)}" not found`) : '\u2014';
+            const tchColor = r.teacherTid && !teacher ? 'color:#d97706;' : '';
+            const stuResolved = r.studentSids.map(sid => { const s = students.find(st => st.sid.toLowerCase() === sid.toLowerCase()); return s ? s.name : `\u26a0 ${sid}`; });
+            const stuLabel = stuResolved.length ? escapeHtml(stuResolved.slice(0,2).join(', ') + (stuResolved.length > 2 ? ` +${stuResolved.length-2} more` : '')) : '\u2014';
+            const rowBg = isDup ? 'background:#fff7ed;' : '';
+            return `<tr style="border-bottom:1px solid var(--border);${rowBg}">
+              <td style="padding:6px 8px;font-family:'JetBrains Mono',monospace;font-weight:700;">${escapeHtml(r.code)}</td>
+              <td style="padding:6px 8px;">${escapeHtml(r.name)}</td>
+              <td style="padding:6px 8px;">${escapeHtml(r.dept||'\u2014')}</td>
+              <td style="padding:6px 8px;">${escapeHtml(r.loadType)}</td>
+              <td style="padding:6px 8px;${tchColor}">${tchLabel}</td>
+              <td style="padding:6px 8px;font-size:0.72rem;">${stuLabel}</td>
+              <td style="padding:6px 8px;">${isDup ? '<span style="color:#d97706;font-weight:600;">\u26a0 Skip</span>' : '<span style="color:#16a34a;font-weight:600;">\u2713 Add</span>'}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>`;
+    btn.style.display = '';
+  };
+  reader.readAsText(file);
+};
+
+window.importBulkSubjects = function() {
+  const rows = window._bulkSubjectData || [];
+  if (!rows.length) return;
+  const subjects = getData('subjects', []);
+  const teachers = getData('teachers', []).filter(t => !t.deleted);
+  const students = getData('students', []).filter(s => !s.deleted);
+  const existing = new Set(subjects.map(s => s.code.toLowerCase()));
+  let added = 0, skipped = 0, enrolled = 0;
+  const badTeachers = [], badStudents = [];
+  rows.forEach(r => {
+    if (!r.code || !r.name) { skipped++; return; }
+    if (existing.has(r.code.toLowerCase())) { skipped++; return; }
+    let teacherId = '';
+    if (r.teacherTid) {
+      const t = teachers.find(t => t.tid.toLowerCase() === r.teacherTid.toLowerCase());
+      if (t) teacherId = t.id; else badTeachers.push(r.teacherTid);
+    }
+    const enrolledIds = [];
+    r.studentSids.forEach(sid => {
+      const s = students.find(st => st.sid.toLowerCase() === sid.toLowerCase());
+      if (s) { enrolledIds.push(s.id); enrolled++; } else badStudents.push(sid);
+    });
+    subjects.push({ id: 'sub'+Date.now()+Math.random().toString(36).slice(2,6), code: r.code, name: r.name, dept: r.dept, category: r.category, loadType: r.loadType||'Regular', isLabSchool: false, teacherId, enrolledIds });
+    existing.add(r.code.toLowerCase());
+    added++;
+  });
+  setData('subjects', subjects);
+  let detail = `Imported ${added} subjects, skipped ${skipped}. ${enrolled} student(s) enrolled.`;
+  if (badTeachers.length) detail += ` Unmatched teachers: ${[...new Set(badTeachers)].join(', ')}.`;
+  if (badStudents.length) detail += ` Unmatched students: ${[...new Set(badStudents)].join(', ')}.`;
+  addAudit('Bulk Upload Subjects', detail);
+  closeModal('bulkUploadSubjectModal');
+  renderSubjects();
+  let msg = `Imported ${added} subject${added!==1?'s':''}!`;
+  if (skipped) msg += ` ${skipped} skipped.`;
+  if (badTeachers.length) msg += ` \u26a0 ${[...new Set(badTeachers)].length} teacher ID(s) not found.`;
+  if (badStudents.length) msg += ` \u26a0 ${[...new Set(badStudents)].length} student ID(s) not found.`;
+  showToast(msg, added > 0 ? 'success' : 'warning');
 };
 
 // ===== ANNEX D REPORT MODAL (CMO 19 format) =====
@@ -2463,3 +2623,77 @@ window.syncCollectionToFirestore = async function(key, value) {
         console.warn('Firestore sync error:', e.message);
     }
 };
+// ===== COURSE-BY-DEPARTMENT MAP =====
+const COURSES_BY_DEPT = {
+  COED: ["BEED GEN (Bachelor of Elementary Education - General)","BPED (Bachelor of Physical Education)","BSCS (Bachelor of Secondary Education - Computer Science)","BSED ENGLISH (Bachelor of Secondary Education - English)","BSED FILIPINO (Bachelor of Secondary Education - Filipino)","BSED MATH (Bachelor of Secondary Education - Mathematics)","BSED SCIENCE (Bachelor of Secondary Education - Science)","BSED SOCIAL STUDIES (Bachelor of Secondary Education - Social Studies)","BSED VALUES EDUCATION (Bachelor of Secondary Education - Values Education)","BTLED (Bachelor of Technology and Livelihood Education)","BTVTED (Bachelor of Technical-Vocational Teacher Education)"],
+  CAT:  ["BAT (Bachelor of Agriculture Technology)","BSAG AGRONOMY (Bachelor of Science in Agriculture - Agronomy)","BSAG ANIMAL SCIENCE (Bachelor of Science in Agriculture - Animal Science)","BSAG HORTICULTURE (Bachelor of Science in Agriculture - Horticulture)","BSFT (Bachelor of Science in Food Technology)","BSIT AUTOMOTIVE (Bachelor of Science in Industrial Technology - Automotive)","BSIT ELECTRICAL (Bachelor of Science in Industrial Technology - Electrical)","BSIT ELECTRONICS (Bachelor of Science in Industrial Technology - Electronics)","BSIT MT (Bachelor of Science in Industrial Technology - Mechanical Technology)"],
+  CEA:  ["BS ARCH (Bachelor of Science in Architecture)","BSCE (Bachelor of Science in Civil Engineering)","BSECE (Bachelor of Science in Electronics Engineering)","BSEE (Bachelor of Science in Electrical Engineering)","BSME (Bachelor of Science in Mechanical Engineering)"],
+  CCJS: ["BSCD (Bachelor of Science in Criminology and Detective)","BSCRIM (Bachelor of Science in Criminology)","BSDEVCOM (Bachelor of Science in Development Communication)","BSES (Bachelor of Science in Environmental Science)","BSES (NRM) (Bachelor of Science in Environmental Science - Natural Resource Management)","BSISM (Bachelor of Science in Industrial Security Management)","BSLEA (Bachelor of Science in Law Enforcement Administration)"],
+  COM:  ["BS ENTREP (Bachelor of Science in Entrepreneurship)","BSBA (Bachelor of Science in Business Administration)","BSHM (Bachelor of Science in Hotel Management)","BSOAD (Bachelor of Science in Office Administration)","BSTM (Bachelor of Science in Tourism Management)"],
+  CCIS: ["BSCS (Bachelor of Science in Computer Science)","BSEMC (Bachelor of Science in Electronics and Communications Engineering)","BSINFOT (Bachelor of Science in Information Technology)","BSIS (Bachelor of Science in Information Systems)"],
+};
+
+let _stuCourseActiveDept = '';
+
+window.buildStuCourseDeptBar = function(selectedCourse) {
+  const bar = document.getElementById('stuCourseDeptBar');
+  if (!bar) return;
+  // Auto-detect dept if a course is pre-selected (edit mode)
+  if (selectedCourse && !_stuCourseActiveDept) {
+    for (const [code, list] of Object.entries(COURSES_BY_DEPT)) {
+      if (list.includes(selectedCourse)) { _stuCourseActiveDept = code; break; }
+    }
+  }
+  bar.innerHTML = Object.keys(COURSES_BY_DEPT).map(code => `
+    <button type="button"
+      class="student-dept-filter-btn${_stuCourseActiveDept === code ? ' active' : ''}"
+      style="font-size:0.72rem;padding:4px 10px;"
+      onclick="selectCourseByDept('${code}')"
+    >${code}</button>
+  `).join('');
+  if (_stuCourseActiveDept) {
+    populateStuCourseDropdown(_stuCourseActiveDept, selectedCourse || '');
+  } else {
+    const sel = document.getElementById('stuCourse');
+    if (sel) sel.innerHTML = '<option value="">— Select a Department above first —</option>';
+  }
+};
+
+window.selectCourseByDept = function(deptCode) {
+  _stuCourseActiveDept = deptCode;
+  buildStuCourseDeptBar();
+};
+
+// Sync stuDept dropdown → course pill bar (so selecting dept auto-loads course list)
+window.syncStuDeptToCourseBar = function(deptCode) {
+  // Map the dynamic dept code to COURSES_BY_DEPT key if it matches
+  const matchedKey = Object.keys(COURSES_BY_DEPT).find(k => k === deptCode);
+  if (matchedKey) {
+    _stuCourseActiveDept = matchedKey;
+    buildStuCourseDeptBar();
+  } else {
+    // Dept has no predefined courses — reset course dropdown gracefully
+    _stuCourseActiveDept = '';
+    const sel = document.getElementById('stuCourse');
+    if (sel) sel.innerHTML = '<option value="">— No courses defined for this department —</option>';
+    const bar = document.getElementById('stuCourseDeptBar');
+    if (bar) {
+      // Rebuild pills but leave none active
+      bar.innerHTML = Object.keys(COURSES_BY_DEPT).map(code => `
+        <button type="button"
+          class="student-dept-filter-btn"
+          style="font-size:0.72rem;padding:4px 10px;"
+          onclick="selectCourseByDept('${code}')"
+        >${code}</button>
+      `).join('');
+    }
+  }
+};
+
+function populateStuCourseDropdown(deptCode, selected) {
+  const sel = document.getElementById('stuCourse');
+  if (!sel) return;
+  const courses = COURSES_BY_DEPT[deptCode] || [];
+  sel.innerHTML = `<option value="">— Select Course —</option>` +
+    courses.map(c => `<option value="${c}"${c === selected ? ' selected' : ''}>${c}</option>`).join('');
+}

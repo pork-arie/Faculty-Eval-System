@@ -251,37 +251,54 @@ window.saveTeacher = function() {
   if (typeof window.renderTeachers === 'function') window.renderTeachers();
 };
 
-// Patch saveSubject to include dept field
+// Patch saveSubject to include dept + category fields
 window.saveSubject = function() {
     const code = document.getElementById('subCode').value.trim();
     const name = document.getElementById('subName').value.trim();
     const teacherId = document.getElementById('subTeacher').value;
     const dept = document.getElementById('subDept').value;
-    const loadType = document.getElementById('subLoad').value; 
-    const isLabSchool = document.getElementById('subIsLab').checked; 
-    
+    const loadType = document.getElementById('subLoad').value;
+    const isLabSchool = document.getElementById('subIsLab').checked;
+    // BUG FIX: category was never read, causing it to silently reset to '' on every save
+    const category = (document.getElementById('subCategory') ? document.getElementById('subCategory').value : '') || '';
+
     if (!code || !name) { showToast('Fill all fields.', 'error'); return; }
-    
+
     const subjects = getData('subjects', []);
-    
+
     if (typeof editSubjectId !== 'undefined' && editSubjectId) {
         const idx = subjects.findIndex(s => s.id === editSubjectId);
-        Object.assign(subjects[idx], { code, name, teacherId, dept, loadType, isLabSchool });
-        addAudit('Edit Subject', `Updated: ${name} — Type: ${loadType}`);
+        // BUG FIX: when the teacher changes, reset student evaluations for this subject
+        // so students are not locked out of re-evaluating the new teacher
+        const oldTeacherId = subjects[idx].teacherId;
+        if (oldTeacherId && oldTeacherId !== teacherId) {
+            const evaluations = getData('evaluations', []);
+            const enrolledIds = subjects[idx].enrolledIds || [];
+            const filtered = evaluations.filter(e => !(e.subjectId === editSubjectId && enrolledIds.includes(e.studentId)));
+            const removed = evaluations.length - filtered.length;
+            if (removed > 0) {
+                setData('evaluations', filtered);
+                addAudit('Reset Evaluations', `Teacher changed on ${code} — cleared ${removed} student evaluation(s)`);
+                showToast(`Teacher changed — ${removed} student rating(s) reset.`, 'info');
+            }
+        }
+        Object.assign(subjects[idx], { code, name, teacherId, dept, loadType, isLabSchool, category });
+        addAudit('Edit Subject', `Updated: ${name} (${code})`);
+        showToast('Subject updated!', 'success');
     } else {
-        subjects.push({ 
-            id: 'sub' + Date.now(), 
-            code, name, teacherId, dept, 
-            loadType, isLabSchool,
-            enrolledIds: [] 
+        subjects.push({
+            id: 'sub' + Date.now(),
+            code, name, teacherId, dept,
+            loadType, isLabSchool, category,
+            enrolledIds: []
         });
-        addAudit('Add Subject', `Added: ${name} (${loadType})`);
+        addAudit('Add Subject', `Added: ${name} (${code})`);
+        showToast('Subject added!', 'success');
     }
-    
+
     setData('subjects', subjects);
     closeModal('addSubjectModal');
     renderSubjects();
-    showToast('Subject saved successfully!', 'success');
 };
 
 // Patch openEditTeacherModal to fill dept dropdown
@@ -373,7 +390,7 @@ setTimeout(() => {
     }
 }, 2000);
 
-// ===== FIX: Add department field to Student =====
+// ===== FIX: Add department + course field to Student =====
 const _origSaveStudent = window.saveStudent;
 window.saveStudent = function() {
   const sid = document.getElementById('stuId').value.trim();
@@ -381,6 +398,8 @@ window.saveStudent = function() {
   const year = document.getElementById('stuYear').value;
   const section = document.getElementById('stuSection').value.trim();
   const dept = document.getElementById('stuDept') ? document.getElementById('stuDept').value : '';
+  // BUG FIX: read course from the stuCourse select (was omitted, losing course data on every save)
+  const course = document.getElementById('stuCourse') ? document.getElementById('stuCourse').value.trim() : '';
   const pass = document.getElementById('stuPass').value;
   
   if (!sid || !name || !section) { 
@@ -392,7 +411,7 @@ window.saveStudent = function() {
   
   if (typeof editStudentId !== 'undefined' && editStudentId) {
     const idx = students.findIndex(s => s.id === editStudentId);
-    students[idx] = { ...students[idx], sid, name, year, section, dept };
+    students[idx] = { ...students[idx], sid, name, course, year, section, dept };
     if (pass) students[idx].password = pass;
     addAudit('Edit Student', `Updated: ${name} (${sid}) — Dept: ${dept || 'None'}`);
     showToast('Student updated!', 'success');
@@ -403,7 +422,7 @@ window.saveStudent = function() {
     }
     students.push({ 
       id: 'stu' + Date.now(), 
-      sid, name, year, section, dept,
+      sid, name, course, year, section, dept,
       password: pass || sid, 
       status: 'active', 
       forceReset: false, 
@@ -597,41 +616,65 @@ if (typeof window.renderTeachers === 'function') {
     };
 }
 
-// Fix renderSubjects
+// BUG FIX: The previous renderSubjects override stripped out dept filtering and
+// buildSubjectDeptPills(), breaking the dept filter pills completely.
+// This version restores full dept-filter support and the grouped table layout.
 if (typeof window.renderSubjects === 'function') {
     window.renderSubjects = function(search = '') {
+        // Rebuild dept filter pill bar with correct active state
+        if (typeof buildSubjectDeptPills === 'function') buildSubjectDeptPills();
+
         const subjects = getData('subjects', []);
         const teachers = getData('teachers', []);
-        const filtered = subjects.filter(s => 
-            s.name.toLowerCase().includes(search.toLowerCase()) || 
-            s.code.toLowerCase().includes(search.toLowerCase())
+        const students = getData('students', []);
+
+        // Apply BOTH the dept filter pill and the search query
+        const deptFilter = (window._subjectDeptFilter || '');
+        const filtered = subjects.filter(s =>
+            (s.name.toLowerCase().includes(search.toLowerCase()) || s.code.toLowerCase().includes(search.toLowerCase())) &&
+            (!deptFilter || s.dept === deptFilter)
         );
 
         const tbody = document.getElementById('subjectsTbody');
         if (!tbody) return;
 
         if (!filtered.length) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;">No subjects found.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted);">No subjects found.</td></tr>';
             return;
         }
 
-        tbody.innerHTML = filtered.map(s => {
-            const teacher = teachers.find(t => t.id === s.teacherId);
-            const deptDisplay = s.dept && DEPT_NAMES[s.dept] ? DEPT_NAMES[s.dept] : (s.dept || '—');
-            
-            return `<tr>
-                <td><span style="font-family:monospace;">${escapeHtml(s.code)}</span></td>
-                <td><strong>${escapeHtml(s.name)}</strong></td>
-                <td><span class="dept-tag-inline">${escapeHtml(deptDisplay)}</span></td>
-                <td>${teacher ? escapeHtml(teacher.name) : '<span style="color:red">Unassigned</span>'}</td>
-                <td><button class="btn btn-ghost btn-sm" onclick="openEnrollModal('${s.id}')">👥 ${s.enrolledIds?.length || 0} Students</button></td>
-                <td>
-                    <div class="td-actions" style="display:flex;gap:6px;">
-                        <button class="btn btn-ghost btn-sm" onclick="openEditSubjectModal('${s.id}')">✏️</button>
-                        <button class="btn btn-ghost btn-sm" onclick="deleteSubject('${s.id}')">🗑️</button>
-                    </div>
-                </td>
-            </tr>`;
-        }).join('');
+        // Group by department (matches admin.js dept-grouped layout)
+        const groups = {};
+        filtered.forEach(sub => {
+            const dept = sub.dept || 'Unassigned';
+            if (!groups[dept]) groups[dept] = [];
+            groups[dept].push(sub);
+        });
+
+        let html = '';
+        Object.entries(groups).forEach(([dept, subs]) => {
+            html += `<tr class="dept-group-header-row"><td colspan="7"><div class="dept-group-header">
+              <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+              ${escapeHtml(dept)}<span class="dept-group-count">${subs.length} subject${subs.length !== 1 ? 's' : ''}</span>
+            </div></td></tr>`;
+            subs.forEach(sub => {
+                const teacher = teachers.find(t => t.id === sub.teacherId);
+                const enrolled = (sub.enrolledIds || []).filter(eid => students.find(s => s.id === eid && !s.deleted)).length;
+                html += `<tr class="dept-group-student-row">
+                    <td><span style="font-family:'JetBrains Mono',monospace;font-weight:700;">${escapeHtml(sub.code)}</span></td>
+                    <td><strong>${escapeHtml(sub.name)}</strong></td>
+                    <td>${escapeHtml(sub.dept || '—')}</td>
+                    <td>${escapeHtml(sub.category || '—')}</td>
+                    <td>${teacher ? escapeHtml(teacher.name) : '<span style="color:var(--muted)">Not assigned</span>'}</td>
+                    <td><span class="badge badge-primary">${enrolled} student${enrolled !== 1 ? 's' : ''}</span></td>
+                    <td><div class="td-actions">
+                        <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditSubjectModal('${sub.id}')"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+                        <button class="btn btn-ghost btn-icon btn-sm" onclick="openEnrollModal('${sub.id}')"><svg width="14" height="14" fill="none" stroke="var(--success)" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg></button>
+                        <button class="btn btn-ghost btn-icon btn-sm" onclick="deleteSubject('${sub.id}')"><svg width="14" height="14" fill="none" stroke="var(--danger)" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>
+                    </div></td>
+                </tr>`;
+            });
+        });
+        tbody.innerHTML = html;
     };
 }
