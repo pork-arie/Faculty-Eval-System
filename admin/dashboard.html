@@ -25,8 +25,12 @@ const firebaseConfig = {
 };
 
 firebase.initializeApp(firebaseConfig);
-const db     = firebase.firestore();
-const fbAuth = firebase.auth();
+// window.db makes Firestore accessible from ALL external scripts (admindept.js etc.)
+// 'const db' is block-scoped to this <script> tag so external scripts cannot see it.
+window.db     = firebase.firestore();
+window.fbAuth = firebase.auth();
+const db      = window.db;
+const fbAuth  = window.fbAuth;
 
 function setData(key, val) {
   localStorage.setItem(key, JSON.stringify(val));
@@ -39,9 +43,23 @@ async function syncCollectionToFirestore(key, val) {
     evaluations: 'evaluations', schoolYears: 'schoolYears',
     auditLog: 'auditLog', evalPeriod: 'settings', adminCreds: 'settings'
   };
-  const col = MAP[key];
-  if (!col) return;
+  // FIX: 'customDepartments' was a legacy key written by an old version of saveEditDept in adminfeatures.js.
+  // It had no MAP entry, so Firestore received a blank document. Now that saveEditDept writes to 'departments',
+  // we guard here to silently discard any residual writes to the old key and prevent phantom Firestore docs.
+  if (key === 'customDepartments') return;
+
   try {
+    if (key === 'departments') {
+      // Write every department as its own document in the 'departments' collection
+      const batch = db.batch();
+      Object.entries(val).forEach(([code, cfg]) => {
+        batch.set(db.collection('departments').doc(code), { code, ...cfg });
+      });
+      await batch.commit();
+      return;
+    }
+    const col = MAP[key];
+    if (!col) return;
     if (Array.isArray(val)) {
       const batch = db.batch();
       val.forEach(item => { if (item.id) batch.set(db.collection(col).doc(item.id), item); });
@@ -72,11 +90,66 @@ async function loadFromFirebase() {
     if (evalPeriodDoc.exists) localStorage.setItem('evalPeriod', JSON.stringify(evalPeriodDoc.data()));
     const adminCredsDoc = await db.collection('settings').doc('adminCreds').get();
     if (adminCredsDoc.exists) localStorage.setItem('adminCreds', JSON.stringify(adminCredsDoc.data()));
+
+    // Load all departments from Firestore into localStorage
+    const deptSnap = await db.collection('departments').get();
+    if (!deptSnap.empty) {
+      // Read whatever is already in localStorage (may have offline edits)
+      let localDepts = {};
+      try { localDepts = JSON.parse(localStorage.getItem('departments') || '{}'); } catch(e) {}
+
+      const deptsFromDB = {};
+      deptSnap.docs.forEach(d => {
+        const { code, ...cfg } = d.data();
+        const localCfg = localDepts[d.id] || {};
+
+        // If the local copy has a custom color that Firestore doesn't know about yet
+        // (e.g. saved while offline), keep the local color and push it to Firestore now.
+        const localHasCustomColor = localCfg.colorClass === 'dept-custom' && localCfg.color;
+        const firestoreHasCustomColor = cfg.colorClass === 'dept-custom' && cfg.color;
+
+        if (localHasCustomColor && !firestoreHasCustomColor) {
+          // Local has a newer color — use it and save it back to Firestore
+          cfg.color = localCfg.color;
+          cfg.colorClass = 'dept-custom';
+          db.collection('departments').doc(d.id).set({ code: d.id, ...cfg })
+            .then(() => console.log('✅ Pushed offline color to Firestore:', d.id, cfg.color))
+            .catch(e => console.warn('❌ Failed to push offline color:', e));
+        } else if (localHasCustomColor && firestoreHasCustomColor) {
+          // Both have custom colors — local wins (most recent user action)
+          cfg.color = localCfg.color;
+          cfg.colorClass = 'dept-custom';
+        } else {
+          // Firestore is authoritative — normalize colorClass if needed
+          if (cfg.color && cfg.colorClass && cfg.colorClass !== 'dept-custom') {
+            cfg.colorClass = 'dept-custom';
+          }
+        }
+
+        deptsFromDB[d.id] = cfg;
+      });
+      localStorage.setItem('departments', JSON.stringify(deptsFromDB));
+    } else {
+      // First ever load — seed Firestore from defaults via getDepartments()
+      if (typeof getDepartments === 'function') {
+        const seed = getDepartments();
+        const batch = db.batch();
+        Object.entries(seed).forEach(([code, cfg]) => {
+          batch.set(db.collection('departments').doc(code), { code, ...cfg });
+        });
+        await batch.commit();
+      }
+    }
+
     updateFirebaseStatus('connected');
     // Re-run the migration after Firebase data overwrites localStorage.
     // This assigns facultyType to any legacy Firestore records that lack it,
     // without ever overriding records that already have facultyType set.
     if (typeof migrateSupervisorRecords === 'function') migrateSupervisorRecords();
+    // FIX: re-sync sidebar + dept cards after Firestore writes authoritative
+    // departments into localStorage — fixes disappear-on-reload and ghost cards
+    if (typeof refreshDeptConfig === 'function') refreshDeptConfig();
+    if (typeof renderDeptManagePage === 'function') renderDeptManagePage();
     renderDashboard();
   } catch(e) {
     console.warn('Firebase load failed, using local data:', e.message);
@@ -105,6 +178,10 @@ window.addEventListener('load', () => {
 <style>
 /* Only critical overrides that can't be in external CSS */
 #app { display: flex; min-height: 100vh; }
+/* Collapsible dept section */
+.dept-section-toggle { transition: opacity 0.15s; }
+.dept-section-toggle:hover { opacity: 0.8; }
+#deptNavList .nav-item { animation: none; }
 /* Annex tab styles */
 .annex-tab {
   padding: 10px 18px;
@@ -176,41 +253,46 @@ window.addEventListener('load', () => {
       </div>
       
       
-      <div class="nav-section-label">Departments</div>
-      <div class="nav-item dept-nav-item" onclick="showDeptPage('COED')" id="dept-COED">
-        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
-        <span>COED</span><span class="dept-tag">Education</span>
+      <div id="deptNavSection">
+        <div class="nav-section-label dept-section-toggle" onclick="toggleDeptNav()" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none;">
+          <span>Departments</span>
+          <svg id="deptNavChevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="transition:transform 0.2s;margin-right:4px;"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div id="deptNavList">
+          <div class="nav-item dept-nav-item" onclick="showDeptPage('COED')" id="dept-COED">
+            <img src="../icons/coed.png" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
+            <span>COED</span><span class="dept-tag">Education</span>
+          </div>
+          <div class="nav-item dept-nav-item" onclick="showDeptPage('CCJS')" id="dept-CCJS">
+            <img src="../icons/ccjs.png" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
+            <span>CCJS</span><span class="dept-tag">Criminology</span>
+          </div>
+          <div class="nav-item dept-nav-item" onclick="showDeptPage('CCIS')" id="dept-CCIS">
+            <img src="../icons/ccis.png" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
+            <span>CCIS</span><span class="dept-tag">Computing</span>
+          </div>
+          <div class="nav-item dept-nav-item" onclick="showDeptPage('CON')" id="dept-CON">
+            <img src="../icons/nursing.jpg" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
+            <span>CON</span><span class="dept-tag">Nursing</span>
+          </div>
+          <div class="nav-item dept-nav-item" onclick="showDeptPage('CEA')" id="dept-CEA">
+            <img src="../icons/cea.png" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
+            <span>CEA</span><span class="dept-tag">Engineering</span>
+          </div>
+          <div class="nav-item dept-nav-item" onclick="showDeptPage('COM')" id="dept-COM">
+            <img src="../icons/com.png" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
+            <span>COM</span><span class="dept-tag">Management</span>
+          </div>
+          <div class="nav-item dept-nav-item" onclick="showDeptPage('CAT')" id="dept-CAT">
+            <img src="../icons/cat.jpg" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
+            <span>CAT</span><span class="dept-tag">Agriculture & Tech</span>
+          </div>
+          <div class="nav-item dept-nav-item" onclick="showDeptPage('GS')" id="dept-GS">
+            <img src="../icons/GS.jpg" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
+            <span>GS</span><span class="dept-tag">Graduate School</span>
+          </div>
+        </div>
       </div>
-      <div class="nav-item dept-nav-item" onclick="showDeptPage('CCJS')" id="dept-CCJS">
-        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span>CCJS</span><span class="dept-tag">Criminology</span>
-      </div>
-      <div class="nav-item dept-nav-item" onclick="showDeptPage('CCIS')" id="dept-CCIS">
-        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-        <span>CCIS</span><span class="dept-tag">Computing</span>
-      </div>
-      <div class="nav-item dept-nav-item" onclick="showDeptPage('CON')" id="dept-CON">
-        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        <span>CON</span><span class="dept-tag">Nursing</span>
-      </div>
-      <div class="nav-item dept-nav-item" onclick="showDeptPage('CEA')" id="dept-CEA">
-        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-        <span>CEA</span><span class="dept-tag">Engineering</span>
-      </div>
-      <div class="nav-item dept-nav-item" onclick="showDeptPage('COM')" id="dept-COM">
-        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
-        <span>COM</span><span class="dept-tag">Management</span>
-      </div>
-      <div class="nav-item dept-nav-item" onclick="showDeptPage('CAT')" id="dept-CAT">
-        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
-        <span>CAT</span><span class="dept-tag">Agriculture & Tech</span>
-      </div>
-
-      <!-- ADD THIS RIGHT AFTER CAT -->
-<div class="nav-item dept-nav-item" onclick="showDeptPage('GS')" id="dept-GS">
-    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-    <span>GS</span><span class="dept-tag">Graduate School</span>
-</div>
     </nav>
 
     <div class="sidebar-footer">
@@ -533,32 +615,54 @@ window.addEventListener('load', () => {
     <div class="page" id="page-deptManage">
       <div class="page-header">
         <div class="page-title"><h1>Department Management</h1><p>Create and manage college departments</p></div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <!-- Layout toggle -->
+          <button id="dmLayoutGrid" class="btn btn-ghost btn-sm dm-layout-toggle active" title="Grid view" onclick="setDeptManageLayout('grid')">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          </button>
+          <button id="dmLayoutList" class="btn btn-ghost btn-sm dm-layout-toggle" title="List view" onclick="setDeptManageLayout('list')">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+        </div>
       </div>
 
       <!-- Add New Department Form -->
       <div class="card" style="margin-bottom:24px;">
-        <div class="card-header-bar" style="padding:16px 20px 0;">
+        <div class="card-header-bar" style="padding:16px 20px 0; display:flex; align-items:center; justify-content:space-between;">
           <h3 style="font-size:1rem;font-weight:700;margin:0 0 4px;">Add New Department</h3>
         </div>
         <div class="card-body">
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label">Department Code <span style="color:var(--danger)">*</span></label>
-              <input class="form-control" id="dmCode" placeholder="e.g. CAS" style="text-transform:uppercase;"/>
-            </div>
-            <div class="form-group">
               <label class="form-label">Full Name <span style="color:var(--danger)">*</span></label>
-              <input class="form-control" id="dmName" placeholder="e.g. College of Arts & Sciences"/>
+              <input class="form-control" id="dmName" placeholder="e.g. College of Arts &amp; Sciences"/>
             </div>
             <div class="form-group">
               <label class="form-label">Short Name</label>
-              <input class="form-control" id="dmShort" placeholder="e.g. CAS"/>
+              <input class="form-control" id="dmShort" placeholder="e.g. CAS (auto-used as code)"/>
             </div>
           </div>
           <div class="form-row">
+            <!-- Icon — image upload only -->
+            <div class="form-group" style="flex:0 0 auto; min-width:200px;">
+              <label class="form-label">Icon (optional)</label>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div id="dmIconPreview" style="width:38px;height:38px;border-radius:8px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);flex-shrink:0;overflow:hidden;">
+                  <svg width="18" height="18" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                </div>
+                <label style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.73rem;cursor:pointer;background:#fff;">
+                  <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  Upload Image
+                  <input type="file" accept="image/*" style="display:none;" onchange="dmHandleImageUpload(event)">
+                </label>
+              </div>
+              <input type="hidden" id="dmIcon" value=""/>
+            </div>
+            <!-- Color picker -->
             <div class="form-group">
-              <label class="form-label">Icon / Emoji</label>
-              <input class="form-control" id="dmIcon" placeholder="🏛️ or emoji"/>
+              <label class="form-label">Department Color</label>
+              <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;" id="dmColorPicker"><!-- filled by JS --></div>
+              <input type="hidden" id="dmColor" value="#3b82f6"/>
             </div>
             <div class="form-group" style="flex:2;">
               <label class="form-label">Description</label>
@@ -571,8 +675,19 @@ window.addEventListener('load', () => {
         </div>
       </div>
 
-      <!-- Department Cards Grid -->
+      <!-- Department Cards/List -->
       <div id="deptManageGrid" class="dept-manage-grid"></div>
+    </div>
+
+    <!-- EDIT DEPT MODAL -->
+    <div class="modal-overlay" id="editDeptModal">
+      <div class="modal" style="max-width:520px;">
+        <div class="modal-header">
+          <h3 id="editDeptModalTitle">Edit Department</h3>
+          <button class="modal-close" onclick="closeModal('editDeptModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body" id="editDeptModalBody"></div>
+      </div>
     </div>
 
     <!-- FEEDBACK PAGE -->
@@ -619,14 +734,6 @@ window.addEventListener('load', () => {
             <label class="form-label">Department</label>
             <select class="form-control" id="stuDept">
               <option value="">-- Select Department --</option>
-              <option value="COED">COED — College of Education</option>
-              <option value="CCJS">CCJS — Criminal Justice & Safety</option>
-              <option value="CCIS">CCIS — Computing & Information Sciences</option>
-              <option value="CON">CON — College of Nursing</option>
-              <option value="CEA">CEA — Engineering & Architecture</option>
-              <option value="COM">COM — College of Management</option>
-              <option value="CAT">CAT — Agriculture & Technology</option>
-              <option value="GS">GS — Graduate School</option>
             </select>
           </div>
           <div class="form-group"><label class="form-label">Password (default: ID number)</label><input class="form-control" id="stuPass" placeholder="Leave blank to use ID number"/></div>
@@ -659,14 +766,6 @@ window.addEventListener('load', () => {
             <label class="form-label">Department</label>
             <select class="form-control" id="tchDept">
               <option value="">-- Select Department --</option>
-              <option value="COED">COED — College of Education</option>
-              <option value="CCJS">CCJS — Criminal Justice & Safety</option>
-              <option value="CCIS">CCIS — Computing & Information Sciences</option>
-              <option value="CON">CON — College of Nursing</option>
-              <option value="CEA">CEA — Engineering & Architecture</option>
-              <option value="COM">COM — College of Management</option>
-              <option value="CAT">CAT — Agriculture & Technology</option>
-              <option value="GS">GS — Graduate School</option>
             </select>
           </div>
           <!-- Hidden field = source of truth. saveTeacher() reads this, NOT the select. -->
@@ -719,14 +818,6 @@ window.addEventListener('load', () => {
             <label class="form-label">Department</label>
             <select class="form-control" id="subDept">
               <option value="">-- Select Department --</option>
-              <option value="COED">COED — College of Education</option>
-              <option value="CCJS">CCJS — Criminal Justice & Safety</option>
-              <option value="CCIS">CCIS — Computing & Information Sciences</option>
-              <option value="CON">CON — College of Nursing</option>
-              <option value="CEA">CEA — Engineering & Architecture</option>
-              <option value="COM">COM — College of Management</option>
-              <option value="CAT">CAT — Agriculture & Technology</option>
-              <option value="GS">GS — Graduate School</option>
             </select>
           </div>
 

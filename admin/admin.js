@@ -407,13 +407,25 @@ function renderStudents(search = '') {
   `).join('');
 }
 
+// ── Shared helper: populate any dept <select> from live getDepartments() ──
+function populateDeptDropdown(selectId, selectedValue) {
+  const sel = document.getElementById(selectId);
+  if (!sel || typeof getDepartments !== 'function') return;
+  const depts = getDepartments();
+  sel.innerHTML = '<option value="">-- Select Department --</option>' +
+    Object.entries(depts).map(([code, cfg]) =>
+      `<option value="${code}">${code} — ${cfg.name}</option>`
+    ).join('');
+  if (selectedValue !== undefined) sel.value = selectedValue;
+}
+
 function openAddStudentModal() {
   editStudentId = null;
   document.getElementById('studentModalTitle').textContent = 'Add Student';
   document.getElementById('saveStudentBtn').textContent = 'Add Student';
   ['stuId','stuName','stuSection','stuPass'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('stuYear').value = '1st Year';
-  document.getElementById('stuDept').value = '';
+  populateDeptDropdown('stuDept', '');
   openModal('addStudentModal');
 }
 
@@ -426,7 +438,7 @@ function openEditStudentModal(id) {
   document.getElementById('stuName').value = s.name;
   document.getElementById('stuYear').value = s.year;
   document.getElementById('stuSection').value = s.section;
-  document.getElementById('stuDept').value = s.dept || '';
+  populateDeptDropdown('stuDept', s.dept || '');
   document.getElementById('stuPass').value = '';
   openModal('addStudentModal');
 }
@@ -825,7 +837,7 @@ function openAddTeacherModal() {
   document.getElementById('saveTeacherBtn').textContent = 'Add Faculty';
   document.getElementById('tchId').value = '';
   document.getElementById('tchName').value = '';
-  document.getElementById('tchDept').value = '';
+  populateDeptDropdown('tchDept', '');
   const catEl = document.getElementById('tchCategory');
   if (catEl) catEl.value = '';
   const ftEl = document.getElementById('tchFacultyType');
@@ -848,7 +860,7 @@ window.openAddSupervisorModal = function() {
   document.getElementById('saveTeacherBtn').textContent = 'Add Supervisor';
   document.getElementById('tchId').value = '';
   document.getElementById('tchName').value = '';
-  document.getElementById('tchDept').value = '';
+  populateDeptDropdown('tchDept', '');
   const ftEl = document.getElementById('tchFacultyType');
   if (ftEl) ftEl.value = 'supervisor';
   const hidden = document.getElementById('tchFacultyTypeHidden');
@@ -894,7 +906,7 @@ function openEditTeacherModal(id) {
   document.getElementById('saveTeacherBtn').textContent = 'Save Changes';
   document.getElementById('tchId').value = t.tid;
   document.getElementById('tchName').value = t.name;
-  document.getElementById('tchDept').value = t.dept || '';
+  populateDeptDropdown('tchDept', t.dept || '');
   const catEl = document.getElementById('tchCategory');
   if (catEl) catEl.value = t.category || '';
   const resolvedType = t.facultyType || 'regular';
@@ -1052,7 +1064,7 @@ function renderSubjects(search = '') {
   const subjects = getData('subjects', []);
   const teachers = getData('teachers', []);
   const students = getData('students', []);
-  const deptFilter = (document.getElementById('subjectDeptFilter') || {}).value || '';
+  const _deptBar = document.getElementById('subjectDeptFilterBar'); const deptFilter = (_deptBar && _deptBar.dataset.active) || '';
 
   let filtered = subjects.filter(s =>
     (s.name.toLowerCase().includes(search.toLowerCase()) || s.code.toLowerCase().includes(search.toLowerCase())) &&
@@ -1100,7 +1112,7 @@ function openAddSubjectModal() {
   document.getElementById('subjectModalTitle').textContent = 'Add Subject';
   document.getElementById('saveSubjectBtn').textContent = 'Add Subject';
   ['subCode','subName'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('subDept').value = '';
+  populateDeptDropdown('subDept', '');
   document.getElementById('subLoad').value = 'Regular';
   document.getElementById('subIsLab').checked = false;
   populateTeacherSelect();
@@ -1114,7 +1126,7 @@ function openEditSubjectModal(id) {
   document.getElementById('saveSubjectBtn').textContent = 'Save Changes';
   document.getElementById('subCode').value = sub.code;
   document.getElementById('subName').value = sub.name;
-  document.getElementById('subDept').value = sub.dept || '';
+  populateDeptDropdown('subDept', sub.dept || '');
   document.getElementById('subLoad').value = sub.loadType || 'Regular';
   document.getElementById('subIsLab').checked = sub.isLabSchool || false;
   populateTeacherSelect(sub.teacherId);
@@ -1392,10 +1404,19 @@ window.toggleClassDetails = function(teacherId) {
 function buildSubjectDeptPills() {
   const bar = document.getElementById('subjectDeptFilterBar');
   if (!bar) return;
-  const depts = ['COED','CCJS','CCIS','CON','CEA','COM','CAT','GS'];
+  const DEPT_CONFIG = (typeof getDepartments === 'function') ? getDepartments() : {};
+  const subjects = getData('subjects', []);
+  const depts = Object.keys(DEPT_CONFIG);
   const current = bar.dataset.active || '';
-  bar.innerHTML = `<button class="dept-filter-pill ${current===''?'active':''}" onclick="setSubjectDeptFilter('')">All</button>` +
-    depts.map(d => `<button class="dept-filter-pill ${current===d?'active':''}" onclick="setSubjectDeptFilter('${d}')">${d}</button>`).join('');
+  // Count subjects per dept
+  const counts = {};
+  subjects.forEach(s => { const d = s.dept || ''; counts[d] = (counts[d]||0)+1; });
+  const allCount = subjects.length;
+  bar.innerHTML =
+    `<button class="dept-filter-pill ${current===''?'active':''}" onclick="setSubjectDeptFilter('')">All <span class="dept-filter-count">${allCount}</span></button>` +
+    depts.filter(d => counts[d] > 0 || current === d).map(d =>
+      `<button class="dept-filter-pill ${current===d?'active':''}" onclick="setSubjectDeptFilter('${d}')">${d} <span class="dept-filter-count">${counts[d]||0}</span></button>`
+    ).join('');
 }
 
 window.setSubjectDeptFilter = function(dept) {
@@ -2395,24 +2416,39 @@ renderDashboard();
 
 // Firestore Sync Functions
 window.syncCollectionToFirestore = async function(key, value) {
-    const MAP = {
-        students: 'students', 
-        teachers: 'teachers', 
-        subjects: 'subjects',
-        evaluations: 'evaluations', 
-        schoolYears: 'schoolYears',
-        auditLog: 'auditLog', 
-        evalPeriod: 'settings', 
-        adminCreds: 'settings'
-    };
-    const col = MAP[key];
-    if (!col || typeof firebase === 'undefined' || !firebase.firestore) return;
-    
+    if (typeof firebase === 'undefined' || !firebase.firestore) return;
+
     try {
         const db = firebase.firestore();
+
+        // FIX: departments key was missing from MAP so color changes were never
+        // saved to Firestore — causing colors to revert on every page reload.
+        if (key === 'departments') {
+            const batch = db.batch();
+            Object.entries(value).forEach(([code, cfg]) => {
+                batch.set(db.collection('departments').doc(code), { code, ...cfg });
+            });
+            await batch.commit();
+            console.log('✅ Synced departments to Firestore');
+            return;
+        }
+
+        const MAP = {
+            students: 'students',
+            teachers: 'teachers',
+            subjects: 'subjects',
+            evaluations: 'evaluations',
+            schoolYears: 'schoolYears',
+            auditLog: 'auditLog',
+            evalPeriod: 'settings',
+            adminCreds: 'settings'
+        };
+        const col = MAP[key];
+        if (!col) return;
+
         if (Array.isArray(value)) {
             const batch = db.batch();
-            value.forEach(item => { 
+            value.forEach(item => {
                 if (item && item.id) {
                     batch.set(db.collection(col).doc(item.id), item);
                 }
@@ -2423,7 +2459,7 @@ window.syncCollectionToFirestore = async function(key, value) {
             await db.collection(col).doc(key).set(value);
             console.log(`✅ Synced ${key} to ${col}`);
         }
-    } catch(e) { 
+    } catch(e) {
         console.warn('Firestore sync error:', e.message);
     }
 };

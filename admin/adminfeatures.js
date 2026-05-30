@@ -286,6 +286,161 @@ window.showPage = function(page) {
 // FEATURE 3: DEPARTMENTS MANAGEMENT PAGE (nav item)
 // ============================================================
 
+// ── Emoji palette ──
+const DM_EMOJIS = ['🎓','📚','🏛️','💻','⚕️','⚖️','🏗️','🌾','🔬','🎨','🎭','📐','🧬','🏥','🧑‍💼','📊','🛠️','🌍','✈️','🏋️'];
+
+// ── Layout preference ──
+let _dmLayout = localStorage.getItem('deptManageLayout') || 'grid';
+
+// ── Inject styles once ──
+(function injectDMStyles() {
+    if (document.getElementById('_dmStyles')) return;
+    const s = document.createElement('style');
+    s.id = '_dmStyles';
+    s.textContent = `
+    /* Layout toggle buttons */
+    .dm-layout-toggle { border: 1px solid var(--border) !important; padding: 5px 8px !important; }
+    .dm-layout-toggle.active { background: var(--primary) !important; color: #fff !important; border-color: var(--primary) !important; }
+
+    /* Delete confirmation — slides up over the action bar */
+    .dmc-del-confirm {
+        position: absolute; bottom: 0; left: 0; right: 0;
+        overflow: hidden; max-height: 0; transition: max-height .28s cubic-bezier(.4,0,.2,1);
+        background: rgba(20,5,5,0.92); border-radius: 0 0 14px 14px; z-index: 10;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 8px; padding: 0 16px;
+    }
+    .dmc-del-confirm.open { max-height: 100px; padding: 12px 16px; }
+    .dmc-del-msg { font-size: 0.75rem; color: #fca5a5; text-align: center; margin: 0; line-height: 1.4; }
+    .dmc-del-msg strong { color: #fff; }
+    .dmc-del-msg span { font-size: 0.68rem; opacity: 0.75; }
+    .dmc-del-actions { display: flex; gap: 8px; }
+    .dmc-del-cancel { padding: 4px 14px; background: rgba(255,255,255,0.12); color: #fff; border: 1px solid rgba(255,255,255,0.25); border-radius: 6px; font-size: 0.72rem; cursor: pointer; transition: background .12s; font-family: inherit; }
+    .dmc-del-cancel:hover { background: rgba(255,255,255,0.22); }
+    .dmc-del-confirm-btn { padding: 4px 14px; background: #dc2626; color: #fff; border: none; border-radius: 6px; font-size: 0.72rem; font-weight: 700; cursor: pointer; transition: background .12s; font-family: inherit; }
+    .dmc-del-confirm-btn:hover { background: #b91c1c; }
+
+    /* List layout delete */
+    .dml-del-wrap { border-top: 1px solid #fecaca; background: #fef2f2; }
+
+    .dept-manage-list { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #fff; }
+    .dml-row {
+        display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+        border-bottom: 1px solid var(--border); position: relative; transition: background .12s;
+    }
+    .dml-row:last-child { border-bottom: none; }
+    .dml-row:hover { background: #f8fafc; }
+    .dml-icon {
+        width: 40px; height: 40px; flex-shrink: 0; border-radius: 9px;
+        display: flex; align-items: center; justify-content: center; font-size: 1.15rem;
+        background: var(--primary-light); overflow: hidden;
+    }
+    .dml-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; }
+    .dml-info { flex: 1; min-width: 0; }
+    .dml-name { font-size: 0.85rem; font-weight: 700; }
+    .dml-meta { font-size: 0.72rem; color: var(--muted-foreground); display: flex; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+    .dml-code { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--primary); }
+    .dml-badge { display: inline-block; font-size: 0.62rem; font-weight: 700; padding: 2px 7px; border-radius: 20px; background: #e5e7eb; color: #6b7280; }
+    .dml-badge.custom { background: #dbeafe; color: #1d4ed8; }
+    .dml-stats { display: flex; gap: 16px; }
+    .dml-stat { text-align: center; }
+    .dml-stat-val { font-size: 0.85rem; font-weight: 700; display: block; }
+    .dml-stat-label { font-size: 0.65rem; color: var(--muted-foreground); }
+    .dml-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .dml-del-wrap { border-top: 1px solid #fecaca; background: #fef2f2; }
+
+    /* Edit modal icon area */
+    .edm-icon-prev {
+        width: 52px; height: 52px; border-radius: 10px; background: var(--primary-light);
+        display: flex; align-items: center; justify-content: center; font-size: 1.8rem;
+        border: 2px dashed var(--border); flex-shrink: 0; overflow: hidden;
+    }
+    .edm-icon-prev img { width: 100%; height: 100%; object-fit: cover; border-radius: 9px; }
+    .edm-emoji-btn {
+        width: 28px; height: 28px; border-radius: 5px; font-size: 0.9rem;
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer; border: 1px solid transparent; transition: background .1s;
+    }
+    .edm-emoji-btn:hover, .edm-emoji-btn.sel { background: var(--primary-light); border-color: var(--primary); }
+    .edm-upload-lbl {
+        display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
+        border: 1px solid var(--border); border-radius: 6px; font-size: 0.73rem;
+        cursor: pointer; background: #fff; margin-top: 6px; transition: background .15s;
+    }
+    .edm-upload-lbl:hover { background: var(--primary-light); }
+
+    /* Color swatches */
+    .dm-color-swatch {
+        width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
+        border: 2px solid transparent; transition: transform .1s, border-color .1s;
+        flex-shrink: 0;
+    }
+    .dm-color-swatch:hover { transform: scale(1.18); }
+    .dm-color-swatch.sel { border-color: #1e293b; transform: scale(1.18); box-shadow: 0 0 0 2px #fff inset; }
+    `;
+    document.head.appendChild(s);
+})();
+
+// ── Color palette for new departments ──
+const DM_COLORS = [
+    { hex: '#3b82f6', label: 'Blue' },
+    { hex: '#8b5cf6', label: 'Violet' },
+    { hex: '#ec4899', label: 'Pink' },
+    { hex: '#10b981', label: 'Emerald' },
+    { hex: '#f59e0b', label: 'Amber' },
+    { hex: '#ef4444', label: 'Red' },
+    { hex: '#06b6d4', label: 'Cyan' },
+    { hex: '#f97316', label: 'Orange' },
+    { hex: '#6366f1', label: 'Indigo' },
+    { hex: '#14b8a6', label: 'Teal' },
+    { hex: '#84cc16', label: 'Lime' },
+    { hex: '#64748b', label: 'Slate' },
+];
+
+let _dmSelectedColor = DM_COLORS[0].hex;
+
+function _initDMColorPicker() {
+    const picker = document.getElementById('dmColorPicker');
+    if (!picker || picker.dataset.init) return;
+    picker.dataset.init = '1';
+    picker.innerHTML = DM_COLORS.map((c, i) =>
+        `<span class="dm-color-swatch${i === 0 ? ' sel' : ''}" style="background:${c.hex};" title="${c.label}" onclick="_dmPickColor('${c.hex}', this)"></span>`
+    ).join('');
+    _dmSelectedColor = DM_COLORS[0].hex;
+    const hiddenInput = document.getElementById('dmColor');
+    if (hiddenInput) hiddenInput.value = _dmSelectedColor;
+}
+
+window._dmPickColor = function(hex, el) {
+    _dmSelectedColor = hex;
+    document.querySelectorAll('#dmColorPicker .dm-color-swatch').forEach(b => b.classList.remove('sel'));
+    if (el) el.classList.add('sel');
+    const hiddenInput = document.getElementById('dmColor');
+    if (hiddenInput) hiddenInput.value = hex;
+};
+
+window.dmHandleImageUpload = function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+        const data = ev.target.result;
+        document.getElementById('dmIcon').value = data;
+        const prev = document.getElementById('dmIconPreview');
+        if (prev) prev.innerHTML = `<img src="${data}" style="width:100%;height:100%;object-fit:cover;border-radius:7px;">`;
+        document.querySelectorAll('#dmEmojiPicker .dm-emoji-btn').forEach(b => b.classList.remove('sel'));
+    };
+    reader.readAsDataURL(file);
+};
+
+window.setDeptManageLayout = function(layout) {
+    _dmLayout = layout;
+    localStorage.setItem('deptManageLayout', layout);
+    document.getElementById('dmLayoutGrid')?.classList.toggle('active', layout === 'grid');
+    document.getElementById('dmLayoutList')?.classList.toggle('active', layout === 'list');
+    renderDeptManagePage();
+};
+
 window.showDeptManagePage = function() {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -293,6 +448,10 @@ window.showDeptManagePage = function() {
     if (pageEl) pageEl.classList.add('active');
     const navEl = document.getElementById('nav-deptManage');
     if (navEl) navEl.classList.add('active');
+    // Restore layout toggle state
+    document.getElementById('dmLayoutGrid')?.classList.toggle('active', _dmLayout === 'grid');
+    document.getElementById('dmLayoutList')?.classList.toggle('active', _dmLayout === 'list');
+    _initDMColorPicker();
     renderDeptManagePage();
     closeSidebar();
 };
@@ -303,7 +462,6 @@ window.renderDeptManagePage = function() {
     const allTeachers = getData('teachers', []).filter(t => !t.deleted);
     const allSubjects = getData('subjects', []);
 
-    // Stats per dept
     const deptStats = {};
     Object.keys(DEPT_CONFIG).forEach(code => {
         deptStats[code] = {
@@ -316,67 +474,341 @@ window.renderDeptManagePage = function() {
     const grid = document.getElementById('deptManageGrid');
     if (!grid) return;
 
+    if (_dmLayout === 'list') {
+        _renderDeptList(grid, DEPT_CONFIG, deptStats);
+    } else {
+        _renderDeptGrid(grid, DEPT_CONFIG, deptStats);
+    }
+};
+
+function _deptIconHtmlDM(icon, size, cls) {
+    const isImg = icon && (icon.includes('.jpg') || icon.includes('.png') || icon.includes('.jpeg') || icon.startsWith('data:'));
+    if (isImg) return `<div class="${cls}" style="width:${size}px;height:${size}px;"><img src="${icon}" style="width:100%;height:100%;object-fit:cover;border-radius:${size/4}px;"></div>`;
+    return `<div class="${cls}" style="width:${size}px;height:${size}px;font-size:${Math.round(size*0.52)}px;">${icon || '🏛️'}</div>`;
+}
+
+function _renderDeptGrid(grid, DEPT_CONFIG, deptStats) {
+    grid.className = 'dept-manage-grid';
     grid.innerHTML = Object.entries(DEPT_CONFIG).map(([code, cfg]) => {
         const stats = deptStats[code] || { students: 0, teachers: 0, subjects: 0 };
         const isDefault = !cfg.isCustom;
+        const isImg = cfg.icon && (cfg.icon.includes('.jpg') || cfg.icon.includes('.png') || cfg.icon.includes('.jpeg') || cfg.icon.startsWith('data:'));
+        const iconHtml = isImg
+            ? `<img src="${cfg.icon}" width="32" height="32" style="border-radius:6px;object-fit:cover;">`
+            : `<span style="font-size:1.4rem;">${cfg.icon || '🏛️'}</span>`;
+        const _darken = (hex, amt) => {
+            let c = hex.replace('#','');
+            if (c.length===3) c=c.split('').map(x=>x+x).join('');
+            const n=parseInt(c,16),r=Math.max(0,(n>>16)-amt),g=Math.max(0,((n>>8)&0xff)-amt),b=Math.max(0,(n&0xff)-amt);
+            return '#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
+        };
+        const _customBg = (cfg.isCustom && cfg.color)
+            ? `background:linear-gradient(135deg,${_darken(cfg.color,50)} 0%,${cfg.color} 100%);`
+            : '';
         return `
-        <div class="dept-manage-card ${cfg.colorClass}">
+        <div class="dept-manage-card ${cfg.colorClass}" style="position:relative;overflow:hidden;${_customBg}">
             <div class="dept-manage-card-header">
-                <div class="dept-manage-icon">
-                    ${cfg.icon && (cfg.icon.includes('.jpg') || cfg.icon.includes('.png') || cfg.icon.includes('.jpeg'))
-                        ? `<img src="${cfg.icon}" width="32" height="32" style="border-radius:6px;object-fit:cover;">`
-                        : `<span style="font-size:1.4rem;">${cfg.icon || '🏛️'}</span>`}
-                </div>
+                <div class="dept-manage-icon">${iconHtml}</div>
                 <div class="dept-manage-labels">
-                    <div class="dept-manage-code">${escapeHtml(cfg.short)}</div>
                     <div class="dept-manage-name">${escapeHtml(cfg.name)}</div>
                 </div>
-                ${!isDefault ? `<button class="dept-manage-remove-btn" onclick="confirmRemoveDept('${code}')" title="Remove Department">
-                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>` : `<span class="dept-manage-default-badge">Default</span>`}
             </div>
-            <div class="dept-manage-desc">${escapeHtml(cfg.desc)}</div>
+            <div class="dept-manage-desc">${escapeHtml(cfg.desc || '')}</div>
             <div class="dept-manage-stats">
                 <div class="dept-manage-stat"><span class="dept-ms-val">${stats.teachers}</span><span class="dept-ms-label">Teachers</span></div>
                 <div class="dept-manage-stat"><span class="dept-ms-val">${stats.students}</span><span class="dept-ms-label">Students</span></div>
                 <div class="dept-manage-stat"><span class="dept-ms-val">${stats.subjects}</span><span class="dept-ms-label">Subjects</span></div>
             </div>
-            <button class="dept-manage-view-btn" onclick="showDeptPage('${code}')">
-                View Department →
-            </button>
+            <!-- Action bar: always visible, consistent across all cards -->
+            <div class="dmc-action-bar">
+                <button class="dmc-action-btn dmc-view-btn" onclick="showDeptPage('${code}')">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    View
+                </button>
+                <button class="dmc-action-btn dmc-edit-btn2" onclick="openEditDeptModal('${code}')">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    Edit
+                </button>
+                ${!isDefault ? `<button class="dmc-action-btn dmc-del-btn" onclick="toggleDMDeleteConfirm('${code}')">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                    Delete
+                </button>` : ''}
+            </div>
+            ${!isDefault ? `<div id="dmdelconfirm-${code}" class="dmc-del-confirm">
+                <p class="dmc-del-msg">Delete <strong>${escapeHtml(cfg.name)}</strong>?<br><span>This cannot be undone.</span></p>
+                <div class="dmc-del-actions">
+                    <button class="dmc-del-cancel" onclick="toggleDMDeleteConfirm('${code}')">Cancel</button>
+                    <button class="dmc-del-confirm-btn" onclick="executeDMDelete('${code}')">Yes, Delete</button>
+                </div>
+            </div>` : ''}
         </div>`;
     }).join('');
+}
+
+function _renderDeptList(grid, DEPT_CONFIG, deptStats) {
+    grid.className = 'dept-manage-list';
+    grid.innerHTML = Object.entries(DEPT_CONFIG).map(([code, cfg]) => {
+        const stats = deptStats[code] || { students: 0, teachers: 0, subjects: 0 };
+        const isDefault = !cfg.isCustom;
+        const isImg = cfg.icon && (cfg.icon.includes('.jpg') || cfg.icon.includes('.png') || cfg.icon.includes('.jpeg') || cfg.icon.startsWith('data:'));
+        const iconInner = isImg
+            ? `<img src="${cfg.icon}" alt="">`
+            : `<span style="font-size:1.15rem;">${cfg.icon || '🏛️'}</span>`;
+        return `
+        <div>
+            <div class="dml-row">
+                <div class="dml-icon">${iconInner}</div>
+                <div class="dml-info">
+                    <div class="dml-name">
+                        ${escapeHtml(cfg.name)}
+                        <span class="dml-badge${!isDefault ? ' custom' : ''}" style="margin-left:6px;">${isDefault ? 'Default' : 'Custom'}</span>
+                    </div>
+                    <div class="dml-meta">
+                        <span class="dml-code">${escapeHtml(code)}</span>
+                        <span>${escapeHtml(cfg.desc || '')}</span>
+                    </div>
+                </div>
+                <div class="dml-stats">
+                    <div class="dml-stat"><span class="dml-stat-val">${stats.teachers}</span><span class="dml-stat-label">Teachers</span></div>
+                    <div class="dml-stat"><span class="dml-stat-val">${stats.students}</span><span class="dml-stat-label">Students</span></div>
+                    <div class="dml-stat"><span class="dml-stat-val">${stats.subjects}</span><span class="dml-stat-label">Subjects</span></div>
+                </div>
+                <div class="dml-actions">
+                    <button class="btn btn-ghost btn-sm" onclick="showDeptPage('${code}')" title="View">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                    <button class="btn btn-ghost btn-sm" onclick="openEditDeptModal('${code}')" title="Edit" style="color:var(--primary);">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    ${!isDefault ? `<button class="btn btn-ghost btn-sm" onclick="toggleDMDeleteConfirm('${code}')" title="Delete" style="color:#ef4444;">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+                    </button>` : ''}
+                </div>
+            </div>
+            ${!isDefault ? `<div id="dmdelconfirm-${code}" style="display:none;padding:10px 16px;background:#fef2f2;border-top:1px solid #fecaca;border-radius:0 0 8px 8px;flex-direction:row;align-items:center;gap:10px;">
+                <span style="font-size:0.8rem;color:#b91c1c;flex:1;">Delete <strong>${escapeHtml(cfg.name)}</strong>? This cannot be undone.</span>
+                <button onclick="toggleDMDeleteConfirm('${code}')" style="padding:4px 12px;border-radius:5px;border:1px solid #fca5a5;background:transparent;color:#b91c1c;cursor:pointer;font-size:0.78rem;">Cancel</button>
+                <button onclick="executeDMDelete('${code}')" style="padding:4px 12px;border-radius:5px;border:none;background:#ef4444;color:#fff;cursor:pointer;font-size:0.78rem;font-weight:600;">Delete</button>
+            </div>` : ''}
+        </div>`;
+    }).join('');
+}
+
+window.toggleDMDeleteConfirm = function(code) {
+    const el = document.getElementById('dmdelconfirm-' + code);
+    if (!el) return;
+    el.classList.toggle('open');
 };
 
-window.confirmRemoveDept = function(code) {
-    const DEPT_CONFIG = getDepartments();
-    const cfg = DEPT_CONFIG[code];
-    showConfirm('Remove Department', `Remove "${cfg ? cfg.name : code}"? This will NOT delete associated teachers or students.`, () => {
-        removeDepartment(code);
-        renderDeptManagePage();
-    });
+window.executeDMDelete = function(code) {
+    removeDepartment(code);   // has built-in guard for default depts + now syncs Firestore
+    renderDeptManagePage();
+    if (typeof buildStudentDeptFilterBar === 'function') buildStudentDeptFilterBar();
+    if (typeof buildTeacherDeptFilterBar === 'function') buildTeacherDeptFilterBar();
+    if (typeof buildSubjectDeptPills === 'function') buildSubjectDeptPills();
 };
+
+window.confirmRemoveDept = window.executeDMDelete; // backward compat alias
+
+// ── Card menu dropdown helpers ──
+window.toggleDMCardMenu = function(code, e) {
+    e.stopPropagation();
+    const dd = document.getElementById('dmc-dd-' + code);
+    if (!dd) return;
+    const isOpen = dd.classList.contains('open');
+    closeDMCardMenus();
+    if (!isOpen) dd.classList.add('open');
+};
+
+window.closeDMCardMenus = function() {
+    document.querySelectorAll('.dmc-dropdown.open').forEach(d => d.classList.remove('open'));
+};
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', function() { closeDMCardMenus(); });
 
 window.saveDeptFromManagePage = function() {
-    const code = document.getElementById('dmCode').value.trim().toUpperCase();
-    const name = document.getElementById('dmName').value.trim();
-    const short = document.getElementById('dmShort').value.trim() || code;
-    const icon = document.getElementById('dmIcon').value.trim() || '🏛️';
-    const desc = document.getElementById('dmDesc').value.trim() || name;
+    const name  = (document.getElementById('dmName')?.value  || '').trim();
+    const short = (document.getElementById('dmShort')?.value || '').trim() || name;
+    const icon  = (document.getElementById('dmIcon')?.value  || '').trim();
+    const desc  = (document.getElementById('dmDesc')?.value  || '').trim() || name;
+    const color = (document.getElementById('dmColor')?.value || _dmSelectedColor || '#3b82f6').trim();
 
-    if (!code || !name) { showToast('Please fill in Code and Name.', 'error'); return; }
+    // Auto-generate code from short name (uppercase, no spaces, max 8 chars)
+    const baseCode = short.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 8);
 
+    if (!name) { showToast('Please fill in the Full Name.', 'error'); return; }
+    if (!baseCode) { showToast('Short Name must contain letters or numbers.', 'error'); return; }
+
+    // Auto-increment code if duplicate
     const existing = getDepartments();
-    if (existing[code]) { showToast(`Department code "${code}" already exists.`, 'error'); return; }
+    let code = baseCode;
+    let suffix = 2;
+    while (existing[code]) { code = baseCode.substring(0, 7) + suffix; suffix++; }
 
-    addDepartment(code, name, short, desc, icon);
-    ['dmCode','dmName','dmShort','dmIcon','dmDesc'].forEach(id => {
-        const el = document.getElementById(id); if (el) el.value = '';
-    });
+    addDepartment(code, name, short, desc, icon, color);
+
+    // Clear form
+    ['dmName','dmShort','dmDesc'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    document.getElementById('dmIcon').value = '';
+    const prev = document.getElementById('dmIconPreview');
+    if (prev) prev.innerHTML = `<svg width="18" height="18" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+    // Reset color picker
+    _dmSelectedColor = DM_COLORS[0].hex;
+    document.querySelectorAll('#dmColorPicker .dm-color-swatch').forEach((b, i) => b.classList.toggle('sel', i === 0));
+    const colorInput = document.getElementById('dmColor');
+    if (colorInput) colorInput.value = _dmSelectedColor;
+
+    renderDeptManagePage();
+    buildStudentDeptFilterBar();
+};
+
+// ── Edit Department Modal ──
+window.openEditDeptModal = function(code) {
+    const depts = getDepartments();
+    const cfg = depts[code];
+    if (!cfg) return;
+
+    const isDefault = !cfg.isCustom;
+    const isImg = cfg.icon && (cfg.icon.includes('.jpg') || cfg.icon.includes('.png') || cfg.icon.includes('.jpeg') || cfg.icon.startsWith('data:'));
+    const previewHtml = isImg
+        ? `<img src="${cfg.icon}" style="width:100%;height:100%;object-fit:cover;border-radius:9px;">`
+        : `<svg width="22" height="22" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+
+    const currentColor = cfg.color || '#3b82f6';
+
+    document.getElementById('editDeptModalTitle').textContent = `Edit — ${cfg.short}`;
+    document.getElementById('editDeptModalBody').innerHTML = `
+        <input type="hidden" id="edm_code" value="${escapeHtml(code)}">
+        <input type="hidden" id="edm_icon" value="${escapeHtml(cfg.icon || '')}">
+        <input type="hidden" id="edm_color" value="${escapeHtml(currentColor)}">
+
+        <!-- Icon / Image upload only -->
+        <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px;">
+            <div class="edm-icon-prev" id="edm_iconPreview">${previewHtml}</div>
+            <div style="flex:1;">
+                <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-foreground);margin-bottom:8px;">Department Icon</div>
+                <label class="edm-upload-lbl">
+                    <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Upload Image
+                    <input type="file" accept="image/*" style="display:none;" onchange="edmHandleImage(event)">
+                </label>
+                ${isImg ? `<button onclick="edmClearImage()" style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.72rem;cursor:pointer;background:#fff;color:var(--danger);">
+                    <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Remove
+                </button>` : ''}
+            </div>
+        </div>
+
+        <!-- Color picker -->
+        <div style="margin-bottom:14px;">
+            <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-foreground);margin-bottom:8px;">Department Color</div>
+            <div style="display:flex;flex-wrap:wrap;gap:7px;" id="edm_colorPicker">
+                ${DM_COLORS.map(c => `<span class="dm-color-swatch${currentColor === c.hex ? ' sel' : ''}" style="background:${c.hex};" title="${c.label}" onclick="edmPickColor('${c.hex}', this)"></span>`).join('')}
+            </div>
+        </div>
+
+        <!-- Fields -->
+        <div class="form-row" style="margin-bottom:10px;">
+            <div class="form-group">
+                <label class="form-label">Code</label>
+                <input class="form-control" value="${escapeHtml(code)}" ${isDefault ? 'disabled style="opacity:.5;"' : 'id="edm_newCode"'}>
+                ${isDefault ? `<input type="hidden" id="edm_newCode" value="${escapeHtml(code)}"><span style="font-size:0.67rem;color:var(--muted-foreground);">Default codes are locked.</span>` : ''}
+            </div>
+            <div class="form-group">
+                <label class="form-label">Short Name <span style="color:var(--danger)">*</span></label>
+                <input class="form-control" id="edm_short" value="${escapeHtml(cfg.short || code)}">
+            </div>
+        </div>
+        <div class="form-group" style="margin-bottom:10px;">
+            <label class="form-label">Full Name <span style="color:var(--danger)">*</span></label>
+            <input class="form-control" id="edm_name" value="${escapeHtml(cfg.name)}">
+        </div>
+        <div class="form-group" style="margin-bottom:16px;">
+            <label class="form-label">Description</label>
+            <input class="form-control" id="edm_desc" value="${escapeHtml(cfg.desc || '')}">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button class="btn btn-ghost" onclick="closeModal('editDeptModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveEditDept()">
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="margin-right:3px;"><polyline points="20 6 9 17 4 12"/></svg>
+                Save Changes
+            </button>
+        </div>`;
+
+    openModal('editDeptModal');
+};
+
+window.edmPickColor = function(hex, el) {
+    document.getElementById('edm_color').value = hex;
+    document.querySelectorAll('#edm_colorPicker .dm-color-swatch').forEach(b => b.classList.remove('sel'));
+    if (el) el.classList.add('sel');
+};
+
+window.edmClearImage = function() {
+    document.getElementById('edm_icon').value = '';
+    const prev = document.getElementById('edm_iconPreview');
+    if (prev) prev.innerHTML = `<svg width="22" height="22" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+};
+
+window.edmHandleImage = function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+        const data = ev.target.result;
+        document.getElementById('edm_icon').value = data;
+        const prev = document.getElementById('edm_iconPreview');
+        if (prev) prev.innerHTML = `<img src="${data}" style="width:100%;height:100%;object-fit:cover;border-radius:9px;">`;
+        document.querySelectorAll('.edm-emoji-btn').forEach(b => b.classList.remove('sel'));
+    };
+    reader.readAsDataURL(file);
+};
+
+window.saveEditDept = function() {
+    const originalCode = document.getElementById('edm_code').value;
+    const name  = (document.getElementById('edm_name')?.value  || '').trim();
+    const short = (document.getElementById('edm_short')?.value || '').trim();
+    const desc  = (document.getElementById('edm_desc')?.value  || '').trim();
+    const icon  = (document.getElementById('edm_icon')?.value  || '').trim();
+    const color = (document.getElementById('edm_color')?.value || '#3b82f6').trim();
+
+    if (!name || !short) { showToast('Name and Short Name are required.', 'error'); return; }
+
+    const depts = getDepartments();
+    const cfg   = depts[originalCode];
+    if (!cfg) { showToast('Department not found.', 'error'); return; }
+
+    const isDefault = !cfg.isCustom;
+
+    // Build change log
+    const changes = [];
+    if (cfg.name  !== name)  changes.push(`name → "${name}"`);
+    if (cfg.short !== short) changes.push(`short → "${short}"`);
+    if ((cfg.desc || '') !== desc) changes.push('desc updated');
+    if (cfg.icon  !== icon)  changes.push('icon updated');
+    if ((cfg.color || '') !== color) changes.push('color updated');
+
+    // FIX: write directly into the unified 'departments' store (not the old 'customDepartments' key)
+    // 'customDepartments' was a stale separate key that syncCollectionToFirestore had no mapping for,
+    // causing Firestore to create a blank document while the real departments collection stayed unchanged.
+    const allDepts = getDepartments();
+    allDepts[originalCode] = {
+        ...allDepts[originalCode],
+        name, short, desc, icon, color,
+        isCustom: cfg.isCustom ? true : false
+    };
+    setData('departments', allDepts);
+
+    refreshDeptConfig();
+    addAudit('Edit Department', `${originalCode}: ${changes.length ? changes.join('; ') : 'no changes'}`);
+    showToast(`"${short}" updated successfully!`, 'success');
+    closeModal('editDeptModal');
     renderDeptManagePage();
 
-    // Rebuild dept filter bar if student page was visited
-    buildStudentDeptFilterBar();
+    // Refresh live dept page if currently viewing this dept
+    if (typeof currentDept !== 'undefined' && currentDept === originalCode) {
+        renderDeptPage(originalCode);
+    }
 };
 
 
