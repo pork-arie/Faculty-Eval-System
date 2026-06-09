@@ -58,6 +58,25 @@ async function syncCollectionToFirestore(key, val) {
       await batch.commit();
       return;
     }
+    // FIX: customCourses — write each dept as its own document in the top-level
+    // 'courses' collection so it is clearly visible in Firestore.
+    // Structure: courses/{DEPT_CODE} → { dept: "COED", courses: ["BSED", ...] }
+    if (key === 'customCourses') {
+      const coursesMap = val || {};
+      const entries = Object.entries(coursesMap);
+      if (entries.length > 0) {
+        const batch = db.batch();
+        entries.forEach(([deptCode, list]) => {
+          batch.set(db.collection('courses').doc(deptCode), {
+            dept: deptCode,
+            courses: Array.isArray(list) ? list : []
+          });
+        });
+        await batch.commit();
+        console.log('✅ Synced customCourses to Firestore courses collection:', Object.keys(coursesMap));
+      }
+      return;
+    }
     const col = MAP[key];
     if (!col) return;
     if (Array.isArray(val)) {
@@ -90,6 +109,18 @@ async function loadFromFirebase() {
     if (evalPeriodDoc.exists) localStorage.setItem('evalPeriod', JSON.stringify(evalPeriodDoc.data()));
     const adminCredsDoc = await db.collection('settings').doc('adminCreds').get();
     if (adminCredsDoc.exists) localStorage.setItem('adminCreds', JSON.stringify(adminCredsDoc.data()));
+    // FIX: Load customCourses from Firestore 'courses' collection on startup
+    // so all clients (admin + students) always get the latest courses.
+    const coursesSnap = await db.collection('courses').get();
+    if (!coursesSnap.empty) {
+      const customCourses = {};
+      coursesSnap.docs.forEach(d => {
+        const data = d.data();
+        customCourses[d.id] = Array.isArray(data.courses) ? data.courses : [];
+      });
+      localStorage.setItem('customCourses', JSON.stringify(customCourses));
+      if (typeof reloadCoursesByDept === 'function') reloadCoursesByDept();
+    }
 
     // Load all departments from Firestore into localStorage
     const deptSnap = await db.collection('departments').get();
@@ -378,54 +409,83 @@ window.addEventListener('load', () => {
       <button class="btn btn-ghost" onclick="openModal('bulkUploadTeacherModal')">
         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Bulk Upload
       </button>
-      <button class="btn btn-primary" onclick="openAddTeacherModal()">
+      <button class="btn btn-primary" id="teacherPageAddBtn" onclick="openAddTeacherModal()">
         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Teacher
       </button>
     </div>
   </div>
 
-<div class="card" style="margin-bottom:20px;"><div class="card-body">
-  <h3 style="font-size:0.95rem;font-weight:700;margin:0 0 12px;display:flex;align-items:center;gap:8px;">
-    <svg width="16" height="16" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Faculty
-  </h3>
-  
-  <div class="search-box" style="margin-bottom:12px;">
-    <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input type="text" id="teacherSearchInput" placeholder="Search by name, ID, or department (e.g. CCIS, Nursing)..." oninput="renderTeachers(this.value)"/>
+  <!-- ===== STICKY SECTION TABS ===== -->
+  <div class="teacher-tab-bar" id="teacherTabBar">
+    <button class="teacher-tab teacher-tab-active" id="teacherTabFaculty" onclick="switchTeacherTab('faculty')">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      Faculty
+      <span class="teacher-tab-count" id="teacherTabFacultyCount">0</span>
+    </button>
+    <button class="teacher-tab" id="teacherTabSupervisors" onclick="switchTeacherTab('supervisors')">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Supervisors
+      <span class="teacher-tab-count" id="teacherTabSupervisorsCount">0</span>
+    </button>
   </div>
-  
-  <div id="teacherDeptFilterBar" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px;"></div>
-  
-  <select id="teacherDeptFilter" style="display:none;" onchange="renderTeachers()"><option value="">All Departments</option></select>
-  <select id="teacherTypeFilter" style="display:none;"><option value="regular">Regular Faculty</option></select>
-  
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th><th>Name</th><th>Department</th><th>Subjects</th><th>Status</th><th>Actions</th>
-        </tr>
-      </thead>
-      <tbody id="teachersTbody"></tbody>
-    </table>
-  </div>
-</div></div>
 
-      <!-- Supervisor section -->
-      <div class="card"><div class="card-body">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-          <h3 style="font-size:0.95rem;font-weight:700;margin:0;display:flex;align-items:center;gap:8px;">
-            <svg width="16" height="16" fill="none" stroke="var(--warning)" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Supervisors
-          </h3>
+  <!-- ===== FACULTY PANEL ===== -->
+  <div id="teacherPanelFaculty">
+    <div class="card" style="margin-bottom:20px;">
+      <!-- Collapsible header -->
+      <div class="teacher-card-header" onclick="toggleTeacherSection('faculty')">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <svg width="16" height="16" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span style="font-size:0.95rem;font-weight:700;">Faculty</span>
+          <span class="dept-group-count" id="facultyHeaderCount" style="margin-left:0;">0</span>
+        </div>
+        <svg class="teacher-collapse-icon" id="facultyCollapseIcon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>
+      </div>
+      <div class="card-body" id="facultyCardBody">
+        <div class="search-box" style="margin-bottom:12px;">
+          <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="teacherSearchInput" placeholder="Search by name, ID, or department (e.g. CCIS, Nursing)..." oninput="renderTeachers(this.value)"/>
+        </div>
+        <div id="teacherDeptFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
+        <select id="teacherDeptFilter" style="display:none;" onchange="renderTeachers()"><option value="">All Departments</option></select>
+        <select id="teacherTypeFilter" style="display:none;"><option value="regular">Regular Faculty</option></select>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th><th>Name</th><th>Department</th><th>Subjects</th><th>Status</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="teachersTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SUPERVISORS PANEL ===== -->
+  <div id="teacherPanelSupervisors" style="display:none;">
+    <div class="card">
+      <!-- Collapsible header -->
+      <div class="teacher-card-header" onclick="toggleTeacherSection('supervisors')">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <svg width="16" height="16" fill="none" stroke="var(--warning)" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span style="font-size:0.95rem;font-weight:700;">Supervisors</span>
+          <span class="dept-group-count" id="supervisorHeaderCount" style="margin-left:0;">0</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;" onclick="event.stopPropagation()">
           <button class="btn btn-primary btn-sm" onclick="openAddSupervisorModal()" style="font-size:0.8rem;padding:6px 14px;">
             <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="margin-right:4px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Supervisor
           </button>
+          <svg class="teacher-collapse-icon" id="supervisorsCollapseIcon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>
         </div>
+      </div>
+      <div class="card-body" id="supervisorsCardBody">
         <div class="search-box" style="margin-bottom:12px;">
           <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input type="text" id="supervisorSearchInput" placeholder="Search supervisor by name, ID, or department..." oninput="renderSupervisorTable(this.value)"/>
         </div>
-        <div id="supervisorDeptFilterBar" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px;"></div>
+        <div id="supervisorDeptFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
         <select id="supervisorDeptFilterHidden" style="display:none;"></select>
         <div class="table-wrap">
           <table>
@@ -437,7 +497,10 @@ window.addEventListener('load', () => {
             <tbody id="supervisorsTbody"></tbody>
           </table>
         </div>
-      </div></div>
+      </div>
+    </div>
+  </div>
+
     </div>
 
     <!-- SUBJECTS - Fixed with correct columns -->
@@ -496,6 +559,11 @@ window.addEventListener('load', () => {
         </button>
       </div>
       <div id="reportsContent"></div>
+    </div>
+
+    <!-- REPORTS FULL LIST PAGE -->
+    <div class="page" id="page-rptViewAll">
+      <div id="rptViewAllContent"></div>
     </div>
 
     <!-- supervisor-->
@@ -623,6 +691,9 @@ window.addEventListener('load', () => {
       <div class="page-header">
         <div class="page-title"><h1>Department Management</h1><p>Create and manage college departments</p></div>
         <div style="display:flex;align-items:center;gap:8px;">
+          <button class="btn btn-ghost" onclick="openManageDeptsModal()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg>Manage Courses
+          </button>
           <!-- Layout toggle -->
           <button id="dmLayoutGrid" class="btn btn-ghost btn-sm dm-layout-toggle active" title="Grid view" onclick="setDeptManageLayout('grid')">
             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
@@ -1031,6 +1102,7 @@ window.addEventListener('load', () => {
 
     <div class="toast-container" id="toastContainer"></div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="../shared/js/data.js"></script>
     <script src="admin.js"></script>
     <script src="admindept.js"></script>

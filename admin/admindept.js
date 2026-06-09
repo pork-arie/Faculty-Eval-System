@@ -481,7 +481,6 @@ function _deptIconHtml(icon, cls, size = 44) {
 
 // ── open manage departments modal ──
 window.openManageDeptsModal = function() {
-    // Ensure overlay/modal exist (create lazily if not in HTML)
     let overlay = document.getElementById('deptMgmtModal');
     if (!overlay) {
         overlay = document.createElement('div');
@@ -490,7 +489,7 @@ window.openManageDeptsModal = function() {
         overlay.innerHTML = `
         <div class="modal" style="padding:0;overflow:hidden;display:flex;flex-direction:column;max-height:92vh;">
             <div class="modal-header" style="padding:14px 18px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;">
-                <h2 class="modal-title" style="font-size:1rem;font-weight:700;flex:1;">Manage Departments</h2>
+                <h2 class="modal-title" style="font-size:1rem;font-weight:700;flex:1;">Manage Courses</h2>
                 <button class="modal-close" onclick="closeModal('deptMgmtModal')">✕</button>
             </div>
             <div id="deptMgmtBody" class="modal-body" style="padding:0;overflow:hidden;flex:1;display:flex;flex-direction:column;"></div>
@@ -499,7 +498,7 @@ window.openManageDeptsModal = function() {
         document.body.appendChild(overlay);
     }
 
-    _renderDeptMgmtBody();
+    _renderCoursesMgmtBody();
     openModal('deptMgmtModal');
 };
 
@@ -920,4 +919,124 @@ window.saveEditDept = function() {
     _renderDeptMgmtBody();
 
     if (currentDept === originalCode) renderDeptPage(originalCode);
+};
+// ===== MANAGE COURSES PANEL (inside deptMgmtModal, Courses tab) =====
+
+(function injectCoursesMgmtStyles() {
+    if (document.getElementById('coursesMgmtStyles')) return;
+    const s = document.createElement('style');
+    s.id = 'coursesMgmtStyles';
+    s.textContent = `
+    .cm-shell { display:flex; flex-direction:column; height:100%; }
+    .cm-toolbar {
+        display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+        padding:12px 20px 10px; border-bottom:1px solid var(--border);
+        background:var(--bg,#fff);
+    }
+    .cm-toolbar h3 { font-size:0.95rem; font-weight:700; margin:0; flex:1; }
+    .cm-dept-sel { padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:0.82rem; min-width:200px; }
+    .cm-body { padding:14px 20px; overflow-y:auto; flex:1; max-height:430px; }
+    .cm-crse-row {
+        display:flex; align-items:center; gap:6px; padding:5px 10px;
+        border-radius:6px; background:var(--surface2,#f8fafc);
+        margin-bottom:5px; border:1px solid var(--border,#e2e8f0);
+    }
+    .cm-crse-label { flex:1; font-size:0.8rem; line-height:1.4; word-break:break-word; }
+    .cm-crse-input { flex:1; font-size:0.8rem; padding:3px 7px; display:none; }
+    .cm-action-btn { padding:2px 8px; font-size:0.72rem; border:none; background:transparent; cursor:pointer; border-radius:4px; }
+    .cm-action-btn:hover { background:var(--surface3,#e2e8f0); }
+    .cm-action-btn.del { color:var(--danger,#e74c3c); }
+    .cm-action-btn.save { color:var(--primary,#2563eb); font-weight:700; }
+    .cm-add-row { display:flex; gap:8px; align-items:center; padding:12px 20px; border-top:1px solid var(--border); background:var(--bg,#fff); }
+    .cm-add-row input { flex:1; font-size:0.82rem; }
+    .cm-bulk-bar {
+        display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+        padding:8px 20px; border-top:1px solid var(--border);
+        background:var(--surface2,#f8fafc); font-size:0.78rem; color:var(--muted-foreground);
+    }
+    .cm-bulk-label { display:inline-flex; align-items:center; gap:5px; padding:5px 12px;
+        border:1px solid var(--border); border-radius:6px; font-size:0.78rem; cursor:pointer;
+        background:#fff; color:var(--foreground); transition:background .15s; font-weight:600; }
+    .cm-bulk-label:hover { background:var(--primary-light,#eff6ff); }
+    .cm-tmpl-btn { display:inline-flex; align-items:center; gap:5px; padding:5px 12px;
+        border:1px solid var(--primary,#2563eb); border-radius:6px; font-size:0.78rem; cursor:pointer;
+        background:transparent; color:var(--primary,#2563eb); font-weight:600; transition:background .15s; }
+    .cm-tmpl-btn:hover { background:var(--primary-light,#eff6ff); }
+    .cm-empty { color:var(--muted-foreground); font-size:0.82rem; padding:18px 0 4px; }
+    `;
+    document.head.appendChild(s);
+})();
+
+function _renderCoursesMgmtBody() {
+    const body = document.getElementById('deptMgmtBody');
+    if (!body) return;
+    const depts = getDepartments();
+    const deptOptions = Object.entries(depts)
+        .map(([code, cfg]) => `<option value="${code}">${code} — ${escapeHtml(cfg.name)}</option>`)
+        .join('');
+
+    body.innerHTML = `
+    <div class="cm-shell">
+        <!-- Toolbar: dept selector + totals -->
+        <div class="cm-toolbar">
+            <h3>Courses</h3>
+            <select class="cm-dept-sel" id="mcCrseDept" onchange="mcLoadDept(this.value)">
+                <option value="">— Select Department —</option>
+                ${deptOptions}
+            </select>
+            <span id="mcCrseCount" style="font-size:0.78rem;color:var(--muted-foreground);"></span>
+        </div>
+
+        <!-- Course list -->
+        <div class="cm-body" id="mcCrseList">
+            <p class="cm-empty">Select a department above to see its courses.</p>
+        </div>
+
+        <!-- Add single course row -->
+        <div class="cm-add-row">
+            <input class="form-control" id="mcNewCrseInput"
+                placeholder="e.g. BSMT (Bachelor of Science in Marine Transportation)"
+                onkeydown="if(event.key==='Enter'){mcAddCourseFromPanel()}" />
+            <button class="btn btn-primary" style="white-space:nowrap;font-size:0.8rem;"
+                onclick="mcAddCourseFromPanel()">+ Add Course</button>
+        </div>
+
+        <!-- Bulk upload bar -->
+        <div class="cm-bulk-bar">
+            <span>Bulk upload:</span>
+            <label class="cm-bulk-label">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Upload Excel (.xlsx)
+                <input type="file" accept=".xlsx,.xls" style="display:none;" onchange="mcHandleBulkUpload(event)" />
+            </label>
+            <button class="cm-tmpl-btn" onclick="mcDownloadTemplate()">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Download Template
+            </button>
+            <span style="color:var(--muted-foreground);font-size:0.72rem;margin-left:auto;">Columns: A = Dept Code, B = Course Name</span>
+        </div>
+    </div>`;
+}
+
+// Called from the courses panel add button (reads from mcCrseDept)
+window.mcAddCourseFromPanel = function() {
+    const deptCode = (document.getElementById('mcCrseDept') || {}).value || '';
+    mcAddCourse(deptCode);
+    _mcUpdateCount(deptCode);
+};
+
+// Update the count badge next to h3
+function _mcUpdateCount(deptCode) {
+    const el = document.getElementById('mcCrseCount');
+    if (!el || !deptCode) return;
+    reloadCoursesByDept();
+    const n = (COURSES_BY_DEPT[deptCode] || []).length;
+    el.textContent = `${n} course${n !== 1 ? 's' : ''}`;
+}
+
+// Override mcLoadDept to also update count badge
+const _origMcLoadDept = window.mcLoadDept;
+window.mcLoadDept = function(deptCode) {
+    if (typeof _origMcLoadDept === 'function') _origMcLoadDept(deptCode);
+    _mcUpdateCount(deptCode);
 };

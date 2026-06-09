@@ -194,7 +194,8 @@ function showPage(page) {
     evalControl: renderEvalControl, 
     reports: renderReports, 
     auditLog: renderAuditLog,
-    supervisor: renderSupervisorList
+    supervisor: renderSupervisorList,
+    rptViewAll: renderRptViewAll
   };
 
   if (renders[page]) renders[page]();
@@ -536,6 +537,97 @@ window.setTeacherDeptFilter = function(dept) {
   renderTeachers(currentSearch);
 };
 
+// ===== TEACHER PAGE — TAB SWITCHING =====
+window._teacherActiveTab = 'faculty'; // tracks current tab
+
+window.switchTeacherTab = function(tab) {
+  window._teacherActiveTab = tab;
+
+  // Swap panel visibility
+  const facultyPanel     = document.getElementById('teacherPanelFaculty');
+  const supervisorsPanel = document.getElementById('teacherPanelSupervisors');
+  if (facultyPanel)     facultyPanel.style.display     = tab === 'faculty'     ? '' : 'none';
+  if (supervisorsPanel) supervisorsPanel.style.display = tab === 'supervisors' ? '' : 'none';
+
+  // Swap tab active state
+  document.getElementById('teacherTabFaculty')?.classList.toggle('teacher-tab-active',     tab === 'faculty');
+  document.getElementById('teacherTabSupervisors')?.classList.toggle('teacher-tab-active', tab === 'supervisors');
+
+  // Change header Add button label
+  const addBtn = document.getElementById('teacherPageAddBtn');
+  if (addBtn) {
+    if (tab === 'supervisors') {
+      addBtn.textContent = '';
+      addBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Supervisor';
+      addBtn.onclick = openAddSupervisorModal;
+    } else {
+      addBtn.textContent = '';
+      addBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Teacher';
+      addBtn.onclick = openAddTeacherModal;
+    }
+  }
+
+  // Trigger a render so the visible table is populated
+  if (tab === 'faculty') renderTeachers();
+  else renderSupervisorTable();
+};
+
+// ===== TEACHER PAGE — COLLAPSIBLE SECTIONS =====
+window._teacherSectionState = { faculty: true, supervisors: true }; // true = expanded
+
+window.toggleTeacherSection = function(section) {
+  const isOpen = window._teacherSectionState[section];
+  window._teacherSectionState[section] = !isOpen;
+
+  const bodyId = section === 'faculty' ? 'facultyCardBody' : 'supervisorsCardBody';
+  const iconId = section === 'faculty' ? 'facultyCollapseIcon' : 'supervisorsCollapseIcon';
+  const body   = document.getElementById(bodyId);
+  const icon   = document.getElementById(iconId);
+
+  if (body) {
+    if (isOpen) {
+      // Collapse: animate then hide
+      body.style.maxHeight = body.scrollHeight + 'px';
+      body.style.opacity   = '1';
+      body.style.overflow  = 'hidden';
+      body.style.transition = 'max-height 0.28s ease, opacity 0.22s ease';
+      requestAnimationFrame(() => {
+        body.style.maxHeight = '0';
+        body.style.opacity   = '0';
+      });
+    } else {
+      // Expand
+      body.style.maxHeight = body.scrollHeight + 'px';
+      body.style.opacity   = '1';
+      body.style.overflow  = 'hidden';
+      body.style.transition = 'max-height 0.28s ease, opacity 0.22s ease';
+      setTimeout(() => {
+        body.style.maxHeight = '';
+        body.style.overflow  = '';
+      }, 300);
+    }
+  }
+
+  if (icon) icon.classList.toggle('collapsed', isOpen);
+};
+
+// ===== UPDATE TEACHER TAB COUNTS =====
+window._updateTeacherTabCounts = function() {
+  const teachers    = getData('teachers', []).filter(t => !t.deleted);
+  const faculty     = teachers.filter(t => t.facultyType !== 'supervisor');
+  const supervisors = teachers.filter(t => t.facultyType === 'supervisor');
+
+  const fCount = document.getElementById('teacherTabFacultyCount');
+  const sCount = document.getElementById('teacherTabSupervisorsCount');
+  const fHeader = document.getElementById('facultyHeaderCount');
+  const sHeader = document.getElementById('supervisorHeaderCount');
+
+  if (fCount)  fCount.textContent  = faculty.length;
+  if (sCount)  sCount.textContent  = supervisors.length;
+  if (fHeader) fHeader.textContent = faculty.length;
+  if (sHeader) sHeader.textContent = supervisors.length;
+};
+
 // ===== RENDER TEACHERS =====
 window.renderTeachers = function(search = '') {
   const searchInput = document.getElementById('teacherSearchInput');
@@ -651,8 +743,11 @@ window.renderTeachers = function(search = '') {
 
   tbody.innerHTML = html;
 
-  // Render supervisor table filtering simultaneously
-  renderSupervisorTable(liveSearch);
+  // Update tab counts
+  if (typeof _updateTeacherTabCounts === 'function') _updateTeacherTabCounts();
+
+  // Render supervisor table filtering simultaneously (only if faculty tab is active, to avoid double-render)
+  if (window._teacherActiveTab !== 'supervisors') renderSupervisorTable(liveSearch);
 };
 
 window.setSupervisorDeptFilter = function(dept) {
@@ -770,6 +865,7 @@ window.renderSupervisorTable = function(search) {
   });
 
   tbody.innerHTML = html;
+  if (typeof _updateTeacherTabCounts === 'function') _updateTeacherTabCounts();
 };
 
 window.toggleTeacherDetails = function(teacherId) {
@@ -1311,29 +1407,50 @@ function updatePeriodSettings() {
 }
 
 // ===== REPORTS - CMO 19 COMPLIANT =====
-window.renderReports = function() {
+// ===== REPORTS: PILL FILTER + SINGLE TABLE =====
+
+// Active dept filter for reports page ('' = All)
+window._reportsDeptFilter = '';
+
+// Build teacher evaluation data — called once, results cached per render
+function _buildTeacherEvalData() {
     const teachers = getData('teachers', []).filter(t => !t.deleted);
     const subjects = getData('subjects', []);
-    const evals = getData('evaluations', []);
+    const evals    = getData('evaluations', []);
     const students = getData('students', []).filter(s => !s.deleted);
 
-    const teacherData = teachers.map(teacher => {
-        const teacherSubjects = subjects.filter(s => s.teacherId === teacher.id && s.loadType !== 'Overload' && !s.isLabSchool);
+    return teachers.map(teacher => {
+        const teacherSubjects = subjects.filter(s =>
+            s.teacherId === teacher.id && s.loadType !== 'Overload' && !s.isLabSchool
+        );
         const classRatings = teacherSubjects.map(sub => {
-            const classEvals = evals.filter(e => e.subjectId === sub.id && e.evaluatorType !== 'supervisor');
+            const classEvals    = evals.filter(e => e.subjectId === sub.id && e.evaluatorType !== 'supervisor');
             const enrolledCount = (sub.enrolledIds || []).filter(id => students.find(s => s.id === id)).length;
-            const avgScore = classEvals.length > 0 ? classEvals.reduce((a,b) => a + b.totalScore, 0) / classEvals.length : 0;
-            return { subjectCode: sub.code, subjectName: sub.name, enrolledCount, evalCount: classEvals.length, avgScore: avgScore.toFixed(2), avgPercentage: Math.min(100, avgScore).toFixed(2) };
+            const avgScore      = classEvals.length > 0
+                ? classEvals.reduce((a, b) => a + b.totalScore, 0) / classEvals.length : 0;
+            return {
+                subjectCode: sub.code, subjectName: sub.name,
+                enrolledCount, evalCount: classEvals.length,
+                avgScore: avgScore.toFixed(2),
+                avgPercentage: Math.min(100, avgScore).toFixed(2)
+            };
         });
 
         let totalWeightedScore = 0, totalStudents = 0;
         classRatings.forEach(cr => {
-            if (parseFloat(cr.avgScore) > 0) { totalWeightedScore += parseFloat(cr.avgScore) * cr.enrolledCount; totalStudents += cr.enrolledCount; }
+            if (parseFloat(cr.avgScore) > 0) {
+                totalWeightedScore += parseFloat(cr.avgScore) * cr.enrolledCount;
+                totalStudents += cr.enrolledCount;
+            }
         });
-        const overallSET = totalStudents > 0 ? Math.min(100, totalWeightedScore / totalStudents).toFixed(2) : '—';
+        const overallSET = totalStudents > 0
+            ? Math.min(100, totalWeightedScore / totalStudents).toFixed(2) : '—';
 
-        const supervisorEvals = evals.filter(e => e.teacherId === teacher.id && e.evaluatorType === 'supervisor');
-        const sefScore = supervisorEvals.length > 0 ? supervisorEvals[supervisorEvals.length - 1].totalScore.toFixed(2) : '—';
+        const supervisorEvals = evals.filter(e =>
+            e.teacherId === teacher.id && e.evaluatorType === 'supervisor'
+        );
+        const sefScore = supervisorEvals.length > 0
+            ? supervisorEvals[supervisorEvals.length - 1].totalScore.toFixed(2) : '—';
 
         return {
             ...teacher,
@@ -1344,18 +1461,187 @@ window.renderReports = function() {
             totalEvaluations: classRatings.reduce((sum, cr) => sum + cr.evalCount, 0)
         };
     }).sort((a, b) => parseFloat(b.overallSET || 0) - parseFloat(a.overallSET || 0));
+}
 
-    const regularFaculty = teacherData.filter(t => (t.facultyType || 'regular') !== 'supervisor');
-    const supervisorFaculty = teacherData.filter(t => t.facultyType === 'supervisor');
+// Set the active dept pill and refresh both tables
+window.setReportsDeptFilter = function(dept) {
+    window._reportsDeptFilter = dept;
+
+    // Update pill active states (now uses student-dept-filter-btn)
+    document.querySelectorAll('#rpt-pill-bar .student-dept-filter-btn').forEach(p => {
+        p.classList.toggle('active', p.dataset.dept === dept);
+    });
+
+    // Re-render both table bodies only (no full page rebuild)
+    _renderFacultyTable();
+    _renderSupervisorTable();
+};
+
+// Build one faculty table row (shared by main table and View All modal)
+function _buildFacultyRow(t, idx) {
+    return `
+        <tr class="report-teacher-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C &amp; D">
+            <td style="text-align:center;"><span class="rank-badge rank-${idx < 3 ? idx + 1 : ''}">${idx + 1}</span></td>
+            <td>
+                <strong>${escapeHtml(t.name)}</strong><br>
+                <small style="color:var(--muted);">${escapeHtml(t.tid)}</small>
+            </td>
+            <td><span class="dept-tag-inline">${escapeHtml(t.dept || '—')}</span></td>
+            <td style="text-align:center;"><span class="badge badge-info">${t.totalClasses}</span></td>
+            <td style="text-align:center;"><span class="badge badge-secondary">${t.totalEvaluations}</span></td>
+            <td style="text-align:center;">
+                <strong style="color:#16a34a;font-size:1.05rem;">
+                    ${t.overallSET}${t.overallSET !== '—' ? '%' : ''}
+                </strong>
+            </td>
+            <td style="text-align:center;">
+                <strong style="color:#d97706;font-size:1.05rem;">
+                    ${t.sefScore}${t.sefScore !== '—' ? '%' : ''}
+                </strong>
+            </td>
+        </tr>`;
+}
+
+// Render faculty tbody rows based on current filter
+function _renderFacultyTable() {
+    const tbody   = document.getElementById('rpt-faculty-tbody');
+    const countEl = document.getElementById('rpt-faculty-count');
+    if (!tbody) return;
+
+    const dept    = window._reportsDeptFilter;
+    const allData = window._allTeacherEvalData || [];
+    const list    = allData
+        .filter(t => (t.facultyType || 'regular') !== 'supervisor')
+        .filter(t => !dept || (t.dept || 'UNASSIGNED') === dept);
+
+    if (countEl) countEl.textContent = list.length;
+
+    if (!list.length) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted);">
+            No faculty found${dept ? ' for this department' : ''}.
+        </td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = list.map((t, idx) => _buildFacultyRow(t, idx)).join('');
+
+}
+
+// Build one supervisor table row (shared by main table and View All modal)
+function _buildSupervisorRow(t) {
+    return `
+        <tr class="report-teacher-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C &amp; D">
+            <td>
+                <strong>${escapeHtml(t.name)}</strong><br>
+                <small style="color:var(--muted);">${escapeHtml(t.tid)}</small>
+            </td>
+            <td><span class="dept-tag-inline">${escapeHtml(t.dept || '—')}</span></td>
+            <td style="text-align:center;">
+                <strong style="color:#16a34a;">
+                    ${t.overallSET}${t.overallSET !== '—' ? '%' : ''}
+                </strong>
+            </td>
+            <td style="text-align:center;">
+                <strong style="color:#d97706;">
+                    ${t.sefScore}${t.sefScore !== '—' ? '%' : ''}
+                </strong>
+            </td>
+            <td style="text-align:center;">
+                <span class="badge ${t.status === 'active' ? 'badge-success' : 'badge-danger'}">${t.status}</span>
+            </td>
+        </tr>`;
+}
+
+// Render supervisor tbody rows based on current filter
+function _renderSupervisorTable() {
+    const tbody   = document.getElementById('rpt-supervisor-tbody');
+    const countEl = document.getElementById('rpt-supervisor-count');
+    const card    = document.getElementById('rpt-supervisor-card');
+    if (!tbody) return;
+
+    const dept    = window._reportsDeptFilter;
+    const allData = window._allTeacherEvalData || [];
+    const list    = allData
+        .filter(t => t.facultyType === 'supervisor')
+        .filter(t => !dept || (t.dept || 'UNASSIGNED') === dept);
+
+    if (card) card.style.display = list.length > 0 ? '' : 'none';
+    if (countEl) countEl.textContent = list.length;
+
+    if (!list.length) {
+            return;
+    }
+
+    tbody.innerHTML = list.map(t => _buildSupervisorRow(t)).join('');
+
+}
+
+// Build dept pill bar HTML — reuses student-dept-filter-btn for visual consistency
+function _buildReportPills(teacherData) {
+    const DEPT_CONFIG = (typeof getDepartments === 'function') ? getDepartments() : {};
+    const DEPT_ORDER  = ['COED','CCJS','CCIS','CON','CEA','COM','CAT','GS'];
+
+    // Collect depts that actually have teachers
+    const deptCounts = {};
+    teacherData.forEach(t => {
+        const d = t.dept || 'UNASSIGNED';
+        deptCounts[d] = (deptCounts[d] || 0) + 1;
+    });
+
+    const activeDepts = [
+        ...DEPT_ORDER.filter(d => deptCounts[d]),
+        ...Object.keys(deptCounts).filter(d => !DEPT_ORDER.includes(d))
+    ];
+
+    const current = window._reportsDeptFilter || '';
+    let html = `<button class="student-dept-filter-btn ${current === '' ? 'active' : ''}" data-dept="" onclick="setReportsDeptFilter('')">
+        All <span class="dept-filter-count">${teacherData.length}</span>
+    </button>`;
+
+    activeDepts.forEach(d => {
+        const cfg   = DEPT_CONFIG[d];
+        const label = cfg ? escapeHtml(cfg.short || d) : escapeHtml(d);
+        html += `<button class="student-dept-filter-btn ${current === d ? 'active' : ''}" data-dept="${d}" onclick="setReportsDeptFilter('${d}')">
+            ${label} <span class="dept-filter-count">${deptCounts[d]}</span>
+        </button>`;
+    });
+
+    return html;
+}
+
+window.renderReports = function() {
+    // Reset filter on full re-render
+    window._reportsDeptFilter = '';
+
+    // Build & cache all teacher data
+    const allData = _buildTeacherEvalData();
+    window._allTeacherEvalData = allData;
+
+    const regularFaculty    = allData.filter(t => (t.facultyType || 'regular') !== 'supervisor');
+    const supervisorFaculty = allData.filter(t => t.facultyType === 'supervisor');
 
     document.getElementById('reportsContent').innerHTML = `
+        <!-- DEPT PILL FILTER -->
+        <div class="rpt-pill-bar" id="rpt-pill-bar">
+            ${_buildReportPills(allData)}
+        </div>
+
+        <!-- FACULTY PERFORMANCE TABLE -->
         <div class="card" style="margin-bottom:20px;">
             <div class="card-header-bar">
-                <h3>Faculty Performance</h3>
-                <span class="badge badge-primary" style="font-size:0.7rem;">CMO 19 — SET &amp; SEF Displayed Separately</span>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h3>Faculty Performance</h3>
+                    <span class="count-badge" id="rpt-faculty-count">${regularFaculty.length}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <button id="rpt-faculty-viewall-btn" class="btn btn-ghost btn-sm rpt-viewall-btn" onclick="_openRptViewAllPage('faculty')">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:3px;"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>View Full List
+                    </button>
+                    <span class="badge badge-primary" style="font-size:0.68rem;">CMO 19 — SET &amp; SEF Displayed Separately</span>
+                </div>
             </div>
             <div class="table-wrap">
-                <table class="data-table" style="table-layout:auto;width:100%;">
+                <table class="data-table">
                     <thead>
                         <tr>
                             <th style="text-align:center;width:52px;">Rank</th>
@@ -1367,28 +1653,24 @@ window.renderReports = function() {
                             <th style="color:#d97706;text-align:center;">SEF Rating</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        ${regularFaculty.map((teacher, idx) => `
-                            <tr class="report-teacher-row" onclick="showAnnexReports('${teacher.id}')" title="Click to view Annex C &amp; D">
-                                <td style="text-align:center;"><span class="rank-badge rank-${idx+1}">${idx+1}</span></td>
-                                <td><strong>${escapeHtml(teacher.name)}</strong><br><small style="color:var(--muted);">${teacher.tid}</small></td>
-                                <td>${escapeHtml(teacher.dept || '—')}</td>
-                                <td style="text-align:center;"><span class="badge badge-info">${teacher.totalClasses}</span></td>
-                                <td style="text-align:center;"><span class="badge badge-secondary">${teacher.totalEvaluations}</span></td>
-                                <td style="text-align:center;"><strong style="color:#16a34a;font-size:1.05rem;">${teacher.overallSET}${teacher.overallSET !== '—' ? '%' : ''}</strong></td>
-                                <td style="text-align:center;"><strong style="color:#d97706;font-size:1.05rem;">${teacher.sefScore}${teacher.sefScore !== '—' ? '%' : ''}</strong></td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
+                    <tbody id="rpt-faculty-tbody"></tbody>
                 </table>
             </div>
         </div>
 
-        ${supervisorFaculty.length > 0 ? `
-        <div class="card" style="margin-bottom:20px;">
-            <div class="card-header-bar"><h3>Supervisors</h3></div>
+        <!-- SUPERVISORS TABLE -->
+        <div class="card" id="rpt-supervisor-card" style="margin-bottom:20px;${supervisorFaculty.length === 0 ? 'display:none;' : ''}">
+            <div class="card-header-bar">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h3>Supervisors</h3>
+                    <span class="count-badge" id="rpt-supervisor-count">${supervisorFaculty.length}</span>
+                </div>
+                <button id="rpt-supervisor-viewall-btn" class="btn btn-ghost btn-sm rpt-viewall-btn" onclick="_openRptViewAllPage('supervisors')">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:3px;"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>View Full List
+                </button>
+            </div>
             <div class="table-wrap">
-                <table class="data-table" style="table-layout:auto;width:100%;">
+                <table class="data-table">
                     <thead>
                         <tr>
                             <th>Faculty Name</th>
@@ -1398,24 +1680,17 @@ window.renderReports = function() {
                             <th style="text-align:center;">Status</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        ${supervisorFaculty.map(teacher => `
-                            <tr class="report-teacher-row" onclick="showAnnexReports('${teacher.id}')" title="Click to view Annex C &amp; D">
-                                <td><strong>${escapeHtml(teacher.name)}</strong><br><small style="color:var(--muted);">${teacher.tid}</small></td>
-                                <td>${escapeHtml(teacher.dept || '—')}</td>
-                                <td style="text-align:center;"><strong style="color:#16a34a;">${teacher.overallSET}${teacher.overallSET !== '—' ? '%' : ''}</strong></td>
-                                <td style="text-align:center;"><strong style="color:#d97706;">${teacher.sefScore}${teacher.sefScore !== '—' ? '%' : ''}</strong></td>
-                                <td style="text-align:center;"><span class="badge ${teacher.status === 'active' ? 'badge-success' : 'badge-danger'}">${teacher.status}</span></td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
+                    <tbody id="rpt-supervisor-tbody"></tbody>
                 </table>
             </div>
-        </div>` : ''}
+        </div>
 
         <div id="institutionalFERContainer"></div>
     `;
 
+    // Populate table bodies
+    _renderFacultyTable();
+    _renderSupervisorTable();
     renderInstitutionalFER();
 };
 
@@ -1423,6 +1698,116 @@ window.toggleClassDetails = function(teacherId) {
     const row = document.getElementById(`class-details-${teacherId}`);
     if (row) row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
 };
+
+// ===== REPORTS "VIEW ALL" FULL PAGE =====
+
+// Navigates to the full-page view for either 'faculty' or 'supervisors'
+window._openRptViewAllPage = function(tableType) {
+    // Stash what we need so renderRptViewAll can read it
+    window._rptViewAllType = tableType;
+    window._rptViewAllDept = window._reportsDeptFilter || '';
+
+    // Use showPage — registers the page as active, runs its renderer
+    showPage('rptViewAll');
+};
+
+// Renderer called by showPage
+function renderRptViewAll() {
+    const tableType   = window._rptViewAllType || 'faculty';
+    const dept        = window._rptViewAllDept || '';
+    const allData     = window._allTeacherEvalData || [];
+    const DEPT_CONFIG = (typeof getDepartments === 'function') ? getDepartments() : {};
+
+    const isFaculty = tableType === 'faculty';
+    const list = allData
+        .filter(t => isFaculty
+            ? (t.facultyType || 'regular') !== 'supervisor'
+            : t.facultyType === 'supervisor')
+        .filter(t => !dept || (t.dept || 'UNASSIGNED') === dept);
+
+    const deptLabel = dept
+        ? (DEPT_CONFIG[dept] ? escapeHtml(DEPT_CONFIG[dept].short || dept) : escapeHtml(dept))
+        : 'All Departments';
+
+    const title    = (isFaculty ? 'Faculty Performance' : 'Supervisors') + ' — ' + deptLabel;
+    const subtitle = list.length + ' ' + (isFaculty ? 'faculty member' : 'supervisor') + (list.length !== 1 ? 's' : '');
+
+    let tbody;
+    if (isFaculty) {
+        tbody = `<thead>
+                    <tr>
+                        <th style="text-align:center;width:52px;">Rank</th>
+                        <th>Faculty Name</th>
+                        <th>Department</th>
+                        <th style="text-align:center;">Classes</th>
+                        <th style="text-align:center;">Evals</th>
+                        <th style="color:#16a34a;text-align:center;">SET Rating</th>
+                        <th style="color:#d97706;text-align:center;">SEF Rating</th>
+                    </tr>
+                </thead>
+                <tbody>${list.map((t, idx) => _buildFacultyRow(t, idx)).join('')}</tbody>`;
+    } else {
+        tbody = `<thead>
+                    <tr>
+                        <th>Faculty Name</th>
+                        <th>Department</th>
+                        <th style="color:#16a34a;text-align:center;">SET Rating</th>
+                        <th style="color:#d97706;text-align:center;">SEF Rating</th>
+                        <th style="text-align:center;">Status</th>
+                    </tr>
+                </thead>
+                <tbody>${list.map(t => _buildSupervisorRow(t)).join('')}</tbody>`;
+    }
+
+    document.getElementById('rptViewAllContent').innerHTML = `
+        <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;">
+            <div class="page-title">
+                <h1>${title}</h1>
+                <p>${subtitle}</p>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button class="btn btn-ghost btn-sm" onclick="_exportRptViewAllCSV('${tableType}', window._rptViewAllList, '${deptLabel}')">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="showPage('reports')">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><polyline points="15 18 9 12 15 6"/></svg>Back to Reports
+                </button>
+            </div>
+        </div>
+        <div class="card">
+            <div class="table-wrap">
+                <table class="data-table">${tbody}</table>
+            </div>
+        </div>
+    `;
+    // Cache for CSV export
+    window._rptViewAllList = list;
+}
+
+// CSV export scoped to what is shown in the View All modal
+function _exportRptViewAllCSV(tableType, list, deptLabel) {
+    const isFaculty = tableType === 'faculty';
+    let csv;
+    if (isFaculty) {
+        csv = 'Rank,Teacher ID,Name,Department,Classes,Evals,SET Rating,SEF Rating\n';
+        list.forEach((t, idx) => {
+            csv += `${idx + 1},"${t.tid}","${t.name}","${t.dept || 'N/A'}",${t.totalClasses},${t.totalEvaluations},${t.overallSET !== '\u2014' ? t.overallSET + '%' : 'N/A'},${t.sefScore !== '\u2014' ? t.sefScore + '%' : 'N/A'}\n`;
+        });
+    } else {
+        csv = 'Teacher ID,Name,Department,SET Rating,SEF Rating,Status\n';
+        list.forEach(t => {
+            csv += `"${t.tid}","${t.name}","${t.dept || 'N/A'}",${t.overallSET !== '\u2014' ? t.overallSET + '%' : 'N/A'},${t.sefScore !== '\u2014' ? t.sefScore + '%' : 'N/A'},"${t.status || ''}"\n`;
+        });
+    }
+    const safeLabel = deptLabel.replace(/[^a-z0-9]/gi, '_');
+    const a = Object.assign(document.createElement('a'), {
+        href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
+        download: `${tableType}_${safeLabel}_${new Date().toISOString().split('T')[0]}.csv`
+    });
+    a.click();
+    addAudit('Export View-All CSV', `Exported ${tableType} list for ${deptLabel}`);
+    showToast('CSV exported!', 'success');
+}
 
 // ===== SUBJECT DEPT FILTER PILLS =====
 window._subjectDeptFilter = '';
@@ -2593,6 +2978,26 @@ window.syncCollectionToFirestore = async function(key, value) {
             return;
         }
 
+        // FIX: customCourses — write each dept as its own document in the top-level
+        // 'courses' collection so it is clearly visible in Firestore.
+        // Structure: courses/{DEPT_CODE} → { dept: "COED", courses: ["BSED", ...] }
+        if (key === 'customCourses') {
+            const coursesMap = value || {};
+            const entries = Object.entries(coursesMap);
+            if (entries.length > 0) {
+                const batch = db.batch();
+                entries.forEach(([deptCode, list]) => {
+                    batch.set(db.collection('courses').doc(deptCode), {
+                        dept: deptCode,
+                        courses: Array.isArray(list) ? list : []
+                    });
+                });
+                await batch.commit();
+                console.log('✅ Synced customCourses to Firestore courses collection:', Object.keys(coursesMap));
+            }
+            return;
+        }
+
         const MAP = {
             students: 'students',
             teachers: 'teachers',
@@ -2624,13 +3029,13 @@ window.syncCollectionToFirestore = async function(key, value) {
     }
 };
 // ===== COURSE-BY-DEPARTMENT MAP =====
-const COURSES_BY_DEPT = {
-  COED: ["BEED GEN (Bachelor of Elementary Education - General)","BPED (Bachelor of Physical Education)","BSCS (Bachelor of Secondary Education - Computer Science)","BSED ENGLISH (Bachelor of Secondary Education - English)","BSED FILIPINO (Bachelor of Secondary Education - Filipino)","BSED MATH (Bachelor of Secondary Education - Mathematics)","BSED SCIENCE (Bachelor of Secondary Education - Science)","BSED SOCIAL STUDIES (Bachelor of Secondary Education - Social Studies)","BSED VALUES EDUCATION (Bachelor of Secondary Education - Values Education)","BTLED (Bachelor of Technology and Livelihood Education)","BTVTED (Bachelor of Technical-Vocational Teacher Education)"],
-  CAT:  ["BAT (Bachelor of Agriculture Technology)","BSAG AGRONOMY (Bachelor of Science in Agriculture - Agronomy)","BSAG ANIMAL SCIENCE (Bachelor of Science in Agriculture - Animal Science)","BSAG HORTICULTURE (Bachelor of Science in Agriculture - Horticulture)","BSFT (Bachelor of Science in Food Technology)","BSIT AUTOMOTIVE (Bachelor of Science in Industrial Technology - Automotive)","BSIT ELECTRICAL (Bachelor of Science in Industrial Technology - Electrical)","BSIT ELECTRONICS (Bachelor of Science in Industrial Technology - Electronics)","BSIT MT (Bachelor of Science in Industrial Technology - Mechanical Technology)"],
-  CEA:  ["BS ARCH (Bachelor of Science in Architecture)","BSCE (Bachelor of Science in Civil Engineering)","BSECE (Bachelor of Science in Electronics Engineering)","BSEE (Bachelor of Science in Electrical Engineering)","BSME (Bachelor of Science in Mechanical Engineering)"],
-  CCJS: ["BSCD (Bachelor of Science in Criminology and Detective)","BSCRIM (Bachelor of Science in Criminology)","BSDEVCOM (Bachelor of Science in Development Communication)","BSES (Bachelor of Science in Environmental Science)","BSES (NRM) (Bachelor of Science in Environmental Science - Natural Resource Management)","BSISM (Bachelor of Science in Industrial Security Management)","BSLEA (Bachelor of Science in Law Enforcement Administration)"],
-  COM:  ["BS ENTREP (Bachelor of Science in Entrepreneurship)","BSBA (Bachelor of Science in Business Administration)","BSHM (Bachelor of Science in Hotel Management)","BSOAD (Bachelor of Science in Office Administration)","BSTM (Bachelor of Science in Tourism Management)"],
-  CCIS: ["BSCS (Bachelor of Science in Computer Science)","BSEMC (Bachelor of Science in Electronics and Communications Engineering)","BSINFOT (Bachelor of Science in Information Technology)","BSIS (Bachelor of Science in Information Systems)"],
+// All courses are stored in localStorage under 'customCourses' — no hardcoded defaults.
+// Use the Excel bulk-upload template (downloadable from Manage Courses) to populate courses.
+let COURSES_BY_DEPT = getData('customCourses', {});
+
+// Reload from localStorage (call after any save/delete)
+window.reloadCoursesByDept = function() {
+  COURSES_BY_DEPT = getData('customCourses', {});
 };
 
 let _stuCourseActiveDept = '';
@@ -2697,3 +3102,176 @@ function populateStuCourseDropdown(deptCode, selected) {
   sel.innerHTML = `<option value="">— Select Course —</option>` +
     courses.map(c => `<option value="${c}"${c === selected ? ' selected' : ''}>${c}</option>`).join('');
 }
+// ===== MANAGE COURSES — helpers used by admindept.js panel =====
+
+// Called from admindept.js Manage Courses panel when dept changes
+window.mcLoadDept = function(deptCode) {
+  reloadCoursesByDept();
+  _mcRenderList(deptCode);
+};
+
+// Render course list rows for a given dept inside the panel
+function _mcRenderList(deptCode) {
+  const listEl = document.getElementById('mcCrseList');
+  if (!listEl) return;
+  if (!deptCode) {
+    listEl.innerHTML = '<p style="color:var(--muted);font-size:0.82rem;padding:10px 0 4px;">Select a department above to see its courses.</p>';
+    return;
+  }
+  const courses = (COURSES_BY_DEPT[deptCode] || []);
+  if (courses.length === 0) {
+    listEl.innerHTML = '<p style="color:var(--muted);font-size:0.82rem;padding:10px 0 4px;">No courses yet for this department. Add one below or use Bulk Upload.</p>';
+    return;
+  }
+  listEl.innerHTML = courses.map((c, idx) => `
+    <div id="mcrow-${idx}" style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;background:var(--surface2,#f8fafc);margin-bottom:5px;border:1px solid var(--border);">
+      <span class="mc-view-mode" id="mcspan-${idx}" style="flex:1;font-size:0.8rem;line-height:1.4;">${escapeHtml(c)}</span>
+      <input class="form-control mc-edit-input" id="mcinput-${idx}" value="${escapeHtml(c)}" style="display:none;flex:1;font-size:0.8rem;padding:3px 7px;" />
+      <button class="btn btn-ghost mc-edit-btn" style="padding:2px 8px;font-size:0.72rem;" onclick="mcStartEdit('${deptCode}',${idx})" title="Edit">✏️</button>
+      <button class="btn btn-ghost mc-save-btn" style="display:none;padding:2px 8px;font-size:0.72rem;color:var(--primary);" onclick="mcSaveEdit('${deptCode}',${idx})" title="Save">✔</button>
+      <button class="btn btn-ghost mc-cancel-btn" style="display:none;padding:2px 8px;font-size:0.72rem;" onclick="mcCancelEdit(${idx})" title="Cancel">✕</button>
+      <button class="btn btn-ghost" style="padding:2px 8px;font-size:0.72rem;color:var(--danger,#e74c3c);" onclick="mcDeleteCourse('${deptCode}',${idx})" title="Delete">🗑</button>
+    </div>`).join('');
+}
+
+window.mcStartEdit = function(deptCode, idx) {
+  document.getElementById(`mcspan-${idx}`).style.display = 'none';
+  document.getElementById(`mcinput-${idx}`).style.display = '';
+  document.getElementById(`mcinput-${idx}`).focus();
+  document.querySelector(`#mcrow-${idx} .mc-edit-btn`).style.display = 'none';
+  document.querySelector(`#mcrow-${idx} .mc-save-btn`).style.display = '';
+  document.querySelector(`#mcrow-${idx} .mc-cancel-btn`).style.display = '';
+};
+
+window.mcCancelEdit = function(idx) {
+  document.getElementById(`mcspan-${idx}`).style.display = '';
+  document.getElementById(`mcinput-${idx}`).style.display = 'none';
+  document.querySelector(`#mcrow-${idx} .mc-edit-btn`).style.display = '';
+  document.querySelector(`#mcrow-${idx} .mc-save-btn`).style.display = 'none';
+  document.querySelector(`#mcrow-${idx} .mc-cancel-btn`).style.display = 'none';
+};
+
+window.mcSaveEdit = function(deptCode, idx) {
+  const input = document.getElementById(`mcinput-${idx}`);
+  const newName = (input ? input.value.trim() : '');
+  if (!newName) { showToast('Course name cannot be empty.', 'error'); return; }
+
+  const custom = getData('customCourses', {});
+  const list = custom[deptCode] || [];
+  const oldName = list[idx];
+  if (oldName === undefined) { showToast('Course not found.', 'error'); return; }
+  // Check dup
+  const dup = list.find((c, i) => i !== idx && c.toLowerCase() === newName.toLowerCase());
+  if (dup) { showToast('A course with that name already exists.', 'error'); return; }
+
+  list[idx] = newName;
+  custom[deptCode] = list;
+  setData('customCourses', custom);
+  reloadCoursesByDept();
+  addAudit('Edit Course', `"${oldName}" → "${newName}" in ${deptCode}`);
+  showToast('Course updated!', 'success');
+  _mcRenderList(deptCode);
+};
+
+window.mcDeleteCourse = function(deptCode, idx) {
+  const custom = getData('customCourses', {});
+  const list = custom[deptCode] || [];
+  const removed = list.splice(idx, 1)[0];
+  custom[deptCode] = list;
+  setData('customCourses', custom);
+  reloadCoursesByDept();
+  addAudit('Delete Course', `Deleted "${removed}" from ${deptCode}`);
+  showToast('Course deleted.', 'success');
+  _mcRenderList(deptCode);
+};
+
+window.mcAddCourse = function(deptCode) {
+  const input = document.getElementById('mcNewCrseInput');
+  const name = (input ? input.value.trim() : '');
+  if (!deptCode) { showToast('Select a department first.', 'error'); return; }
+  if (!name) { showToast('Enter a course name.', 'error'); return; }
+
+  const custom = getData('customCourses', {});
+  if (!custom[deptCode]) custom[deptCode] = [];
+  if (custom[deptCode].some(c => c.toLowerCase() === name.toLowerCase())) {
+    showToast('This course already exists.', 'error'); return;
+  }
+  custom[deptCode].push(name);
+  setData('customCourses', custom);
+  reloadCoursesByDept();
+  if (input) input.value = '';
+  addAudit('Add Course', `Added "${name}" to ${deptCode}`);
+  showToast('Course added!', 'success');
+  _mcRenderList(deptCode);
+};
+
+// ── Bulk upload from Excel (reads col A=dept, col B=course via SheetJS) ──
+window.mcHandleBulkUpload = function(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      // Use SheetJS if available (loaded via CDN in dashboard.html), else CSV fallback
+      if (typeof XLSX !== 'undefined') {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+        // Find the header row (contains "Department Code" and "Course Name")
+        let dataStart = 0;
+        for (let i = 0; i < rows.length; i++) {
+          const r = rows[i];
+          if (r[0] && String(r[0]).toLowerCase().includes('department')) { dataStart = i + 1; break; }
+        }
+
+        const custom = getData('customCourses', {});
+        let added = 0, skipped = 0;
+
+        for (let i = dataStart; i < rows.length; i++) {
+          const dept = String(rows[i][0] || '').trim().toUpperCase();
+          const course = String(rows[i][1] || '').trim();
+          if (!dept || !course) { skipped++; continue; }
+          // Skip dept-header separator rows (e.g. "── COED ──")
+          if (dept.startsWith('─') || course === '') { skipped++; continue; }
+          if (!custom[dept]) custom[dept] = [];
+          if (!custom[dept].includes(course)) {
+            custom[dept].push(course);
+            added++;
+          } else {
+            skipped++;
+          }
+        }
+
+        setData('customCourses', custom);
+        reloadCoursesByDept();
+        addAudit('Bulk Upload Courses', `Imported ${added} courses, ${skipped} skipped`);
+        showToast(`Bulk upload complete: ${added} added, ${skipped} skipped.`, 'success');
+
+        // Refresh the list view if a dept is selected
+        const deptSel = document.getElementById('mcCrseDept');
+        if (deptSel && deptSel.value) _mcRenderList(deptSel.value);
+        // Reset file input
+        event.target.value = '';
+      } else {
+        showToast('SheetJS not loaded. Please reload the page and try again.', 'error');
+      }
+    } catch(err) {
+      console.error('Bulk upload error:', err);
+      showToast('Upload failed: ' + err.message, 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+// ── Download the blank template (base64 fallback placeholder) ──
+// The actual template file is provided as a separate download.
+// This function is called from the Manage Courses panel.
+window.mcDownloadTemplate = function() {
+  // Point to the template file in the project root
+  const a = document.createElement('a');
+  a.href = '../courses_bulk_upload_template.xlsx';
+  a.download = 'courses_bulk_upload_template.xlsx';
+  a.click();
+};

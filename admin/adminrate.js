@@ -321,6 +321,44 @@ window.openEditSubjectModal = function(id) {
 
 // Ensure Firestore sync works properly
 window.syncCollectionToFirestore = async function(key, value) {
+    if (typeof firebase === 'undefined' || !firebase.firestore) return;
+
+    const db = firebase.firestore();
+
+    // departments — each dept is its own doc
+    if (key === 'departments') {
+        try {
+            const batch = db.batch();
+            Object.entries(value || {}).forEach(([code, cfg]) => {
+                batch.set(db.collection('departments').doc(code), { code, ...cfg });
+            });
+            await batch.commit();
+            console.log('✅ Synced departments to Firestore');
+        } catch(e) { console.warn('Firestore sync error (departments):', e.message); }
+        return;
+    }
+
+    // customCourses — each dept is its own doc in the top-level 'courses' collection
+    // so it shows up clearly in the Firestore console as: courses/{DEPT_CODE}
+    if (key === 'customCourses') {
+        try {
+            const coursesMap = value || {};
+            const entries = Object.entries(coursesMap);
+            if (entries.length > 0) {
+                const batch = db.batch();
+                entries.forEach(([deptCode, list]) => {
+                    batch.set(db.collection('courses').doc(deptCode), {
+                        dept: deptCode,
+                        courses: Array.isArray(list) ? list : []
+                    });
+                });
+                await batch.commit();
+                console.log('✅ Synced customCourses to Firestore courses collection:', Object.keys(coursesMap));
+            }
+        } catch(e) { console.warn('Firestore sync error (customCourses):', e.message); }
+        return;
+    }
+
     const MAP = {
         students: 'students', 
         teachers: 'teachers', 
@@ -334,10 +372,9 @@ window.syncCollectionToFirestore = async function(key, value) {
         customDepartments: 'customDepartments'
     };
     const col = MAP[key];
-    if (!col || typeof firebase === 'undefined' || !firebase.firestore) return;
+    if (!col) return;
     
     try {
-        const db = firebase.firestore();
         if (Array.isArray(value)) {
             const batch = db.batch();
             value.forEach(item => { 
@@ -359,7 +396,7 @@ window.syncCollectionToFirestore = async function(key, value) {
 // Force a full sync of all data to Firebase on page load
 window.fullSyncToFirebase = async function() {
     console.log('🔄 Performing full sync to Firebase...');
-    const keys = ['students', 'teachers', 'subjects', 'evaluations', 'schoolYears', 'auditLog', 'evalPeriod', 'finalReports', 'customDepartments'];
+    const keys = ['students', 'teachers', 'subjects', 'evaluations', 'schoolYears', 'auditLog', 'evalPeriod', 'finalReports', 'customDepartments', 'customCourses'];
     
     for (const key of keys) {
         const data = localStorage.getItem(key);

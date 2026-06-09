@@ -1211,3 +1211,124 @@ body::before {
 .dept-filter-pill.active .dept-filter-count {
     background: rgba(255,255,255,0.3);
 }
+
+/* ============================================================
+   REPORTS PAGE — PILL DEPT FILTER + SINGLE TABLES
+   Pills now reuse .student-dept-filter-btn / .dept-filter-count
+   (defined in the Dept Filter Pills section above) — no
+   separate .rpt-pill rules needed.
+   ============================================================ */
+
+/* Pill bar row — kept here since it is unique to Reports */
+.rpt-pill-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 18px;
+}
+
+/* View All button row at the bottom of a table card */
+.rpt-viewall-btn {
+    font-size: 0.8rem;
+    color: var(--primary);
+    border-color: var(--primary);
+}
+.rpt-viewall-btn:hover {
+    background: var(--primary-light, #eff6ff);
+}
+
+/* ============================================================
+   TEACHER PAGE — STICKY SECTION TABS
+   ============================================================ */
+.teacher-tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 20px;
+    position: sticky;
+    top: 0;
+    background: #f8fafc;
+    z-index: 10;
+    padding-top: 4px;
+}
+
+.teacher-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 20px;
+    border: none;
+    background: none;
+    font-size: 0.83rem;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.teacher-tab:hover {
+    color: var(--primary);
+}
+
+.teacher-tab-active {
+    color: var(--primary) !important;
+    border-bottom-color: var(--primary) !important;
+}
+
+.teacher-tab-count {
+    background: var(--border);
+    color: var(--muted);
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    transition: background 0.15s, color 0.15s;
+}
+
+.teacher-tab-active .teacher-tab-count {
+    background: var(--primary);
+    color: #fff;
+}
+
+/* ============================================================
+   TEACHER PAGE — COLLAPSIBLE CARD HEADER
+   ============================================================ */
+.teacher-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+    transition: background 0.15s;
+}
+
+.teacher-card-header:hover {
+    background: var(--primary-light, #eff6ff);
+}
+
+.teacher-collapse-icon {
+    transition: transform 0.22s ease;
+    color: var(--muted);
+    flex-shrink: 0;
+}
+
+.teacher-collapse-icon.collapsed {
+    transform: rotate(180deg);
+}
+
+.teacher-section-body {
+    overflow: hidden;
+    transition: max-height 0.28s ease, opacity 0.22s ease;
+    max-height: 9999px;
+    opacity: 1;
+}
+
+.teacher-section-body.collapsed {
+    max-height: 0;
+    opacity: 0;
+}
