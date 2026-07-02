@@ -356,6 +356,21 @@ body::before {
   box-shadow: var(--shadow); 
 }
 
+.stat-card-clickable {
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.stat-card-clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.10);
+}
+
+.stat-card-clickable:focus,
+.stat-card-clickable:active {
+  outline: none;
+}
+
 .stat-icon { 
   width: 40px; 
   height: 40px; 
@@ -907,6 +922,9 @@ body::before {
     overflow: hidden;
     position: relative;
     box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
 }
 
 .dept-manage-card-header {
@@ -985,6 +1003,7 @@ body::before {
     display: flex;
     background: rgba(0,0,0,0.15);
     padding: 10px 0;
+    margin-top: auto; /* pushes stats + action bar to the bottom of the card */
 }
 
 .dept-manage-stat {
@@ -1016,37 +1035,220 @@ body::before {
     display: none; /* replaced by dmc-action-bar */
 }
 
-/* ── Card action bar (View / Edit / Delete) ── */
+/* ── Card action bar (View / Edit / Delete) ──
+   Translucent DARK overlay so the strip darkens each card's own color
+   consistently — crisp, readable white buttons on every card (light gold,
+   gray, or dark red all get the same defined look as the red card).
+   flex:1 gives all three buttons equal width; icon + label stay centered. */
 .dmc-action-bar {
     display: flex;
-    border-top: 1px solid rgba(255,255,255,0.15);
+    border-top: 1px solid rgba(0,0,0,0.14);
 }
 
 .dmc-action-btn {
-    flex: 1;
+    flex: 1 1 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 5px;
-    padding: 10px 6px;
-    background: rgba(255,255,255,0.10);
+    gap: 6px;
+    padding: 11px 6px;
+    background: rgba(0,0,0,0.20);
     border: none;
     border-right: 1px solid rgba(255,255,255,0.12);
     color: #fff;
     font-size: 0.72rem;
     font-weight: 600;
+    line-height: 1;
     cursor: pointer;
     transition: background 0.15s;
     font-family: 'Plus Jakarta Sans', sans-serif;
+    white-space: nowrap;
+}
+
+.dmc-action-btn svg {
+    flex-shrink: 0;
+    display: block;
 }
 
 .dmc-action-btn:last-child {
     border-right: none;
 }
 
-.dmc-view-btn:hover  { background: rgba(255,255,255,0.22); }
-.dmc-edit-btn2:hover { background: rgba(255,255,255,0.22); }
-.dmc-del-btn:hover   { background: rgba(220,38,38,0.45); }
+.dmc-view-btn:hover  { background: rgba(0,0,0,0.34); }
+.dmc-edit-btn2:hover { background: rgba(0,0,0,0.34); }
+.dmc-del-btn:hover   { background: rgba(220,38,38,0.60); }
+
+/* ============================================================
+   DEPT MANAGEMENT — LIST LAYOUT
+   (mirrors the grid card's visual language: same icon set,
+   same label-under-icon action buttons, same spacing scale,
+   so View/Edit/Delete look identical in both layouts)
+   ============================================================ */
+.dept-manage-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.dml-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    transition: box-shadow 0.15s;
+}
+
+.dml-row:hover {
+    box-shadow: 0 4px 14px rgba(0,0,0,0.09);
+}
+
+.dml-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    background: var(--primary-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.dml-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 9px;
+}
+
+.dml-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.dml-name {
+    font-size: 0.86rem;
+    font-weight: 700;
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.dml-badge {
+    font-size: 0.62rem;
+    font-weight: 700;
+    background: #e5e7eb;
+    color: #6b7280;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.dml-badge.custom {
+    background: var(--primary-light);
+    color: var(--primary);
+}
+
+.dml-meta {
+    font-size: 0.72rem;
+    color: var(--muted-foreground);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dml-code {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    color: var(--primary);
+    flex-shrink: 0;
+}
+
+.dml-stats {
+    display: flex;
+    gap: 18px;
+    padding: 0 14px;
+    flex-shrink: 0;
+}
+
+.dml-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+}
+
+.dml-stat-val {
+    font-size: 1rem;
+    font-weight: 800;
+    color: var(--ink);
+    line-height: 1;
+}
+
+.dml-stat-label {
+    font-size: 0.6rem;
+    color: var(--muted-foreground);
+    font-weight: 600;
+}
+
+/* Same button shape/sizing/labeling as the grid's dmc-action-btn,
+   just re-themed for a white row background instead of a colored card. */
+.dml-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    padding-left: 14px;
+}
+
+.dml-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 7px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #fff;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    color: var(--muted-foreground);
+}
+
+.dml-action-btn.dml-view:hover {
+    background: var(--primary-light);
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.dml-action-btn.dml-edit {
+    color: var(--primary);
+}
+
+.dml-action-btn.dml-edit:hover {
+    background: var(--primary-light);
+    border-color: var(--primary);
+}
+
+.dml-action-btn.dml-del {
+    color: #dc2626;
+}
+
+.dml-action-btn.dml-del:hover {
+    background: #fef2f2;
+    border-color: #dc2626;
+}
 
 /* ============================================================
    FEEDBACK PAGE
@@ -1086,6 +1288,98 @@ body::before {
     flex: 1;
 }
 
+.feedback-print-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    padding: 7px 12px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--primary);
+    background: var(--primary-light);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.feedback-print-btn:hover {
+    background: #fff;
+    border-color: var(--primary);
+}
+
+/* Print-scope chooser overlay (all students vs one specific student) */
+.fb-print-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15,23,42,0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+.fb-print-dialog {
+    background: #fff;
+    border-radius: 12px;
+    padding: 22px 24px;
+    width: min(440px, 92vw);
+    box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.fb-print-dialog h3 {
+    margin: 0 0 4px;
+    font-size: 1.05rem;
+    color: var(--ink);
+}
+
+.fb-print-dialog p {
+    margin: 0 0 12px;
+    font-size: 0.82rem;
+    color: var(--muted);
+}
+
+.fb-print-select {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    background: #fff;
+    color: var(--ink);
+    margin-bottom: 16px;
+}
+
+.fb-print-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.fb-print-actions button {
+    padding: 8px 18px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.fb-print-cancel {
+    background: #fff;
+    border: 1px solid var(--border);
+    color: var(--muted);
+}
+
+.fb-print-go {
+    background: var(--primary);
+    border: 1px solid var(--primary);
+    color: #fff;
+}
+
 .feedback-teacher-name {
     font-size: 0.95rem;
     font-weight: 700;
@@ -1102,6 +1396,31 @@ body::before {
 
 .feedback-comments-list {
     padding: 4px 0;
+}
+
+/* Per-subject grouping inside a teacher card */
+.feedback-subject-group {
+    border-top: 1px solid var(--border);
+}
+
+.feedback-subject-group:first-child {
+    border-top: none;
+}
+
+.feedback-subject-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 10px 20px;
+    background: #f8fafc;
+}
+
+.feedback-subject-stats {
+    font-size: 0.72rem;
+    color: var(--muted);
+    font-weight: 600;
 }
 
 .feedback-comment-item {
@@ -1149,11 +1468,85 @@ body::before {
     margin-bottom: 6px;
 }
 
+.feedback-comment-text.feedback-no-comment {
+    color: var(--muted);
+    background: #f9fafb;
+    border-left-color: #cbd5e1;
+    font-style: italic;
+    opacity: 0.85;
+}
+
 .feedback-comment-from {
     font-size: 0.75rem;
     color: var(--muted);
     font-weight: 500;
     text-align: right;
+}
+
+.feedback-rating-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-top: 8px;
+}
+
+.feedback-view-rating-btn {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--primary);
+    background: var(--primary-light);
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+}
+
+.feedback-view-rating-btn:hover {
+    background: #fff;
+    border-color: var(--primary);
+}
+
+.feedback-rating-panel {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.feedback-rating-items {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-bottom: 8px;
+}
+
+.feedback-rating-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 0.75rem;
+}
+
+.feedback-rating-item-label {
+    color: var(--ink);
+}
+
+.feedback-rating-item-score {
+    font-weight: 700;
+    color: var(--primary);
+    font-family: 'JetBrains Mono', monospace;
+    flex-shrink: 0;
+}
+
+.feedback-rating-total {
+    font-size: 0.78rem;
+    color: var(--ink);
+    font-weight: 700;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
 }
 
 .feedback-stat-chip {

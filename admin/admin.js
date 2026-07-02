@@ -138,16 +138,30 @@ window.calculateFinalRating = function(teacherId) {
     const studentPercentage = parseFloat(calculateWeightedSETRating(teacherId));
     const evals = getData('evaluations', []);
     const sefData = evals.filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor');
-    const supervisorPercentage = sefData.length > 0 ? sefData[sefData.length - 1].totalScore : 0;
-    const finalPercentage = Math.min(100, (studentPercentage * 0.60) + (supervisorPercentage * 0.40));
+
+    // A real SET is never 0 (the lowest possible rating is 20%), so 0 means
+    // "no student evaluations yet". Likewise, no SEF record means "not evaluated
+    // by a supervisor" — it must NOT be treated as a score of 0.
+    const hasSET = studentPercentage > 0;
+    const hasSEF = sefData.length > 0;
+    const supervisorScore = hasSEF ? sefData[sefData.length - 1].totalScore : null;
+
+    // CMO 19 reports SET and SEF separately. Only compute a combined 60/40 figure
+    // when BOTH exist; otherwise there is no final score to show.
+    const finalPercentage = (hasSET && hasSEF)
+        ? Math.min(100, (studentPercentage * 0.60) + (supervisorScore * 0.40))
+        : null;
 
     return {
-        weightedSET: studentPercentage.toFixed(2),
-        studentPercentage: studentPercentage.toFixed(2),
-        supervisorPercentage: supervisorPercentage.toFixed(2),
-        finalPercentage: finalPercentage.toFixed(2),
-        remarks: getRemarks(finalPercentage),
-        remarksColor: getRemarksColor(finalPercentage)
+        hasSET,
+        hasSEF,
+        weightedSET:          hasSET ? studentPercentage.toFixed(2) : '0.00',
+        studentPercentage:    hasSET ? studentPercentage.toFixed(2) : '—',
+        supervisorPercentage: hasSEF ? supervisorScore.toFixed(2)   : '—',
+        finalPercentage:      finalPercentage !== null ? finalPercentage.toFixed(2) : '—',
+        remarks:              finalPercentage !== null ? getRemarks(finalPercentage)
+                                : (hasSET ? 'Awaiting SEF' : 'No evaluations yet'),
+        remarksColor:         finalPercentage !== null ? getRemarksColor(finalPercentage) : '#64748b'
     };
 };
 
@@ -214,7 +228,12 @@ function toggleSidebar() {
 
 function doLogout() {
   sessionStorage.removeItem('adminLoggedIn');
-  window.location.href = '../index.html';
+  const done = () => window.location.replace('../index.html');
+  try {
+    if (window.fbAuth) { window.fbAuth.signOut().finally(done); }
+    else if (typeof firebase !== 'undefined' && firebase.auth) { firebase.auth().signOut().finally(done); }
+    else done();
+  } catch (e) { done(); }
 }
 
 // ===== DASHBOARD =====
@@ -227,10 +246,10 @@ function renderDashboard() {
   const sy = getActiveSY();
 
   document.getElementById('dashStats').innerHTML = `
-    <div class="stat-card"><div class="stat-icon" style="background:#eff6ff;"><svg width="20" height="20" fill="none" stroke="#2563eb" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div><div class="value">${students.length}</div><div class="label">Total Students</div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:#f0fdf4;"><svg width="20" height="20" fill="none" stroke="#16a34a" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div><div class="value">${teachers.length}</div><div class="label">Total Teachers</div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:#fdf4ff;"><svg width="20" height="20" fill="none" stroke="#9333ea" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg></div><div class="value">${subjects.length}</div><div class="label">Total Subjects</div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:#fff7ed;"><svg width="20" height="20" fill="none" stroke="#ea580c" stroke-width="2" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/></svg></div><div class="value">${evals.length}</div><div class="label">Evaluations</div></div>
+    <div class="stat-card stat-card-clickable" onclick="showPage('students')" title="View all students"><div class="stat-icon" style="background:#eff6ff;"><svg width="20" height="20" fill="none" stroke="#2563eb" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div><div class="value">${students.length}</div><div class="label">Total Students</div></div>
+    <div class="stat-card stat-card-clickable" onclick="showPage('teachers')" title="View all teachers"><div class="stat-icon" style="background:#f0fdf4;"><svg width="20" height="20" fill="none" stroke="#16a34a" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div><div class="value">${teachers.length}</div><div class="label">Total Teachers</div></div>
+    <div class="stat-card stat-card-clickable" onclick="showPage('subjects')" title="View all subjects"><div class="stat-icon" style="background:#fdf4ff;"><svg width="20" height="20" fill="none" stroke="#9333ea" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg></div><div class="value">${subjects.length}</div><div class="label">Total Subjects</div></div>
+    <div class="stat-card stat-card-clickable" onclick="showPage('reports')" title="View Reports & Analytics"><div class="stat-icon" style="background:#fff7ed;"><svg width="20" height="20" fill="none" stroke="#ea580c" stroke-width="2" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/></svg></div><div class="value">${evals.length}</div><div class="label">Evaluations</div></div>
   `;
 
   const deptMap = {};
@@ -1045,7 +1064,7 @@ window.forceSetSupervisor = function(id) {
   renderTeachers();
 };
 
-function saveTeacher() {
+async function saveTeacher() {
   const tid = document.getElementById('tchId').value.trim();
   const name = document.getElementById('tchName').value.trim();
   const dept = document.getElementById('tchDept').value;
@@ -1127,6 +1146,15 @@ function saveTeacher() {
   }
   
   setData('teachers', teachers);
+
+  // Make sure a supervisor actually reaches Firestore so they can sign in to the
+  // app. setData()'s sync is fire-and-forget and can fail silently (e.g. locked
+  // Firestore rules); here we await an explicit write and report the real result.
+  if (facultyType === 'supervisor') {
+    const justSaved = getData('teachers', []).find(t => t.tid === tid && !t.deleted);
+    if (justSaved) await pushTeacherToCloud(justSaved);
+  }
+
   closeModal('addTeacherModal');
   
   const searchInput = document.getElementById('teacherSearchInput');
@@ -1136,6 +1164,20 @@ function saveTeacher() {
   if (teacherDeptBar) teacherDeptBar.dataset.active = '';
   
   renderTeachers();
+}
+
+async function pushTeacherToCloud(teacher) {
+  if (typeof firebase === 'undefined' || !firebase.firestore) {
+    showToast('Saved locally. (Firebase not loaded — open online to sync.)', 'info');
+    return;
+  }
+  try {
+    await firebase.firestore().collection('teachers').doc(teacher.id).set(teacher);
+    showToast(`${teacher.name} synced to cloud — they can now sign in to the app.`, 'success');
+  } catch (e) {
+    showToast(`⚠️ Saved locally but CLOUD SYNC FAILED: ${e.message}. The supervisor will NOT be able to log in until this is fixed — check your Firestore security rules.`, 'error');
+    console.error('Supervisor cloud sync failed:', e);
+  }
 }
 
 function toggleTeacherStatus(id) {
@@ -1503,6 +1545,14 @@ function _buildFacultyRow(t, idx) {
 }
 
 // Render faculty tbody rows based on current filter
+// Shared empty-state row so the Faculty and Supervisors tables look identical.
+function _rptEmptyRow(colspan, message, hint) {
+    return `<tr><td colspan="${colspan}" style="text-align:center;padding:32px;color:var(--muted);">`
+        + `<div style="font-size:0.9rem;">${message}</div>`
+        + (hint ? `<div style="font-size:0.78rem;margin-top:6px;opacity:0.85;">${hint}</div>` : '')
+        + `</td></tr>`;
+}
+
 function _renderFacultyTable() {
     const tbody   = document.getElementById('rpt-faculty-tbody');
     const countEl = document.getElementById('rpt-faculty-count');
@@ -1517,9 +1567,9 @@ function _renderFacultyTable() {
     if (countEl) countEl.textContent = list.length;
 
     if (!list.length) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted);">
-            No faculty found${dept ? ' for this department' : ''}.
-        </td></tr>`;
+        tbody.innerHTML = _rptEmptyRow(7,
+            `No faculty found${dept ? ' for this department' : ''}.`,
+            dept ? 'Assign faculty to this department to see their SET ratings here.' : '');
         return;
     }
 
@@ -1565,11 +1615,17 @@ function _renderSupervisorTable() {
         .filter(t => t.facultyType === 'supervisor')
         .filter(t => !dept || (t.dept || 'UNASSIGNED') === dept);
 
-    if (card) card.style.display = list.length > 0 ? '' : 'none';
+    // Show the card when there are matching supervisors OR a department filter is
+    // active — so filtering to a department with no supervisor shows a clear
+    // message instead of the whole section silently disappearing.
+    if (card) card.style.display = (list.length > 0 || dept) ? '' : 'none';
     if (countEl) countEl.textContent = list.length;
 
     if (!list.length) {
-            return;
+        tbody.innerHTML = _rptEmptyRow(5,
+            `No supervisors found${dept ? ' for this department' : ''}.`,
+            dept ? 'Assign a supervisor to this department to see SEF ratings here.' : '');
+        return;
     }
 
     tbody.innerHTML = list.map(t => _buildSupervisorRow(t)).join('');
@@ -1595,14 +1651,14 @@ function _buildReportPills(teacherData) {
 
     const current = window._reportsDeptFilter || '';
     let html = `<button class="student-dept-filter-btn ${current === '' ? 'active' : ''}" data-dept="" onclick="setReportsDeptFilter('')">
-        All <span class="dept-filter-count">${teacherData.length}</span>
+        All
     </button>`;
 
     activeDepts.forEach(d => {
         const cfg   = DEPT_CONFIG[d];
         const label = cfg ? escapeHtml(cfg.short || d) : escapeHtml(d);
         html += `<button class="student-dept-filter-btn ${current === d ? 'active' : ''}" data-dept="${d}" onclick="setReportsDeptFilter('${d}')">
-            ${label} <span class="dept-filter-count">${deptCounts[d]}</span>
+            ${label}
         </button>`;
     });
 
@@ -1636,6 +1692,9 @@ window.renderReports = function() {
                 <div style="display:flex;align-items:center;gap:8px;">
                     <button id="rpt-faculty-viewall-btn" class="btn btn-ghost btn-sm rpt-viewall-btn" onclick="_openRptViewAllPage('faculty')">
                         <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:3px;"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>View Full List
+                    </button>
+                    <button class="btn btn-ghost btn-sm" onclick="openSEFAudit()" title="Audit & clean supervisor (SEF) evaluation records" style="white-space:nowrap;">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:3px;"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>SEF Audit
                     </button>
                     <span class="badge badge-primary" style="font-size:0.68rem;">CMO 19 — SET &amp; SEF Displayed Separately</span>
                 </div>
@@ -2282,6 +2341,30 @@ window.buildAnnexCContent = function(teacherId) {
 
     const overallSET = totalStudents > 0 ? (totalWeightedScore / totalStudents).toFixed(2) : '0.00';
 
+    // Section D comments — pull the actual anonymous comments submitted.
+    // Students: any non-supervisor evaluation for this faculty with a comment.
+    // Supervisor: comments from the SEF submissions (Annex B) for this faculty.
+    const studentComments = getData('evaluations', [])
+        .filter(e => e.teacherId === teacherId && e.evaluatorType !== 'supervisor' && e.comment && e.comment.trim())
+        .map(e => e.comment.trim());
+    const supervisorComments = sefEvals
+        .filter(e => e.comment && e.comment.trim())
+        .map(e => e.comment.trim());
+
+    const commentRow = (n, text) =>
+        `<tr><td style="padding:12px 8px;border:1px solid #ccc;text-align:center;vertical-align:top;">${n}</td>`
+        + `<td style="padding:12px 8px;border:1px solid #ccc;white-space:pre-wrap;word-break:break-word;">${text ? escapeHtml(text) : ''}</td></tr>`;
+    // Always keep at least 5 rows so the form looks right; fill with comments
+    // where they exist and leave the remaining rows blank.
+    const buildCommentRows = (arr) => {
+        const rowCount = Math.max(5, arr.length);
+        let out = '';
+        for (let i = 0; i < rowCount; i++) out += commentRow(i + 1, arr[i] || '');
+        return out;
+    };
+    const studentCommentRows = buildCommentRows(studentComments);
+    const supervisorCommentRows = buildCommentRows(supervisorComments);
+
     document.getElementById('annexDModalBody').innerHTML = `
     <div id="annexPrintArea" style="font-family:serif;font-size:0.88rem;padding:4px 0;min-width:0;">
         <div style="text-align:center;font-weight:700;font-size:1rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.03em;">Individual Faculty Evaluation Report</div>
@@ -2382,7 +2465,7 @@ window.buildAnnexCContent = function(teacherId) {
                 </tr>
             </thead>
             <tbody>
-                ${[1,2,3,4,5].map(n => `<tr><td style="padding:12px 8px;border:1px solid #ccc;text-align:center;">${n}</td><td style="padding:12px 8px;border:1px solid #ccc;"></td></tr>`).join('')}
+                ${studentCommentRows}
                 <tr><td style="padding:6px 8px;border:1px solid #ccc;text-align:center;color:#888;font-style:italic;" colspan="2">(add additional rows if necessary)</td></tr>
             </tbody>
         </table>
@@ -2395,7 +2478,7 @@ window.buildAnnexCContent = function(teacherId) {
                 </tr>
             </thead>
             <tbody>
-                ${[1,2,3,4,5].map(n => `<tr><td style="padding:12px 8px;border:1px solid #ccc;text-align:center;">${n}</td><td style="padding:12px 8px;border:1px solid #ccc;"></td></tr>`).join('')}
+                ${supervisorCommentRows}
                 <tr><td style="padding:6px 8px;border:1px solid #ccc;text-align:center;color:#888;font-style:italic;" colspan="2">(add additional rows if necessary)</td></tr>
             </tbody>
         </table>
@@ -2528,11 +2611,11 @@ window.exportEnhancedReport = function() {
             const avgScore = classEvals.length > 0 ? (classEvals.reduce((a,b)=>a+b.totalScore,0)/classEvals.length) : 0;
             const classPercentage = Math.min(100, avgScore).toFixed(2);
             
-            csv += `"${teacher.tid}","${teacher.name}","${teacher.dept || 'N/A'}","${sub.code}","${sub.name}",${enrolledCount},${classEvals.length},${avgScore.toFixed(2)},${classPercentage}%,${rating.weightedSET},${rating.studentPercentage}%,${rating.supervisorPercentage}%,${rating.finalPercentage}%,${rating.remarks}\n`;
+            csv += `"${teacher.tid}","${teacher.name}","${teacher.dept || 'N/A'}","${sub.code}","${sub.name}",${enrolledCount},${classEvals.length},${avgScore.toFixed(2)},${classPercentage}%,${rating.weightedSET},${rating.studentPercentage}%,${rating.hasSEF ? rating.supervisorPercentage + '%' : 'N/A'},${rating.hasSEF ? rating.finalPercentage + '%' : 'N/A'},${rating.remarks}\n`;
         });
         
         if (teacherSubjects.length === 0) {
-            csv += `"${teacher.tid}","${teacher.name}","${teacher.dept || 'N/A'}",N/A,N/A,0,0,0,0%,${rating.weightedSET},${rating.studentPercentage}%,${rating.supervisorPercentage}%,${rating.finalPercentage}%,${rating.remarks}\n`;
+            csv += `"${teacher.tid}","${teacher.name}","${teacher.dept || 'N/A'}",N/A,N/A,0,0,0,0%,${rating.weightedSET},${rating.studentPercentage}%,${rating.hasSEF ? rating.supervisorPercentage + '%' : 'N/A'},${rating.hasSEF ? rating.finalPercentage + '%' : 'N/A'},${rating.remarks}\n`;
         }
     });
     
@@ -2617,20 +2700,20 @@ function viewTeacherReport(teacherId) {
     <div class="info-row"><span class="info-label">Total Evaluations</span><span class="info-value">${tEvals.length}</span></div>
     
     <div class="total-score-display" style="margin-top:20px;">
-      <div class="big-score">${rating.finalPercentage}%</div>
-      <div class="out-of">CMO 60/40 Formula: 60% SET + 40% SEF</div>
+      <div class="big-score">${rating.hasSEF ? rating.finalPercentage + '%' : (rating.hasSET ? rating.studentPercentage + '%' : '—')}</div>
+      <div class="out-of">${rating.hasSEF ? 'CMO 60/40: 60% SET + 40% SEF' : 'SET only — no SEF submitted yet'}</div>
       <div class="remarks-badge" style="background:${rating.remarksColor};">${rating.remarks}</div>
     </div>
     
     <div style="margin-top:16px; display:grid; grid-template-columns:1fr 1fr; gap:16px;">
       <div style="background:#f0fdf4; padding:12px; border-radius:8px; text-align:center;">
         <div style="font-size:0.7rem; color:var(--muted);">Student SET (60%)</div>
-        <div style="font-size:1.4rem; font-weight:700;">${rating.studentPercentage}%</div>
+        <div style="font-size:1.4rem; font-weight:700;">${rating.hasSET ? rating.studentPercentage + '%' : '—'}</div>
         <div style="font-size:0.7rem;">(weighted avg across ${tSubs.length} class${tSubs.length !== 1 ? 'es' : ''})</div>
       </div>
       <div style="background:#eff6ff; padding:12px; border-radius:8px; text-align:center;">
         <div style="font-size:0.7rem; color:var(--muted);">Supervisor SEF (40%)</div>
-        <div style="font-size:1.4rem; font-weight:700;">${rating.supervisorPercentage}%</div>
+        <div style="font-size:1.4rem; font-weight:700;">${rating.hasSEF ? rating.supervisorPercentage + '%' : '—'}</div>
       </div>
     </div>
     
@@ -3275,3 +3358,199 @@ window.mcDownloadTemplate = function() {
   a.download = 'courses_bulk_upload_template.xlsx';
   a.click();
 };
+// ============================================================
+// SEF RECORDS AUDIT  (find & clean stray supervisor evaluations)
+// ------------------------------------------------------------
+// Lists every evaluation tagged evaluatorType:'supervisor', resolves the
+// faculty + supervisor behind it, and labels its source so test/orphaned
+// records can be removed safely. Deletions also remove the Firestore doc
+// (setData only upserts, so a plain local delete would re-sync on reload).
+// ============================================================
+(function () {
+  function teacherMap() {
+    const m = {};
+    getData('teachers', []).forEach(t => { m[t.id] = t; });
+    return m;
+  }
+
+  function classifySef(rec, byId) {
+    const faculty = byId[rec.teacherId];
+    const facultyOk = !!faculty && !faculty.deleted;
+    let source, supName = '\u2014', orphan = false;
+
+    if (rec.supervisorId) {
+      const sup = byId[rec.supervisorId];
+      if (sup && !sup.deleted && (sup.facultyType === 'supervisor')) {
+        source = 'App supervisor';
+        supName = sup.name || sup.tid || rec.supervisorId;
+      } else {
+        source = 'Orphaned \u2014 supervisor removed';
+        orphan = true;
+        supName = (sup && sup.name) ? (sup.name + ' (removed)') : (rec.supervisorTid || rec.supervisorId);
+      }
+    } else {
+      source = 'Admin-entered';   // created via the admin SEF modal (saveSEFRating); no supervisor link
+      supName = '\u2014';
+    }
+
+    if (!facultyOk) { source = 'Orphaned \u2014 faculty removed'; orphan = true; }
+    return { faculty, facultyOk, source, supName, orphan };
+  }
+
+  function orphanIds() {
+    const byId = teacherMap();
+    return getData('evaluations', [])
+      .filter(e => e.evaluatorType === 'supervisor')
+      .filter(e => classifySef(e, byId).orphan)
+      .map(e => e.id);
+  }
+
+  window.openSEFAudit = function () {
+    const byId = teacherMap();
+    const sef = getData('evaluations', []).filter(e => e.evaluatorType === 'supervisor');
+
+    const rows = sef.map(rec => {
+      const c = classifySef(rec, byId);
+      return {
+        id: rec.id,
+        facultyName: c.faculty ? (c.faculty.name || c.faculty.tid || rec.teacherId) : ('Unknown (' + rec.teacherId + ')'),
+        dept: c.faculty ? (c.faculty.dept || '\u2014') : '\u2014',
+        score: (rec.totalScore !== undefined && rec.totalScore !== null) ? rec.totalScore : '\u2014',
+        date: rec.timestamp ? new Date(rec.timestamp).toLocaleDateString() : '\u2014',
+        source: c.source,
+        supName: c.supName,
+        orphan: c.orphan,
+        admin: c.source === 'Admin-entered'
+      };
+    });
+
+    // orphaned first, then admin-entered, then valid
+    const rank = r => r.orphan ? 0 : (r.admin ? 1 : 2);
+    rows.sort((a, b) => rank(a) - rank(b) || a.facultyName.localeCompare(b.facultyName));
+
+    const total = rows.length;
+    const valid = rows.filter(r => !r.orphan && !r.admin).length;
+    const adminN = rows.filter(r => r.admin && !r.orphan).length;
+    const orphN = rows.filter(r => r.orphan).length;
+
+    const pill = (txt, color) => `<span style="display:inline-block;padding:2px 9px;border-radius:20px;font-size:0.7rem;font-weight:700;background:${color}22;color:${color};white-space:nowrap;">${txt}</span>`;
+    const srcColor = r => r.orphan ? '#dc2626' : (r.admin ? '#d97706' : '#059669');
+
+    const body = total === 0
+      ? `<div style="padding:40px;text-align:center;color:#64748b;">No supervisor (SEF) records found. Nothing to clean.</div>`
+      : `
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+          ${pill('Total: ' + total, '#475569')}
+          ${pill('Valid: ' + valid, '#059669')}
+          ${pill('Admin-entered: ' + adminN, '#d97706')}
+          ${pill('Orphaned: ' + orphN, '#dc2626')}
+        </div>
+        <div style="overflow:auto;max-height:52vh;border:1px solid #e2e8f0;border-radius:10px;">
+          <table style="width:100%;border-collapse:collapse;font-size:0.8rem;">
+            <thead>
+              <tr style="background:#f8fafc;text-align:left;position:sticky;top:0;">
+                <th style="padding:9px 10px;">Faculty</th>
+                <th style="padding:9px 10px;">Dept</th>
+                <th style="padding:9px 10px;text-align:center;">SEF %</th>
+                <th style="padding:9px 10px;">Date</th>
+                <th style="padding:9px 10px;">Source</th>
+                <th style="padding:9px 10px;">Supervisor</th>
+                <th style="padding:9px 10px;text-align:center;">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(r => `
+                <tr style="border-top:1px solid #eef2f7;${r.orphan ? 'background:#fef2f2;' : ''}">
+                  <td style="padding:9px 10px;font-weight:600;">${escapeHtml(r.facultyName)}</td>
+                  <td style="padding:9px 10px;color:#64748b;">${escapeHtml(r.dept)}</td>
+                  <td style="padding:9px 10px;text-align:center;font-weight:700;">${r.score}${r.score !== '\u2014' ? '%' : ''}</td>
+                  <td style="padding:9px 10px;color:#64748b;white-space:nowrap;">${escapeHtml(r.date)}</td>
+                  <td style="padding:9px 10px;">${pill(r.source, srcColor(r))}</td>
+                  <td style="padding:9px 10px;color:#64748b;">${escapeHtml(r.supName)}</td>
+                  <td style="padding:9px 10px;text-align:center;">
+                    <button onclick="deleteSefRecord('${r.id}')" style="border:none;background:#fee2e2;color:#dc2626;font-weight:700;font-size:0.74rem;padding:5px 11px;border-radius:7px;cursor:pointer;">Delete</button>
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;justify-content:space-between;align-items:center;">
+          <div style="font-size:0.72rem;color:#64748b;line-height:1.5;max-width:60%;">
+            <strong>Valid</strong> = submitted by a real supervisor in the app.
+            <strong>Admin-entered</strong> = typed in via the admin SEF form (no supervisor link).
+            <strong>Orphaned</strong> = the faculty or supervisor no longer exists.
+          </div>
+          ${orphN > 0 ? `<button onclick="deleteOrphanedSef()" style="border:none;background:#dc2626;color:#fff;font-weight:700;font-size:0.78rem;padding:9px 16px;border-radius:9px;cursor:pointer;">Delete all ${orphN} orphaned</button>` : ''}
+        </div>`;
+
+    let overlay = document.getElementById('sefAuditOverlay');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'sefAuditOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,0.55);display:flex;align-items:center;justify-content:center;padding:18px;';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:16px;max-width:880px;width:100%;max-height:88vh;overflow:auto;padding:22px 22px 20px;box-shadow:0 20px 60px rgba(0,0,0,0.3);font-family:inherit;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <h3 style="margin:0;font-size:1.05rem;">\uD83D\uDD0D SEF Records Audit</h3>
+          <button onclick="document.getElementById('sefAuditOverlay').remove()" style="border:none;background:#f1f5f9;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:1rem;">\u2715</button>
+        </div>
+        <p style="margin:0 0 14px;font-size:0.78rem;color:#64748b;">Every supervisor (SEF) evaluation in the system, with its source. Remove stray or test records here.</p>
+        ${body}
+      </div>`;
+    document.body.appendChild(overlay);
+  };
+
+  window.deleteSefRecord = function (id) {
+    showConfirm('Delete SEF Record', 'Remove this supervisor evaluation permanently? This cannot be undone.', async () => {
+      const evals = getData('evaluations', []).filter(e => e.id !== id);
+      setData('evaluations', evals);
+      try {
+        if (typeof firebase !== 'undefined' && firebase.firestore) {
+          await firebase.firestore().collection('evaluations').doc(id).delete();
+        }
+      } catch (e) { console.warn('Firestore delete failed:', e); }
+      addAudit('Delete SEF', 'Removed SEF record ' + id);
+      showToast('SEF record deleted.', 'success');
+      if (typeof renderReports === 'function') { try { renderReports(); } catch (e) {} }
+      openSEFAudit();
+    });
+  };
+
+  window.deleteOrphanedSef = function () {
+    const ids = orphanIds();
+    if (!ids.length) { showToast('No orphaned SEF records to delete.', 'info'); return; }
+    showConfirm('Delete Orphaned SEF', `Remove ${ids.length} orphaned SEF record(s)? These point to faculty or supervisors that no longer exist. This cannot be undone.`, async () => {
+      const evals = getData('evaluations', []).filter(e => !ids.includes(e.id));
+      setData('evaluations', evals);
+      for (const id of ids) {
+        try {
+          if (typeof firebase !== 'undefined' && firebase.firestore) {
+            await firebase.firestore().collection('evaluations').doc(id).delete();
+          }
+        } catch (e) { console.warn('Firestore delete failed:', e); }
+      }
+      addAudit('Delete Orphaned SEF', `Removed ${ids.length} orphaned SEF records`);
+      showToast(`${ids.length} orphaned SEF record(s) deleted.`, 'success');
+      if (typeof renderReports === 'function') { try { renderReports(); } catch (e) {} }
+      openSEFAudit();
+    });
+  };
+
+  // Inject a small launcher button (admin pages only; admin.js already guards login).
+  function injectFab() {
+    if (document.getElementById('sefAuditFab')) return;
+    const fab = document.createElement('button');
+    fab.id = 'sefAuditFab';
+    fab.type = 'button';
+    fab.textContent = 'SEF Audit';
+    fab.title = 'Audit & clean supervisor (SEF) evaluation records';
+    fab.onclick = () => openSEFAudit();
+    fab.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:9990;background:#064e3b;color:#fff;border:none;border-radius:10px;padding:10px 15px;font-size:0.78rem;font-weight:700;font-family:inherit;cursor:pointer;box-shadow:0 6px 18px rgba(6,78,59,0.4);';
+    document.body.appendChild(fab);
+  }
+  // The SEF Audit is launched from the Report & Analytics section (a button in
+  // renderReports calls openSEFAudit). The old floating button is intentionally
+  // not injected. injectFab() is kept above but no longer auto-called.
+  void injectFab;
+})();

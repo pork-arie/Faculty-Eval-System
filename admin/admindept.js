@@ -1,27 +1,13 @@
 // ===== DEPARTMENTS =====
-
-// Seed data — used ONLY if Firestore/localStorage has no departments yet
-const _DEPT_SEED = {
-  COED: { name: 'College of Education', short: 'COED', desc: 'Trains future educators in pedagogy and teaching methodologies.', icon: '../icons/coed.png', colorClass: 'dept-COED' },
-  CCJS: { name: 'College of Criminal Justice & Safety', short: 'CCJS', desc: 'Focuses on criminology, law enforcement, and public safety.', icon: '../icons/ccjs.png', colorClass: 'dept-CCJS' },
-  CCIS: { name: 'College of Computing & Info. Sciences', short: 'CCIS', desc: 'Covers IT, computer science, and information systems programs.', icon: '../icons/ccis.png', colorClass: 'dept-CCIS' },
-  CON:  { name: 'College of Nursing', short: 'CON', desc: 'Prepares professional nurses for clinical and community health care.', icon: '../icons/nursing.jpg', colorClass: 'dept-CON' },
-  CEA:  { name: 'College of Engineering & Architecture', short: 'CEA', desc: 'Covers civil, electrical, and architectural engineering disciplines.', icon: '../icons/cea.png', colorClass: 'dept-CEA' },
-  COM:  { name: 'College of Management', short: 'COM', desc: 'Business administration, entrepreneurship, and management studies.', icon: '../icons/com.png', colorClass: 'dept-COM' },
-  CAT:  { name: 'College of Agriculture & Technology', short: 'CAT', desc: 'Synthesizes agricultural sciences, technological innovation, and sustainable development to drive global food security', icon: '../icons/cat.jpg', colorClass: 'dept-CAT' },
-  GS:   { name: 'Graduate School', short: 'GS', desc: 'Advanced studies and research programs for masteral and doctoral degrees.', icon: '../icons/GS.jpg', colorClass: 'dept-GS' }
-};
-
-// All departments come from localStorage (loaded from Firestore on startup).
-// Falls back to seed only on first ever run when storage is empty.
+// No hardcoded/seed departments. All departments are added manually from the
+// admin panel and live in Firestore (mirrored to localStorage). On an empty
+// database this returns {} so the app starts with no departments.
 window.getDepartments = function() {
     const stored = getData('departments', null);
-    if (stored && typeof stored === 'object' && Object.keys(stored).length > 0) {
+    if (stored && typeof stored === 'object') {
         return stored;
     }
-    // First run: seed from defaults and save to localStorage so Firestore sync picks it up
-    setData('departments', _DEPT_SEED);
-    return _DEPT_SEED;
+    return {};
 };
 
 // Make DEPT_CONFIG available globally (for backward compatibility)
@@ -47,8 +33,18 @@ window.addDepartment = function(code, name, short, desc, icon, color) {
         isCustom: true
     };
     depts[code] = newCfg;
-    // Save to localStorage
-    localStorage.setItem('departments', JSON.stringify(depts));
+    // FIX Bug #2: base64 images can be 50–300KB and push localStorage over its 5MB
+    // quota limit. Without a try/catch, setItem() throws silently and the function
+    // crashes before ever reaching Firestore — so nothing gets saved.
+    try {
+        localStorage.setItem('departments', JSON.stringify(depts));
+    } catch (e) {
+        if (e.name === 'QuotaExceededError' || e.code === 22) {
+            showToast('Image is too large to store locally. Try a smaller image or use an emoji icon instead.', 'error');
+            return;
+        }
+        throw e;
+    }
     // Write directly to Firestore
     if (typeof db !== 'undefined') {
         db.collection('departments').doc(code).set({ code, ...newCfg })
@@ -67,10 +63,6 @@ window.removeDepartment = function(code) {
     code = code.toUpperCase();
     const depts = getDepartments();
     if (!depts[code]) { showToast('Department not found.', 'error'); return; }
-    if (!depts[code].isCustom) {
-        showToast('Cannot remove default departments.', 'error');
-        return;
-    }
     delete depts[code];
     setData('departments', depts);
     // *** FIX: delete from Firestore so it does not reappear on page reload ***
@@ -84,6 +76,32 @@ window.removeDepartment = function(code) {
     if (typeof renderDeptManagePage === 'function') renderDeptManagePage();
     addAudit('Remove Department', `Removed department: ${code}`);
     showToast('Department removed successfully!', 'success');
+};
+
+// Safe delete: warns if teachers/subjects still point at this department,
+// so you do not silently orphan data. Works for ALL departments (incl. defaults).
+window.deleteDeptSafe = function(code) {
+    code = (code || '').toUpperCase();
+    const depts = getDepartments();
+    const cfg = depts[code];
+    if (!cfg) { showToast('Department not found.', 'error'); return; }
+
+    const teachers = getData('teachers', []).filter(t => !t.deleted && (t.dept || '').toUpperCase() === code);
+    const subjects = getData('subjects', []).filter(s => (s.dept || '').toUpperCase() === code);
+
+    let msg = 'Delete the department "' + cfg.name + '" (' + code + ')?';
+    if (teachers.length || subjects.length) {
+        msg += ' Warning: ' + teachers.length + ' teacher(s) and ' + subjects.length +
+               ' subject(s) are still assigned to it. They will not be deleted, but will show as ' +
+               'unassigned until you move them to another department.';
+    }
+    msg += ' This cannot be undone.';
+
+    showConfirm('Delete Department', msg, function() {
+        removeDepartment(code);
+        if (typeof closeModal === 'function') closeModal('deptEditModal');
+        if (window.currentDept === code && typeof showPage === 'function') showPage('dashboard');
+    });
 };
 
 // Toggle dept list visibility
@@ -135,6 +153,7 @@ function showDeptPage(deptCode) {
   const navEl = document.getElementById('dept-' + deptCode);
   if (navEl) navEl.classList.add('active');
   currentDept = deptCode;
+  window.currentDept = deptCode;
   renderDeptPage(deptCode);
   closeSidebar();
 }
@@ -199,7 +218,7 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
     <div class="dept-stat"><div class="dept-stat-icon" style="background:;"><img src ="../icons/teacher.png" width="28" height="28" alt="Teachers"></div><div><div class="dept-stat-val">${regularTeachers.length}</div><div class="dept-stat-label">Teachers</div></div></div>
     <div class="dept-stat"><div class="dept-stat-icon" style="background:;"><img src ="../icons/subject.png" width="28" height="28" alt="Subjects"></div><div><div class="dept-stat-val">${allSubjects.length}</div><div class="dept-stat-label">Subjects</div></div></div>
     <div class="dept-stat"><div class="dept-stat-icon" style="background:;"><img src ="../icons/enrolled.png" width="28" height="28" alt="Enrolled"></div><div><div class="dept-stat-val">${totalEnrolled}</div><div class="dept-stat-label">Enrolled Students</div></div></div>
-    <div class="dept-stat"><div class="dept-stat-icon" style="background:;"><img src ="../icons/evaluate.png" width="28" height="28" alt="Evalaute"></div><div><div class="dept-stat-val">${deptEvals.length}</div><div class="dept-stat-label">Evaluations</div></div></div>
+    <div class="dept-stat" style="cursor:pointer;" onclick="goToDeptFeedback('${deptCode}')" title="View evaluation feedback for this department"><div class="dept-stat-icon" style="background:;"><img src ="../icons/evaluate.png" width="28" height="28" alt="Evalaute"></div><div><div class="dept-stat-val">${deptEvals.length}</div><div class="dept-stat-label">Evaluations</div></div></div>
   `;
 
   document.getElementById('deptTeacherCount').textContent = regularTeachers.length;
@@ -215,12 +234,9 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
           <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong></td>
           <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
           <td><strong style="font-size:0.82rem;">SET: ${setSc}% | SEF: ${sefSc ? sefSc + '%' : 'N/A'}</strong></td>
-          <td onclick="event.stopPropagation()">
-           <button class="btn btn-ghost btn-sm" onclick="softDeleteTeacher('${t.id}')" title="Archive">🗑️</button>
-          </td>
         </tr>`;
       }).join('')
-    : `<tr><td colspan="5" style="text-align:center;padding:24px;">No teachers found.</td></tr>`;
+    : `<tr><td colspan="4" style="text-align:center;padding:24px;">No teachers found.</td></tr>`;
 
   // ===== DEPARTMENT SUPERVISORS SECTION =====
   const deptSupervisorEl = document.getElementById('deptSupervisorsSection');
@@ -239,9 +255,6 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
           <td><span style="font-size:0.75rem;font-weight:600;color:${roleColor};">${roleLabel}</span></td>
           <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
           <td><span style="font-size:0.78rem;">${sefCount} SEF rating${sefCount !== 1 ? 's' : ''} given</span></td>
-          <td onclick="event.stopPropagation()">
-            <button class="btn btn-ghost btn-sm" onclick="softDeleteTeacher('${t.id}')" title="Archive">🗑️</button>
-          </td>
         </tr>`;
       }).join('');
     } else {
@@ -260,12 +273,9 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
           <td style="font-size:0.82rem;">${escapeHtml(sub.name)}</div></td>
           <td style="font-size:0.82rem;">${teacherName}</div></td> 
           <td><span class="badge badge-primary" style="font-size:0.68rem;">${enrolled}</span></td>
-          <td>
-            <button class="btn btn-ghost btn-sm" onclick="softDeleteSubject('${sub.id}')" title="Archive">🗑️</button>
-           </div></td>
         </tr>`;
       }).join('')
-    : `<tr><td colspan="5" style="text-align:center;padding:24px;">No subjects found.</td></tr>`;
+    : `<tr><td colspan="4" style="text-align:center;padding:24px;">No subjects found.</td></tr>`;
 }
 
 // ===== DEPT MANAGEMENT PAGE — layout preference =====
@@ -386,6 +396,11 @@ let _deptMgmtLayout = localStorage.getItem('deptMgmtLayout') || 'grid';
         box-shadow:0 1px 2px rgba(0,0,0,.06);
     }
     .dm-icon-action-btn.edit:hover { background:#f0f9ff; border-color:#2563eb; color:#2563eb; }
+    .dm-icon-action-btn.view {
+        background:#fff; border-color:#d1d5db; color:#374151;
+        box-shadow:0 1px 2px rgba(0,0,0,.06);
+    }
+    .dm-icon-action-btn.view:hover { background:#f0fdf4; border-color:#059669; color:#059669; }
     .dm-icon-action-btn.del { background:#fef2f2; color:#dc2626; border-color:#fecaca; }
     .dm-icon-action-btn.del:hover { background:#fee2e2; }
     /* Color picker */
@@ -602,8 +617,14 @@ function _buildDeptListHtml(depts, layout) {
             return `
             <div class="dm-card" id="dmcard-${code}" style="border-top:3px solid ${accentBar};">
                 <div class="dm-card-actions">
-                    <button class="dm-icon-action-btn edit" onclick="openEditDeptModal('${code}')" title="Edit">
+                    <button class="dm-icon-action-btn view" onclick="event.stopPropagation();showDeptPage('${code}')" title="View">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                    <button class="dm-icon-action-btn edit" onclick="event.stopPropagation();openEditDeptModal('${code}')" title="Edit">
                         <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button class="dm-icon-action-btn del" onclick="event.stopPropagation();deleteDeptSafe('${code}')" title="Delete">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
                     </button>
                 </div>
                 <div class="dm-card-icon" style="background:${iconBg};border:1px solid ${iconBorder};overflow:hidden;">${iconInner}</div>
@@ -633,7 +654,15 @@ function _buildDeptListHtml(depts, layout) {
                     <div class="dm-list-sub"><span class="dm-list-code">${escapeHtml(code)}</span> — ${escapeHtml(cfg.desc || '')}</div>
                 </div>
                 <div class="dm-list-actions">
-                    <button class="dm-icon-action-btn edit" onclick="openEditDeptModal('${code}')" title="Edit department">✏️</button>
+                    <button class="dm-icon-action-btn view" onclick="showDeptPage('${code}')" title="View">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                    <button class="dm-icon-action-btn edit" onclick="openEditDeptModal('${code}')" title="Edit department">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button class="dm-icon-action-btn del" onclick="deleteDeptSafe('${code}')" title="Delete department">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                    </button>
                 </div>
             </div>
         </div>`;
@@ -736,12 +765,16 @@ window.addDeptFromModal = function() {
 
     if (!name || !short) { showToast('Please fill in Short Name and Full Name.', 'error'); return; }
 
-    let baseCode = short.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 8);
-    if (!baseCode) baseCode = 'DEPT';
+    let code = short.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 8);
+    if (!code) code = 'DEPT';
+
+    // FIX Bug #1: Instead of silently renaming CCIS→CCIS2, CEA→CEA2 etc.,
+    // block the save and tell the user the code already exists.
     const existing = getDepartments();
-    let code = baseCode;
-    let suffix = 2;
-    while (existing[code]) { code = baseCode + suffix; suffix++; }
+    if (existing[code]) {
+        showToast(`Department code "${code}" already exists. Use a different short name.`, 'error');
+        return;
+    }
 
     addDepartment(code, name, short, desc, icon, color);
     _renderDeptMgmtBody();
@@ -826,12 +859,19 @@ window.openEditDeptModal = function(code) {
             </div>
         </div>
 
-        <div style="display:flex;gap:8px;justify-content:flex-end;">
-            <button class="dm-cancel-btn" onclick="closeModal('deptEditModal')">Cancel</button>
-            <button class="dm-save-btn" onclick="saveEditDept()">
-                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>
-                Save Changes
+        <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;">
+            <button type="button" onclick="deleteDeptSafe('${code}')" title="Delete this department"
+                style="background:#fee2e2;color:#dc2626;border:none;border-radius:8px;padding:9px 14px;font-weight:700;font-size:0.8rem;cursor:pointer;display:inline-flex;align-items:center;gap:5px;">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                Delete
             </button>
+            <div style="display:flex;gap:8px;">
+                <button class="dm-cancel-btn" onclick="closeModal('deptEditModal')">Cancel</button>
+                <button class="dm-save-btn" onclick="saveEditDept()">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>
+                    Save Changes
+                </button>
+            </div>
         </div>`;
 
     openModal('deptEditModal');
@@ -1040,3 +1080,10 @@ window.mcLoadDept = function(deptCode) {
     if (typeof _origMcLoadDept === 'function') _origMcLoadDept(deptCode);
     _mcUpdateCount(deptCode);
 };
+
+
+// Build the department sidebar immediately from stored data (the localStorage
+// mirror of Firestore) so it is never blank and never shows stale hardcoded
+// items. dashboard.html's loadFromFirebase() refreshes it again once Firestore
+// returns the authoritative data.
+try { if (typeof refreshDeptConfig === 'function') refreshDeptConfig(); } catch (e) {}

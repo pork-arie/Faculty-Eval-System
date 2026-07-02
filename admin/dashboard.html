@@ -13,8 +13,21 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 
+<!-- Shared Firebase config (single source of truth) -->
+<script src="../shared/js/firebaseAPI.js"></script>
+
 <script>
-const firebaseConfig = {
+function _dashFatal(msg){
+  document.documentElement.style.visibility='visible';
+  var b=document.createElement('div');
+  b.style.cssText='position:fixed;inset:0;z-index:99999;background:#0d1117;color:#e6edf3;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,sans-serif;text-align:center;';
+  b.innerHTML='<div style="max-width:540px;"><div style="font-size:2rem;margin-bottom:10px;">\u26A0\uFE0F</div><div style="font-size:1.05rem;font-weight:700;margin-bottom:10px;">Dashboard could not start</div><div style="font-size:0.92rem;line-height:1.6;color:#8b949e;">'+msg+'</div><a href="../index.html" style="display:inline-block;margin-top:16px;color:#3fb950;text-decoration:none;">\u2190 Back to login</a></div>';
+  document.body.appendChild(b);
+}
+
+var db, fbAuth;
+// Fallback config so the dashboard works even if shared/js/firebaseAPI.js did not load.
+window.firebaseConfig = window.firebaseConfig || {
   apiKey: "AIzaSyCUD1waV1kPYFKj1zRA7ANVjQkhdP7NJic",
   authDomain: "studenteval-937f6.firebaseapp.com",
   projectId: "studenteval-937f6",
@@ -23,14 +36,78 @@ const firebaseConfig = {
   appId: "1:899672493371:web:600723b0d16bb879067b1e",
   measurementId: "G-D5WD5LB2E5"
 };
+try {
+  firebase.initializeApp(window.firebaseConfig);
+  window.db     = firebase.firestore();
+  window.fbAuth = firebase.auth();
+  db = window.db; fbAuth = window.fbAuth;
+} catch (e) {
+  _dashFatal(e.message);
+  throw e;
+}
 
-firebase.initializeApp(firebaseConfig);
-// window.db makes Firestore accessible from ALL external scripts (admindept.js etc.)
-// 'const db' is block-scoped to this <script> tag so external scripts cannot see it.
-window.db     = firebase.firestore();
-window.fbAuth = firebase.auth();
-const db      = window.db;
-const fbAuth  = window.fbAuth;
+// Keep STRICT_ADMIN in sync with index.html. While false, the gate is self-healing.
+const STRICT_ADMIN = false;
+document.documentElement.style.visibility = 'hidden';
+
+// Safety net: never leave the page silently blank.
+var _authWatchdog = setTimeout(function(){
+  _dashFatal('No response from Firebase. If your browser address bar starts with <b>file://</b>, the login session does not carry between pages. Run the site through a local web server (VS Code \u201CLive Server\u201D, or <code>python -m http.server</code>) or deploy to Firebase Hosting, then log in again.');
+}, 8000);
+
+// Persist the session across the login \u2192 dashboard navigation.
+try { fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){}); } catch(e){}
+
+fbAuth.onAuthStateChanged(async (user) => {
+  clearTimeout(_authWatchdog);
+  if (!user) {
+    // No session on this page. Right after login the session can lag a moment
+    // (IndexedDB still flushing), so retry ONCE before concluding anything.
+    if (!sessionStorage.getItem('_dashRetried')) {
+      sessionStorage.setItem('_dashRetried', '1');
+      setTimeout(function(){ window.location.reload(); }, 1500);
+      return;
+    }
+    sessionStorage.removeItem('_dashRetried');
+    if (location.protocol === 'file:') {
+      _dashFatal('Your sign-in worked, but the browser did not keep the session because this page was opened directly (file://). Run the site through a local web server (e.g. VS Code \u201CLive Server\u201D) so the address starts with http://, then log in again.');
+      return;
+    }
+    _dashFatal('No active sign-in session was found here (protocol: ' + location.protocol + ').<br><br>'
+      + 'Your login worked, but the session did not carry from the login page to this page. Make sure BOTH pages load from the <b>same address</b> \u2014 e.g. both <code>http://localhost:5500/...</code>. If the login page is http:// but this one opened as file:// (or a different port), that breaks the session.<br><br>'
+      + '<a href="../index.html" style="color:#3fb950;">\u2190 Back to login</a>');
+    return;
+  }
+  sessionStorage.removeItem('_dashRetried');
+  let allowed = false;
+  try {
+    const ref = db.collection('admins').doc(user.uid);
+    const doc = await ref.get();
+    if (doc.exists) {
+      allowed = true;
+    } else {
+      try {
+        await ref.set({ role: 'admin', email: user.email || '', createdAt: new Date().toISOString() }, { merge: true });
+        allowed = true;
+      } catch (writeErr) {
+        console.warn('Could not create admins doc (rules?):', writeErr.message);
+        allowed = !STRICT_ADMIN;
+      }
+    }
+  } catch (readErr) {
+    console.warn('Could not read admins doc (rules?):', readErr.message);
+    allowed = !STRICT_ADMIN;
+  }
+  if (!allowed) { await fbAuth.signOut(); window.location.replace('../index.html'); return; }
+  window._adminUser = { uid: user.uid, email: user.email };
+  document.documentElement.style.visibility = 'visible';
+  try {
+    var _mk = document.createElement('div');
+    _mk.textContent = 'DASH BUILD v3';
+    _mk.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:99998;background:#064e3b;color:#3fb950;font:700 10px system-ui;padding:3px 8px;border-radius:10px;opacity:.8;';
+    document.body.appendChild(_mk);
+  } catch (e) {}
+});
 
 function setData(key, val) {
   localStorage.setItem(key, JSON.stringify(val));
@@ -159,6 +236,22 @@ async function loadFromFirebase() {
 
         deptsFromDB[d.id] = cfg;
       });
+
+      // FIX: Race condition — addDepartment() fires an async Firestore .set() but does NOT
+      // await it. loadFromFirebase() can run a GET before that write lands, so the new dept
+      // never appears in deptSnap. deptsFromDB is then written back to localStorage, silently
+      // wiping any dept that exists locally but hasn't been confirmed by Firestore yet.
+      // Solution: merge any local-only custom departments back in so they survive the overwrite.
+      Object.entries(localDepts).forEach(([code, cfg]) => {
+        if (!deptsFromDB[code] && cfg.isCustom) {
+          deptsFromDB[code] = cfg;
+          // Re-attempt the Firestore write in case it was lost in the race
+          db.collection('departments').doc(code).set({ code, ...cfg })
+            .then(() => console.log('✅ Re-synced pending local dept to Firestore:', code))
+            .catch(e => console.warn('❌ Failed to re-sync pending dept:', code, e));
+        }
+      });
+
       localStorage.setItem('departments', JSON.stringify(deptsFromDB));
     } else {
       // First ever load — seed Firestore from defaults via getDepartments()
@@ -289,40 +382,7 @@ window.addEventListener('load', () => {
           <span>Departments</span>
           <svg id="deptNavChevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="transition:transform 0.2s;margin-right:4px;"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
-        <div id="deptNavList">
-          <div class="nav-item dept-nav-item" onclick="showDeptPage('COED')" id="dept-COED">
-            <img src="../icons/coed.png" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
-            <span>COED</span><span class="dept-tag">Education</span>
-          </div>
-          <div class="nav-item dept-nav-item" onclick="showDeptPage('CCJS')" id="dept-CCJS">
-            <img src="../icons/ccjs.png" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
-            <span>CCJS</span><span class="dept-tag">Criminology</span>
-          </div>
-          <div class="nav-item dept-nav-item" onclick="showDeptPage('CCIS')" id="dept-CCIS">
-            <img src="../icons/ccis.png" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
-            <span>CCIS</span><span class="dept-tag">Computing</span>
-          </div>
-          <div class="nav-item dept-nav-item" onclick="showDeptPage('CON')" id="dept-CON">
-            <img src="../icons/nursing.jpg" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
-            <span>CON</span><span class="dept-tag">Nursing</span>
-          </div>
-          <div class="nav-item dept-nav-item" onclick="showDeptPage('CEA')" id="dept-CEA">
-            <img src="../icons/cea.png" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
-            <span>CEA</span><span class="dept-tag">Engineering</span>
-          </div>
-          <div class="nav-item dept-nav-item" onclick="showDeptPage('COM')" id="dept-COM">
-            <img src="../icons/com.png" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
-            <span>COM</span><span class="dept-tag">Management</span>
-          </div>
-          <div class="nav-item dept-nav-item" onclick="showDeptPage('CAT')" id="dept-CAT">
-            <img src="../icons/cat.jpg" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
-            <span>CAT</span><span class="dept-tag">Agriculture & Tech</span>
-          </div>
-          <div class="nav-item dept-nav-item" onclick="showDeptPage('GS')" id="dept-GS">
-            <img src="../icons/GS.jpg" width="20" height="20" style="object-fit:cover;border-radius:4px;flex-shrink:0;">
-            <span>GS</span><span class="dept-tag">Graduate School</span>
-          </div>
-        </div>
+        <div id="deptNavList"></div>
       </div>
     </nav>
 
@@ -633,13 +693,16 @@ window.addEventListener('load', () => {
       <div class="dept-grid">
         <div class="dept-table-section">
           <div class="dept-table-header">
-            <h4>👨‍🏫 Faculty</h4>
-            <span class="count-badge" id="deptTeacherCount">0</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <h4>👨‍🏫 Faculty</h4>
+              <span class="count-badge" id="deptTeacherCount">0</span>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="showDeptFullList(window.currentDept, 'teachers')" title="Open the full faculty list">View all</button>
           </div>
           <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>ID</th><th>Name</th><th>Status</th><th>Avg Score</th><th>Actions</th></tr>
+                <tr><th>ID</th><th>Name</th><th>Status</th><th>Avg Score</th></tr>
               </thead>
               <tbody id="deptTeachersTbody"></tbody>
             </table>
@@ -647,13 +710,16 @@ window.addEventListener('load', () => {
         </div>
         <div class="dept-table-section">
           <div class="dept-table-header">
-            <h4>📚 Subjects</h4>
-            <span class="count-badge" id="deptSubjectCount">0</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <h4>📚 Subjects</h4>
+              <span class="count-badge" id="deptSubjectCount">0</span>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="showDeptFullList(window.currentDept, 'subjects')" title="Open the full subjects list">View all</button>
           </div>
           <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>Code</th><th>Name</th><th>Teacher</th><th>Enrolled</th><th>Actions</th></tr>
+                <tr><th>Code</th><th>Name</th><th>Teacher</th><th>Enrolled</th></tr>
               </thead>
               <tbody id="deptSubjectsTbody"></tbody>
             </table>
@@ -676,7 +742,7 @@ window.addEventListener('load', () => {
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>ID</th><th>Name</th><th>Role</th><th>Status</th><th>SEF Conducted</th><th>Actions</th></tr>
+                  <tr><th>ID</th><th>Name</th><th>Role</th><th>Status</th><th>SEF Conducted</th></tr>
                 </thead>
                 <tbody id="deptSupervisorsTbody"></tbody>
               </table>

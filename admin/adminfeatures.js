@@ -92,35 +92,53 @@ window.filterDeptEnrolledStudents = function(query) {
     }).join('');
 };
 
-// Patch renderDeptPage to inject the clickable enrolled stat
-(function patchDeptEnrolledIcon() {
+// Patch renderDeptPage to make ALL FOUR dept stat cards clickable:
+//   0 Teachers -> scroll to the Faculty table   1 Subjects -> scroll to the Subjects table
+//   2 Enrolled -> enrolled-students modal        3 Evaluations -> Reports & Analytics
+(function patchDeptStatCards() {
     const origRenderDeptPage = window.renderDeptPage;
     if (!origRenderDeptPage) {
-        // Will patch after DOM ready
-        document.addEventListener('DOMContentLoaded', patchDeptEnrolledIcon);
+        document.addEventListener('DOMContentLoaded', patchDeptStatCards);
         return;
     }
     window.renderDeptPage = function(deptCode) {
         origRenderDeptPage(deptCode);
-        // Patch the enrolled stat to be clickable
         const statsRow = document.getElementById('deptStatsRow');
-        if (statsRow) {
-            const enrolledDiv = statsRow.children[2]; // 3rd stat (0=teachers,1=subjects,2=enrolled,3=evals)
-            if (enrolledDiv) {
-                enrolledDiv.style.cursor = 'pointer';
-                enrolledDiv.title = 'Click to view enrolled students';
-                enrolledDiv.onclick = () => showDeptEnrolledStudents(deptCode);
-                // Add hover effect
-                enrolledDiv.style.transition = 'box-shadow 0.2s, transform 0.15s';
-                enrolledDiv.onmouseenter = () => { enrolledDiv.style.boxShadow = '0 4px 16px rgba(5,150,105,0.18)'; enrolledDiv.style.transform = 'translateY(-2px)'; };
-                enrolledDiv.onmouseleave = () => { enrolledDiv.style.boxShadow = ''; enrolledDiv.style.transform = ''; };
-                // Add a small arrow indicator
-                const label = enrolledDiv.querySelector('.dept-stat-label');
-                if (label && !label.innerHTML.includes('→')) {
-                    label.innerHTML += ' <span style="color:var(--primary);font-size:0.65rem;">→ View</span>';
-                }
-            }
-        }
+        if (!statsRow) return;
+
+        const wire = (idx, opts) => {
+            const card = statsRow.children[idx];
+            if (!card) return;
+            card.style.cursor = 'pointer';
+            card.title = opts.title;
+            card.style.transition = 'box-shadow 0.2s, transform 0.15s';
+            card.onmouseenter = () => { card.style.boxShadow = '0 4px 16px rgba(5,150,105,0.18)'; card.style.transform = 'translateY(-2px)'; };
+            card.onmouseleave = () => { card.style.boxShadow = ''; card.style.transform = ''; };
+            card.onclick = opts.onClick;
+        };
+
+        // Smooth-scroll to an on-page table and briefly highlight its card
+        const scrollToEl = (el) => {
+            if (!el) return;
+            const box = el.closest('.card') || el.closest('.dept-table-card') || el.parentElement || el;
+            box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            const prev = box.style.boxShadow;
+            box.style.transition = 'box-shadow 0.3s';
+            box.style.boxShadow = '0 0 0 3px rgba(5,150,105,0.45)';
+            setTimeout(() => { box.style.boxShadow = prev || ''; }, 1200);
+        };
+
+        wire(0, { title: "View all faculty in this department", arrow: 'View All',
+            onClick: () => showDeptFullList(deptCode, 'teachers') });
+
+        wire(1, { title: "View all subjects in this department", arrow: 'View All',
+            onClick: () => showDeptFullList(deptCode, 'subjects') });
+
+        wire(2, { title: 'View all enrolled students', arrow: 'View All',
+            onClick: () => showDeptFullList(deptCode, 'enrolled') });
+
+        wire(3, { title: 'View this department\'s evaluation feedback', arrow: 'View Feedback',
+            onClick: () => { if (typeof goToDeptFeedback === 'function') goToDeptFeedback(deptCode); } });
     };
 })();
 
@@ -406,6 +424,13 @@ const DM_COLORS = [
     { hex: '#14b8a6', label: 'Teal' },
     { hex: '#84cc16', label: 'Lime' },
     { hex: '#64748b', label: 'Slate' },
+    // Original colors of the 8 default departments
+    { hex: '#9ca3af', label: 'Steel (CCJS)' },
+    { hex: '#eab308', label: 'Gold (CCIS)' },
+    { hex: '#059669', label: 'Green (CON)' },
+    { hex: '#ea580c', label: 'Burnt Orange (CEA)' },
+    { hex: '#0ea5e9', label: 'Sky (COM)' },
+    { hex: '#be123c', label: 'Crimson (CAT)' },
 ];
 
 let _dmSelectedColor = DM_COLORS[0].hex;
@@ -430,18 +455,49 @@ window._dmPickColor = function(hex, el) {
     if (hiddenInput) hiddenInput.value = hex;
 };
 
+
+// Shrink an uploaded department image to a small thumbnail so the base64 stays
+// tiny — large images exceed Firestore's 1MB document limit, which made icon
+// changes save locally but silently fail to sync (and revert on reload).
+window._resizeDeptImage = function(file, cb) {
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+        const img = new Image();
+        img.onload = function() {
+            const MAX = 128;
+            let w = img.width, h = img.height;
+            if (w >= h) { if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; } }
+            else        { if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; } }
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                let out;
+                if (file.type === 'image/png') {
+                    out = canvas.toDataURL('image/png');
+                    if (out.length > 150000) out = canvas.toDataURL('image/jpeg', 0.85);
+                } else {
+                    out = canvas.toDataURL('image/jpeg', 0.85);
+                }
+                cb(out);
+            } catch (e) { cb(ev.target.result); }
+        };
+        img.onerror = function() { cb(ev.target.result); };
+        img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+};
+
 window.dmHandleImageUpload = function(e) {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-        const data = ev.target.result;
-        document.getElementById('dmIcon').value = data;
+    _resizeDeptImage(file, function(data) {
+        const iv = document.getElementById('dmIcon');
+        if (iv) iv.value = data;
         const prev = document.getElementById('dmIconPreview');
         if (prev) prev.innerHTML = `<img src="${data}" style="width:100%;height:100%;object-fit:cover;border-radius:7px;">`;
         document.querySelectorAll('#dmEmojiPicker .dm-emoji-btn').forEach(b => b.classList.remove('sel'));
-    };
-    reader.readAsDataURL(file);
+    });
 };
 
 window.setDeptManageLayout = function(layout) {
@@ -540,18 +596,18 @@ function _renderDeptGrid(grid, DEPT_CONFIG, deptStats) {
                     <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     Edit
                 </button>
-                ${!isDefault ? `<button class="dmc-action-btn dmc-del-btn" onclick="toggleDMDeleteConfirm('${code}')">
+                <button class="dmc-action-btn dmc-del-btn" onclick="toggleDMDeleteConfirm('${code}')">
                     <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
                     Delete
-                </button>` : ''}
+                </button>
             </div>
-            ${!isDefault ? `<div id="dmdelconfirm-${code}" class="dmc-del-confirm">
+            <div id="dmdelconfirm-${code}" class="dmc-del-confirm">
                 <p class="dmc-del-msg">Delete <strong>${escapeHtml(cfg.name)}</strong>?<br><span>This cannot be undone.</span></p>
                 <div class="dmc-del-actions">
                     <button class="dmc-del-cancel" onclick="toggleDMDeleteConfirm('${code}')">Cancel</button>
                     <button class="dmc-del-confirm-btn" onclick="executeDMDelete('${code}')">Yes, Delete</button>
                 </div>
-            </div>` : ''}
+            </div>
         </div>`;
     }).join('');
 }
@@ -585,22 +641,25 @@ function _renderDeptList(grid, DEPT_CONFIG, deptStats) {
                     <div class="dml-stat"><span class="dml-stat-val">${stats.subjects}</span><span class="dml-stat-label">Subjects</span></div>
                 </div>
                 <div class="dml-actions">
-                    <button class="btn btn-ghost btn-sm" onclick="showDeptPage('${code}')" title="View">
-                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <button class="dml-action-btn dml-view" onclick="showDeptPage('${code}')" title="View">
+                        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        View
                     </button>
-                    <button class="btn btn-ghost btn-sm" onclick="openEditDeptModal('${code}')" title="Edit" style="color:var(--primary);">
-                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    <button class="dml-action-btn dml-edit" onclick="openEditDeptModal('${code}')" title="Edit">
+                        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        Edit
                     </button>
-                    ${!isDefault ? `<button class="btn btn-ghost btn-sm" onclick="toggleDMDeleteConfirm('${code}')" title="Delete" style="color:#ef4444;">
-                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
-                    </button>` : ''}
+                    <button class="dml-action-btn dml-del" onclick="toggleDMDeleteConfirm('${code}')" title="Delete">
+                        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                        Delete
+                    </button>
                 </div>
             </div>
-            ${!isDefault ? `<div id="dmdelconfirm-${code}" style="display:none;padding:10px 16px;background:#fef2f2;border-top:1px solid #fecaca;border-radius:0 0 8px 8px;flex-direction:row;align-items:center;gap:10px;">
+            <div id="dmdelconfirm-${code}" style="display:none;padding:10px 16px;background:#fef2f2;border-top:1px solid #fecaca;border-radius:0 0 8px 8px;flex-direction:row;align-items:center;gap:10px;">
                 <span style="font-size:0.8rem;color:#b91c1c;flex:1;">Delete <strong>${escapeHtml(cfg.name)}</strong>? This cannot be undone.</span>
                 <button onclick="toggleDMDeleteConfirm('${code}')" style="padding:4px 12px;border-radius:5px;border:1px solid #fca5a5;background:transparent;color:#b91c1c;cursor:pointer;font-size:0.78rem;">Cancel</button>
                 <button onclick="executeDMDelete('${code}')" style="padding:4px 12px;border-radius:5px;border:none;background:#ef4444;color:#fff;cursor:pointer;font-size:0.78rem;font-weight:600;">Delete</button>
-            </div>` : ''}
+            </div>
         </div>`;
     }).join('');
 }
@@ -764,15 +823,13 @@ window.edmClearImage = function() {
 window.edmHandleImage = function(e) {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-        const data = ev.target.result;
-        document.getElementById('edm_icon').value = data;
+    _resizeDeptImage(file, function(data) {
+        const iv = document.getElementById('edm_icon');
+        if (iv) iv.value = data;
         const prev = document.getElementById('edm_iconPreview');
         if (prev) prev.innerHTML = `<img src="${data}" style="width:100%;height:100%;object-fit:cover;border-radius:9px;">`;
         document.querySelectorAll('.edm-emoji-btn').forEach(b => b.classList.remove('sel'));
-    };
-    reader.readAsDataURL(file);
+    });
 };
 
 window.saveEditDept = function() {
@@ -808,7 +865,15 @@ window.saveEditDept = function() {
         name, short, desc, icon, color,
         isCustom: cfg.isCustom ? true : false
     };
-    setData('departments', allDepts);
+    try {
+        setData('departments', allDepts);
+    } catch (e) {
+        if (e && (e.name === 'QuotaExceededError' || e.code === 22)) {
+            showToast('Image is too large to store. Try a smaller image.', 'error');
+            return;
+        }
+        throw e;
+    }
 
     refreshDeptConfig();
     addAudit('Edit Department', `${originalCode}: ${changes.length ? changes.join('; ') : 'no changes'}`);
@@ -827,13 +892,19 @@ window.saveEditDept = function() {
 // FEATURE 4: FEEDBACK PAGE (student comments to instructors)
 // ============================================================
 
-window.showFeedbackPage = function() {
+window.showFeedbackPage = function(deptFilter) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     const pageEl = document.getElementById('page-feedback');
     if (pageEl) pageEl.classList.add('active');
     const navEl = document.getElementById('nav-feedback');
     if (navEl) navEl.classList.add('active');
+    // Reset to the requested department (or All if none) so a stale filter
+    // from a previous visit never sticks around.
+    _feedbackDeptFilter = deptFilter || '';
+    _feedbackSearchQuery = '';
+    const searchInput = document.querySelector('#page-feedback input[type="text"]');
+    if (searchInput) searchInput.value = '';
     renderFeedbackPage();
     closeSidebar();
 };
@@ -842,7 +913,9 @@ let _feedbackDeptFilter = '';
 let _feedbackSearchQuery = '';
 
 window.renderFeedbackPage = function() {
-    const allEvals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor' && e.comment && e.comment.trim());
+    // Include every student evaluation — even ones with no written comment —
+    // so faculty who were rated still show up.
+    const allEvals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor');
     const allTeachers = getData('teachers', []);
     const allStudents = getData('students', []);
     const allSubjects = getData('subjects', []);
@@ -875,7 +948,9 @@ window.renderFeedbackPage = function() {
 };
 
 window._renderFeedbackList = function() {
-    const allEvals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor' && e.comment && e.comment.trim());
+    // Include every student evaluation — even ones with no written comment —
+    // so a faculty member who was rated still appears here.
+    const allEvals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor');
     const allTeachers = getData('teachers', []);
     const allStudents = getData('students', []);
     const allSubjects = getData('subjects', []);
@@ -890,12 +965,12 @@ window._renderFeedbackList = function() {
         const student = allStudents.find(s => s.id === ev.studentId);
         const dept = sub ? sub.dept : '';
 
-        const matchDept = !_feedbackDeptFilter || dept === _feedbackDeptFilter;
+        const matchDept = !_feedbackDeptFilter || (dept || '').toUpperCase() === _feedbackDeptFilter.toUpperCase();
         const matchSearch = !q ||
             (teacher && teacher.name.toLowerCase().includes(q)) ||
             (student && (student.name.toLowerCase().includes(q) || student.sid.toLowerCase().includes(q))) ||
             (sub && (sub.name.toLowerCase().includes(q) || sub.code.toLowerCase().includes(q))) ||
-            ev.comment.toLowerCase().includes(q);
+            (ev.comment || '').toLowerCase().includes(q);
 
         return matchDept && matchSearch;
     });
@@ -906,15 +981,16 @@ window._renderFeedbackList = function() {
     // Stats
     const statsEl = document.getElementById('feedbackStats');
     if (statsEl) {
+        const withComments = filtered.filter(ev => ev.comment && ev.comment.trim()).length;
         statsEl.innerHTML = `
-            <div class="feedback-stat-chip"><strong>${filtered.length}</strong> comment${filtered.length !== 1 ? 's' : ''} found</div>
+            <div class="feedback-stat-chip"><strong>${filtered.length}</strong> evaluation${filtered.length !== 1 ? 's' : ''} · ${withComments} with comment${withComments !== 1 ? 's' : ''}</div>
         `;
     }
 
     if (!filtered.length) {
         container.innerHTML = `<div class="empty-state" style="padding:48px;text-align:center;">
             <svg width="40" height="40" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24" style="margin:0 auto 12px;display:block;opacity:0.4;"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-            <p style="color:var(--muted);font-size:0.85rem;">No feedback comments found${_feedbackDeptFilter ? ' for this department' : ''}.</p>
+            <p style="color:var(--muted);font-size:0.85rem;">No evaluations found${_feedbackDeptFilter ? ' for this department' : ''}.</p>
         </div>`;
         return;
     }
@@ -943,6 +1019,62 @@ window._renderFeedbackList = function() {
         const deptLabel = cfg ? cfg.short : group.dept;
         const colorClass = cfg ? cfg.colorClass : 'dept-custom';
 
+        // A teacher can handle several subjects — separate the evaluations by subject.
+        const bySubject = {};
+        group.comments.forEach(({ ev, sub }) => {
+            const subKey = sub ? sub.id : 'unknown';
+            if (!bySubject[subKey]) bySubject[subKey] = { sub, items: [] };
+            bySubject[subKey].items.push({ ev, sub });
+        });
+
+        const subjectSections = Object.entries(bySubject).map(([subKey, sg]) => {
+            const sub = sg.sub;
+            const subLabel = sub ? `${escapeHtml(sub.code)} — ${escapeHtml(sub.name)}` : 'Unknown Subject';
+            const scored = sg.items.filter(({ ev }) => typeof ev.totalScore === 'number');
+            const subAvg = scored.length
+                ? (scored.reduce((a, { ev }) => a + ev.totalScore, 0) / scored.length).toFixed(2)
+                : null;
+
+            const itemsHtml = sg.items.map(({ ev, sub }, idx) => {
+                const student = allStudents.find(s => s.id === ev.studentId);
+                const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+                const ratingId = `fbrate-${tid}-${subKey}-${ev.id || idx}`;
+                const scoreVal = (typeof ev.totalScore === 'number') ? ev.totalScore.toFixed(2) : null;
+                const breakdownHtml = _buildFeedbackRatingBreakdown(ev);
+                return `<div class="feedback-comment-item">
+                    <div class="feedback-comment-meta">
+                        ${ts ? `<span class="feedback-timestamp">${ts}</span>` : ''}
+                    </div>
+                    ${ev.comment && ev.comment.trim()
+                        ? `<div class="feedback-comment-text">"${escapeHtml(ev.comment)}"</div>`
+                        : `<div class="feedback-comment-text feedback-no-comment">No written comment — rating only</div>`}
+                    <div class="feedback-comment-from">
+                        — ${student ? escapeHtml(student.name) : 'Anonymous Student'}
+                        ${student ? `<span style="color:var(--muted);font-size:0.7rem;margin-left:4px;">(${student.sid})</span>` : ''}
+                    </div>
+                    ${scoreVal !== null ? `
+                    <div class="feedback-rating-row">
+                        <button class="feedback-view-rating-btn" id="${ratingId}-btn" onclick="toggleFeedbackRating('${ratingId}', this)">View Rating</button>
+                    </div>
+                    <div class="feedback-rating-panel" id="${ratingId}" style="display:none;">
+                        ${breakdownHtml}
+                        <div class="feedback-rating-total">Overall Rating: <strong>${scoreVal}%</strong></div>
+                    </div>` : ''}
+                </div>`;
+            }).join('');
+
+            return `
+            <div class="feedback-subject-group">
+                <div class="feedback-subject-header">
+                    <span class="feedback-subject-badge">${subLabel}</span>
+                    <span class="feedback-subject-stats">
+                        ${sg.items.length} evaluation${sg.items.length !== 1 ? 's' : ''}${subAvg !== null ? ` · avg ${subAvg}%` : ''}
+                    </span>
+                </div>
+                <div class="feedback-comments-list">${itemsHtml}</div>
+            </div>`;
+        }).join('');
+
         return `
         <div class="feedback-teacher-card">
             <div class="feedback-teacher-header">
@@ -953,29 +1085,344 @@ window._renderFeedbackList = function() {
                     <div class="feedback-teacher-name">${teacher ? escapeHtml(teacher.name) : 'Unknown Teacher'}</div>
                     <div class="feedback-teacher-meta">
                         <span class="dept-tag-inline">${escapeHtml(deptLabel)}</span>
-                        <span style="color:var(--muted);font-size:0.72rem;margin-left:6px;">${group.comments.length} comment${group.comments.length !== 1 ? 's' : ''}</span>
+                        <span style="color:var(--muted);font-size:0.72rem;margin-left:6px;">${Object.keys(bySubject).length} subject${Object.keys(bySubject).length !== 1 ? 's' : ''} · ${group.comments.length} evaluation${group.comments.length !== 1 ? 's' : ''}</span>
                     </div>
                 </div>
+                <button class="feedback-print-btn" onclick="printTeacherFeedback('${tid}')" title="Print all ratings for this faculty">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                    Print All Ratings
+                </button>
             </div>
-            <div class="feedback-comments-list">
-                ${group.comments.map(({ ev, sub }) => {
-                    const student = allStudents.find(s => s.id === ev.studentId);
-                    const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
-                    return `<div class="feedback-comment-item">
-                        <div class="feedback-comment-meta">
-                            <span class="feedback-subject-badge">${sub ? escapeHtml(sub.code) : 'N/A'} — ${sub ? escapeHtml(sub.name) : 'Unknown Subject'}</span>
-                            ${ts ? `<span class="feedback-timestamp">${ts}</span>` : ''}
-                        </div>
-                        <div class="feedback-comment-text">"${escapeHtml(ev.comment)}"</div>
-                        <div class="feedback-comment-from">
-                            — ${student ? escapeHtml(student.name) : 'Anonymous Student'}
-                            ${student ? `<span style="color:var(--muted);font-size:0.7rem;margin-left:4px;">(${student.sid})</span>` : ''}
-                        </div>
-                    </div>`;
-                }).join('')}
-            </div>
+            ${subjectSections}
         </div>`;
     }).join('');
+};
+
+// Collect a faculty member's student evaluations (helper shared by the
+// chooser and the printer).
+function _teacherStudentEvals(teacherId) {
+    const allSubjects = getData('subjects', []);
+    return getData('evaluations', []).filter(e =>
+        e.evaluatorType !== 'supervisor' &&
+        ((allSubjects.find(s => s.id === e.subjectId) || {}).teacherId === teacherId || e.teacherId === teacherId)
+    );
+}
+
+// Entry point from the "Print All Ratings" button. If more than one student
+// has evaluated this faculty, first let the admin choose whether to print
+// everyone or just one specific student; otherwise print straight away.
+window.printTeacherFeedback = function(teacherId) {
+    const evals = _teacherStudentEvals(teacherId);
+    if (!evals.length) {
+        showToast('No ratings to print for this faculty yet.', 'warning');
+        return;
+    }
+
+    const allStudents = getData('students', []);
+    const studentIds = [...new Set(evals.map(e => e.studentId))];
+
+    // Only one student → nothing to choose, print directly.
+    if (studentIds.length <= 1) {
+        _doPrintTeacherFeedback(teacherId, 'all');
+        return;
+    }
+
+    const teacher = getData('teachers', []).find(t => t.id === teacherId);
+    const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s));
+
+    const options = studentIds.map(sid => {
+        const st = allStudents.find(s => s.id === sid);
+        const label = st ? `${esc(st.name)} (${esc(st.sid)})` : 'Anonymous Student';
+        const count = evals.filter(e => e.studentId === sid).length;
+        return `<option value="${sid}">${label} — ${count} evaluation${count !== 1 ? 's' : ''}</option>`;
+    }).join('');
+
+    // Lightweight self-contained chooser overlay (no dependency on the app's modal system).
+    const overlay = document.createElement('div');
+    overlay.className = 'fb-print-overlay';
+    overlay.innerHTML = `
+        <div class="fb-print-dialog">
+            <h3>Print Ratings — ${esc(teacher ? teacher.name : 'Faculty')}</h3>
+            <p>Choose what to print:</p>
+            <select id="fbPrintScope" class="fb-print-select">
+                <option value="all">All students (${evals.length} evaluations)</option>
+                ${options}
+            </select>
+            <div class="fb-print-actions">
+                <button class="fb-print-cancel">Cancel</button>
+                <button class="fb-print-go">Print</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    overlay.querySelector('.fb-print-cancel').onclick = close;
+    overlay.querySelector('.fb-print-go').onclick = () => {
+        const scope = overlay.querySelector('#fbPrintScope').value;
+        close();
+        _doPrintTeacherFeedback(teacherId, scope);
+    };
+};
+
+// Builds and opens the printable report. studentId === 'all' prints every
+// evaluation; otherwise only that student's evaluations of this faculty.
+window._doPrintTeacherFeedback = function(teacherId, studentId) {
+    const teacher = getData('teachers', []).find(t => t.id === teacherId);
+    const allSubjects = getData('subjects', []);
+    const allStudents = getData('students', []);
+    let evals = _teacherStudentEvals(teacherId);
+    if (studentId && studentId !== 'all') {
+        evals = evals.filter(e => e.studentId === studentId);
+    }
+
+    if (!evals.length) {
+        showToast('No ratings to print for this selection.', 'warning');
+        return;
+    }
+
+    const chosenStudent = (studentId && studentId !== 'all')
+        ? allStudents.find(s => s.id === studentId) : null;
+
+    const cfg = (typeof getDepartments === 'function' ? getDepartments() : {})[teacher ? teacher.dept : ''] || {};
+    const deptName = cfg.name || (teacher ? teacher.dept : '') || 'N/A';
+    const now = new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    // Overall average SET across this faculty's evaluations
+    const scored = evals.filter(e => typeof e.totalScore === 'number');
+    const avgSET = scored.length ? (scored.reduce((a, b) => a + b.totalScore, 0) / scored.length).toFixed(2) : '—';
+
+    const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s));
+
+    // Group the printout by subject (a faculty can handle several subjects).
+    const bySubjectPrint = {};
+    evals.forEach(ev => {
+        const sub = allSubjects.find(s => s.id === ev.subjectId);
+        const k = sub ? sub.id : 'unknown';
+        if (!bySubjectPrint[k]) bySubjectPrint[k] = { sub, items: [] };
+        bySubjectPrint[k].items.push(ev);
+    });
+
+    const oneEvalBlock = (ev, i) => {
+        const sub = allSubjects.find(s => s.id === ev.subjectId);
+        const student = allStudents.find(s => s.id === ev.studentId);
+        const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+        const rows = _extractRatingRows(ev);
+        const scoreVal = (typeof ev.totalScore === 'number') ? ev.totalScore.toFixed(2) + '%' : '—';
+        const commentHtml = (ev.comment && ev.comment.trim())
+            ? '"' + esc(ev.comment) + '"'
+            : '<em style="color:#777;">No written comment — rating only</em>';
+        const questionRows = rows.length
+            ? rows.map(r => `<tr><td>${esc(String(r.label))}</td><td style="text-align:center;font-weight:600;">${esc(String(r.score))}</td></tr>`).join('')
+            : `<tr><td colspan="2" style="color:#777;font-style:italic;">Per-question breakdown wasn't recorded — overall rating only.</td></tr>`;
+        return `
+        <div class="ev-block">
+            <div class="ev-head">
+                <span class="ev-num">#${i + 1}</span>
+                <span class="ev-subj">${student ? esc(student.name) + ' (' + esc(student.sid) + ')' : 'Anonymous Student'}</span>
+                <span class="ev-date">${ts}</span>
+            </div>
+            <table class="q-table">
+                <thead><tr><th>Question / Criterion</th><th style="width:90px;text-align:center;">Score</th></tr></thead>
+                <tbody>${questionRows}</tbody>
+                <tfoot><tr><td style="text-align:right;font-weight:700;">Overall Rating</td><td style="text-align:center;font-weight:700;">${scoreVal}</td></tr></tfoot>
+            </table>
+            <div class="ev-comment"><strong>Comment:</strong> ${commentHtml}</div>
+        </div>`;
+    };
+
+    const evalBlocks = Object.values(bySubjectPrint).map(sg => {
+        const sub = sg.sub;
+        const subLabel = sub ? esc(sub.code) + ' — ' + esc(sub.name) : 'Unknown Subject';
+        const scoredS = sg.items.filter(e => typeof e.totalScore === 'number');
+        const subAvg = scoredS.length ? (scoredS.reduce((a, b) => a + b.totalScore, 0) / scoredS.length).toFixed(2) + '%' : '—';
+        const blocks = sg.items.map((ev, i) => oneEvalBlock(ev, i)).join('');
+        return `
+        <div class="subj-section">
+            <div class="subj-head">
+                <span class="subj-name">${subLabel}</span>
+                <span class="subj-meta">${sg.items.length} evaluation${sg.items.length !== 1 ? 's' : ''} · avg ${subAvg}</span>
+            </div>
+            ${blocks}
+        </div>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ratings — ${esc(teacher ? teacher.name : 'Faculty')}</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; margin: 32px; font-size: 12px; }
+        h1 { font-size: 18px; margin: 0 0 4px; }
+        .sub { color: #555; font-size: 12px; margin: 0 0 16px; }
+        .info { border: 1px solid #ccc; border-radius: 6px; padding: 12px 14px; margin-bottom: 14px; background: #f8f9fa; }
+        .info div { margin: 2px 0; }
+        .info strong { display: inline-block; min-width: 150px; }
+        .summary { display: flex; gap: 24px; margin: 10px 0 20px; }
+        .summary .box { border: 1px solid #ccc; border-radius: 6px; padding: 10px 16px; text-align: center; }
+        .summary .box .n { font-size: 22px; font-weight: 800; }
+        .summary .box .l { font-size: 10px; color: #555; text-transform: uppercase; }
+        .ev-block { border: 1px solid #ddd; border-radius: 6px; padding: 12px; margin-bottom: 14px; page-break-inside: avoid; }
+        .subj-section { margin-bottom: 18px; }
+        .subj-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; background: #eef2f5; border-left: 4px solid #059669; padding: 8px 12px; margin-bottom: 10px; border-radius: 4px; }
+        .subj-name { font-weight: 800; font-size: 13px; }
+        .subj-meta { font-size: 11px; color: #555; }
+        .ev-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; border-bottom: 1px solid #eee; padding-bottom: 6px; }
+        .ev-num { font-weight: 800; color: #059669; }
+        .ev-subj { font-weight: 700; flex: 1; }
+        .ev-date { color: #777; font-size: 11px; }
+        .q-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+        .q-table th, .q-table td { border: 1px solid #ddd; padding: 5px 8px; font-size: 11px; text-align: left; }
+        .q-table thead th { background: #eef2f5; }
+        .q-table tfoot td { background: #f8f9fa; }
+        .ev-comment { font-size: 11px; margin: 6px 0 2px; font-style: italic; }
+        .ev-from { font-size: 11px; color: #555; text-align: right; }
+        @media print { body { margin: 12px; } .noprint { display: none; } }
+        .noprint { text-align: center; margin-bottom: 16px; }
+        .noprint button { padding: 8px 20px; font-size: 13px; border: none; border-radius: 6px; background: #059669; color: #fff; cursor: pointer; }
+    </style></head><body>
+        <div class="noprint"><button onclick="window.print()">🖨️ Print</button></div>
+        <h1>Faculty Evaluation Ratings</h1>
+        <p class="sub">Student Evaluation of Teachers (SET) — generated ${now}</p>
+        <div class="info">
+            <div><strong>Faculty Name:</strong> ${esc(teacher ? teacher.name : 'Unknown')}</div>
+            <div><strong>Faculty ID:</strong> ${esc(teacher ? teacher.tid : '—')}</div>
+            <div><strong>Department / College:</strong> ${esc(deptName)}</div>
+            <div><strong>Faculty Type:</strong> ${esc(teacher ? (teacher.facultyType || 'regular') : '—')}</div>
+            <div><strong>Scope:</strong> ${chosenStudent ? 'Single student — ' + esc(chosenStudent.name) + ' (' + esc(chosenStudent.sid) + ')' : 'All students'}</div>
+        </div>
+        <div class="summary">
+            <div class="box"><div class="n">${evals.length}</div><div class="l">Evaluations</div></div>
+            <div class="box"><div class="n">${avgSET}${avgSET !== '—' ? '%' : ''}</div><div class="l">Average SET</div></div>
+        </div>
+        ${evalBlocks}
+    </body></html>`;
+
+    const w = window.open('', '_blank');
+    if (!w) { showToast('Please allow pop-ups to print.', 'warning'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch (e) {} }, 350);
+
+    if (typeof addAudit === 'function') addAudit('Print Ratings', `Printed ${chosenStudent ? 'ratings by ' + chosenStudent.name : 'all ratings'} for ${teacher ? teacher.name : teacherId}`);
+};
+
+// The 15 CMO SET questions students actually answer (mirrors QUESTIONS in
+// the student app user.js). Student evaluations store ratings keyed by q1..q15,
+// so this is what makes the feedback breakdown and printouts show real questions.
+window.SET_QUESTIONS = [
+    { id: 'q1',  sec: 'A', text: 'Comes to class on time.' },
+    { id: 'q2',  sec: 'A', text: 'Explains learning outcomes and the grading system at the start of the course.' },
+    { id: 'q3',  sec: 'A', text: 'Maximizes the allocated time/learning hours effectively.' },
+    { id: 'q4',  sec: 'A', text: 'Facilitates students to think critically and creatively.' },
+    { id: 'q5',  sec: 'A', text: 'Guides students to learn independently and make informed decisions.' },
+    { id: 'q6',  sec: 'A', text: 'Communicates constructive feedback to promote student growth.' },
+    { id: 'q7',  sec: 'B', text: 'Demonstrates extensive and up-to-date knowledge of the subject.' },
+    { id: 'q8',  sec: 'B', text: 'Simplifies complex ideas and concepts for ease of understanding.' },
+    { id: 'q9',  sec: 'B', text: 'Relates subject matter to contemporary issues and real-world scenarios.' },
+    { id: 'q10', sec: 'B', text: 'Promotes active learning through the use of ICT tools and digital platforms.' },
+    { id: 'q11', sec: 'B', text: 'Uses assessments that are aligned with stated learning outcomes.' },
+    { id: 'q12', sec: 'C', text: 'Recognizes, respects, and values diversity among students.' },
+    { id: 'q13', sec: 'C', text: 'Makes themselves available and assists students during consultation hours.' },
+    { id: 'q14', sec: 'C', text: 'Provides immediate and timely feedback on student outputs.' },
+    { id: 'q15', sec: 'C', text: 'Provides transparent and fair criteria in rating student performance.' }
+];
+
+// Best-effort label lookup for a rating item id. Student SET evaluations
+// store q1..q15 — resolve those to the full CMO question text. Falls back to
+// category labels (CATEGORIES / SUPERVISOR_CATEGORIES) and then a readable
+// version of the raw key so nothing is ever hidden.
+function _feedbackQuestionLabel(itemId) {
+    const q = (window.SET_QUESTIONS || []).find(x => x.id === itemId);
+    if (q) return q.text;
+    const known = (typeof CATEGORIES !== 'undefined' ? CATEGORIES : [])
+        .concat(typeof SUPERVISOR_CATEGORIES !== 'undefined' ? SUPERVISOR_CATEGORIES : []);
+    const match = known.find(c => c.id === itemId || c.label === itemId);
+    if (match) return match.label;
+    return String(itemId).replace(/^sef/i, 'Item ').replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Normalize whatever per-question data a student evaluation carries into a
+// flat list of { label, score } rows. The student-facing app isn't part of
+// these admin files, so the scores could live under any of several keys and
+// in either object or array form — we probe them all rather than assume one.
+function _extractRatingRows(ev) {
+    if (!ev || typeof ev !== 'object') return [];
+    const candidateKeys = ['ratings', 'scores', 'answers', 'responses',
+        'categoryScores', 'criteria', 'categories', 'items', 'questions', 'perQuestion'];
+
+    let data = null;
+    for (const k of candidateKeys) {
+        const v = ev[k];
+        if (v && typeof v === 'object' && Object.keys(v).length) { data = v; break; }
+    }
+    if (!data) return [];
+
+    const rows = [];
+    if (Array.isArray(data)) {
+        data.forEach((item, i) => {
+            if (item && typeof item === 'object') {
+                const label = item.label || item.question || item.name || item.category || item.id || `Item ${i + 1}`;
+                const score = (item.score != null ? item.score
+                    : item.value != null ? item.value
+                    : item.rating != null ? item.rating
+                    : item.points != null ? item.points : '—');
+                rows.push({ label: _feedbackQuestionLabel(label), score });
+            } else {
+                rows.push({ label: `Item ${i + 1}`, score: item });
+            }
+        });
+    } else {
+        // Order by the SET question sequence (q1..q15) when keys are q-ids,
+        // otherwise keep natural insertion order.
+        const order = (window.SET_QUESTIONS || []).map(q => q.id);
+        const entries = Object.entries(data).sort((a, b) => {
+            const ia = order.indexOf(a[0]);
+            const ib = order.indexOf(b[0]);
+            if (ia === -1 && ib === -1) return 0;
+            if (ia === -1) return 1;
+            if (ib === -1) return -1;
+            return ia - ib;
+        });
+        entries.forEach(([key, val]) => {
+            const score = (val != null && typeof val === 'object')
+                ? (val.score != null ? val.score : val.value != null ? val.value : val.rating != null ? val.rating : '—')
+                : val;
+            rows.push({ label: _feedbackQuestionLabel(key), score });
+        });
+    }
+    return rows;
+}
+
+// Renders the per-question score points for one evaluation, hidden behind
+// the "View Rating" toggle so only the comment shows by default.
+function _buildFeedbackRatingBreakdown(ev) {
+    const rows = _extractRatingRows(ev);
+    if (!rows.length) {
+        return `<p style="font-size:0.72rem;color:var(--muted);margin:0 0 8px;">Per-question breakdown wasn't recorded for this evaluation — only the overall rating is available.</p>`;
+    }
+    return `<div class="feedback-rating-items">
+        ${rows.map(r => `
+            <div class="feedback-rating-item">
+                <span class="feedback-rating-item-label">${escapeHtml(String(r.label))}</span>
+                <span class="feedback-rating-item-score">${escapeHtml(String(r.score))} pts</span>
+            </div>`).join('')}
+    </div>`;
+}
+
+// Jump from a department page straight into the Feedback page,
+// pre-filtered to whichever department was being viewed.
+window.goToDeptFeedback = function(deptCode) {
+    showFeedbackPage(deptCode || '');
+};
+
+// Reveal/hide a single evaluation's rating breakdown. Ratings stay hidden
+// by default — only the comment shows normally, as required.
+window.toggleFeedbackRating = function(ratingId, btnEl) {
+    const el = document.getElementById(ratingId);
+    if (!el) return;
+    const showing = el.style.display !== 'none';
+    el.style.display = showing ? 'none' : 'block';
+    if (btnEl) btnEl.textContent = showing ? 'View Rating' : 'Hide Rating';
 };
 
 window.filterFeedback = function(dept, search) {
@@ -1081,4 +1528,149 @@ window.filterSupervisorsByDept = function(deptCode) {
     });
     const search = document.getElementById('supervisorSearchInput')?.value || '';
     renderSupervisorTable(search);
+};
+
+// ============================================================
+// DEPARTMENT "VIEW ALL" PAGE  (Teachers / Subjects / Enrolled)
+// Styled exactly like the Reports & Analytics "View Full List":
+// an in-app page (sidebar stays) using .page-header / .card /
+// .data-table, with a Back button and Export CSV.
+// ============================================================
+window.showDeptFullList = function(deptCode, type) {
+  const esc = (typeof escapeHtml === 'function') ? escapeHtml : (x => String(x == null ? '' : x));
+  const DEPT = (typeof getDepartments === 'function') ? getDepartments() : {};
+  const cfg = DEPT[deptCode] || { name: deptCode, short: deptCode };
+
+  const allStudents = getData('students', []).filter(s => !s.deleted);
+  const allTeachers = getData('teachers', []).filter(t => !t.deleted);
+  const allSubjects = getData('subjects', []).filter(s => s.dept === deptCode);
+  const allEvals    = getData('evaluations', []);
+
+  const mono   = v => '<span style="font-family:\'JetBrains Mono\',monospace;font-size:0.8rem;">' + esc(v) + '</span>';
+  const strong = v => '<strong>' + esc(v) + '</strong>';
+  const pill   = (txt, color) => '<span class="badge" style="background:' + color + '22;color:' + color + ';font-size:0.68rem;">' + esc(txt) + '</span>';
+
+  let columns, rows;
+
+  if (type === 'teachers') {
+    const list = allTeachers.filter(t => t.dept === deptCode && (t.facultyType || 'regular') !== 'supervisor');
+    columns = ['ID', 'Name', 'Status', 'SET %', 'SEF %'];
+    rows = list.map(t => {
+      const setSc = (typeof calculateWeightedSETRating === 'function') ? calculateWeightedSETRating(t.id) : '0';
+      const sefEvs = allEvals.filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
+      const sefSc = sefEvs.length ? sefEvs[sefEvs.length - 1].totalScore.toFixed(2) + '%' : 'N/A';
+      return {
+        s: ((t.tid || '') + ' ' + (t.name || '')).toLowerCase(),
+        onclick: "showAnnexReports('" + t.id + "')",
+        cells: [mono(t.tid), strong(t.name), pill(t.status || 'active', (t.status === 'active' ? '#059669' : '#dc2626')), esc(setSc) + '%', esc(sefSc)],
+        plain: [t.tid || '', t.name || '', t.status || 'active', setSc + '%', sefSc]
+      };
+    });
+  } else if (type === 'subjects') {
+    columns = ['Code', 'Name', 'Teacher', 'Enrolled'];
+    rows = allSubjects.map(sub => {
+      const enrolled = (sub.enrolledIds || []).filter(eid => allStudents.find(s => s.id === eid)).length;
+      const teacher = allTeachers.find(t => t.id === sub.teacherId);
+      const tName = teacher ? teacher.name : 'Unassigned';
+      return {
+        s: ((sub.code || '') + ' ' + (sub.name || '') + ' ' + tName).toLowerCase(),
+        cells: [mono(sub.code), esc(sub.name), (teacher ? esc(tName) : '<em style="color:var(--danger,#dc2626);">Unassigned</em>'), pill(enrolled + '', '#2563eb')],
+        plain: [sub.code || '', sub.name || '', tName, enrolled]
+      };
+    });
+  } else { // enrolled
+    columns = ['Student ID', 'Name', 'Year & Section', 'Subjects'];
+    const map = {};
+    allSubjects.forEach(sub => {
+      (sub.enrolledIds || []).forEach(eid => {
+        const st = allStudents.find(s => s.id === eid);
+        if (!st) return;
+        if (!map[eid]) map[eid] = { st: st, subs: [] };
+        map[eid].subs.push(sub.code);
+      });
+    });
+    rows = Object.keys(map).map(k => {
+      const st = map[k].st, subs = map[k].subs;
+      const ys = (st.year || '') + (st.section ? ' - ' + st.section : '');
+      return {
+        s: ((st.sid || '') + ' ' + (st.name || '')).toLowerCase(),
+        cells: [mono(st.sid), strong(st.name), esc(ys), esc(subs.join(', '))],
+        plain: [st.sid || '', st.name || '', ys, subs.join(', ')]
+      };
+    });
+  }
+
+  const titleMap = { teachers: 'Teachers', subjects: 'Subjects', enrolled: 'Enrolled Students' };
+  const deptLabel = esc(cfg.short || deptCode);
+  const title = (titleMap[type] || 'List') + ' \u2014 ' + esc(cfg.name);
+  const sub = rows.length + ' ' + (rows.length === 1 ? 'record' : 'records');
+
+  // Ensure the page container exists (created once, reused after)
+  let pageEl = document.getElementById('page-deptFullList');
+  if (!pageEl) {
+    pageEl = document.createElement('div');
+    pageEl.className = 'page';
+    pageEl.id = 'page-deptFullList';
+    const anchor = document.getElementById('page-dept');
+    (anchor && anchor.parentNode ? anchor.parentNode : document.body).appendChild(pageEl);
+  }
+
+  const headHtml = '<tr>' + columns.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr>';
+  const bodyHtml = rows.length
+    ? rows.map(r => '<tr data-s="' + r.s + '"' + (r.onclick ? ' onclick="' + r.onclick + '" style="cursor:pointer;" title="Open report"' : '') + '>'
+        + r.cells.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('')
+    : '<tr><td colspan="' + columns.length + '" style="text-align:center;padding:40px;color:var(--muted);">Nothing here yet for ' + deptLabel + '.</td></tr>';
+
+  pageEl.innerHTML =
+    '<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+      + '<div class="page-title"><h1>' + title + '</h1><p id="_dflSub">' + sub + '</p></div>'
+      + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+        + '<input id="_dflSearch" type="text" placeholder="Search\u2026" style="padding:8px 12px;border:1px solid var(--border,#cbd5e1);border-radius:8px;font-size:0.85rem;outline:none;">'
+        + '<button class="btn btn-ghost btn-sm" onclick="_exportDeptListCSV()"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV</button>'
+        + '<button class="btn btn-ghost btn-sm" onclick="showDeptPage(\'' + deptCode + '\')"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><polyline points="15 18 9 12 15 6"/></svg>Back to ' + deptLabel + '</button>'
+      + '</div>'
+    + '</div>'
+    + '<div class="card"><div class="table-wrap"><table class="data-table"><thead>' + headHtml + '</thead><tbody id="_dflBody">' + bodyHtml + '</tbody></table></div></div>';
+
+  // Activate this page (same mechanism as showPage)
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  pageEl.classList.add('active');
+  if (typeof closeSidebar === 'function') closeSidebar();
+  window.scrollTo(0, 0);
+
+  // Stash for CSV export
+  window._dflExport = { title: title, columns: columns, rows: rows };
+
+  // Live search
+  const searchEl = document.getElementById('_dflSearch');
+  const bodyEl   = document.getElementById('_dflBody');
+  const subEl    = document.getElementById('_dflSub');
+  if (searchEl) {
+    searchEl.addEventListener('input', function() {
+      const q = this.value.trim().toLowerCase();
+      let shown = 0;
+      Array.prototype.forEach.call(bodyEl.querySelectorAll('tr[data-s]'), tr => {
+        const hit = !q || tr.getAttribute('data-s').indexOf(q) > -1;
+        tr.style.display = hit ? '' : 'none';
+        if (hit) shown++;
+      });
+      if (subEl) subEl.textContent = shown + ' ' + (shown === 1 ? 'record' : 'records');
+    });
+  }
+};
+
+// CSV export for whatever dept list is currently shown
+window._exportDeptListCSV = function() {
+  const d = window._dflExport;
+  if (!d || !d.rows.length) { if (typeof showToast === 'function') showToast('Nothing to export.', 'info'); return; }
+  let csv = d.columns.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',') + '\n';
+  d.rows.forEach(r => {
+    csv += r.plain.map(v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"').join(',') + '\n';
+  });
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
+    download: d.title.replace(/[^a-z0-9]+/gi, '_').toLowerCase() + '.csv'
+  });
+  a.click();
+  if (typeof showToast === 'function') showToast('Exported ' + d.rows.length + ' rows.', 'success');
 };
