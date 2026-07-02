@@ -27,10 +27,10 @@
 
   <div class="login-card">
     <div class="form-group">
-      <label class="form-label">Username</label>
+      <label class="form-label">Email</label>
       <div class="input-wrap">
         <svg class="input-icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        <input class="form-control" type="text" id="adminUser" placeholder="Enter admin username" autocomplete="username"/>
+        <input class="form-control" type="text" id="adminUser" placeholder="admin@yourschool.edu" autocomplete="username"/>
       </div>
     </div>
 
@@ -38,11 +38,14 @@
       <label class="form-label">Password</label>
       <div class="input-wrap">
         <svg class="input-icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-        <input class="form-control" type="password" id="adminPass" placeholder="Enter password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doAdminLogin()"/>
+        <input class="form-control" type="password" id="adminPass" placeholder="Enter password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doAdminLogin()" style="padding-right:44px;"/>
+        <button type="button" id="togglePass" onclick="togglePass()" title="Show / hide password" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:#64748b;cursor:pointer;padding:4px;">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
       </div>
     </div>
 
-    <button class="btn-login" onclick="doAdminLogin()">
+    <button type="button" class="btn-login" onclick="doAdminLogin()">
       <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
       Sign In as Admin
     </button>
@@ -51,14 +54,13 @@
   </div>
 </div>
 
-<!-- Firebase SDKs (same project as dashboard) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 
 <script>
-// ============================================================
-// 🔥 PASTE YOUR SAME FIREBASE CONFIG HERE (same as dashboard.html)
-// ============================================================
+// Config is INLINED here on purpose, so the login page never depends on an
+// external file path loading correctly. (Same project as your dashboard.)
 const firebaseConfig = {
   apiKey: "AIzaSyCUD1waV1kPYFKj1zRA7ANVjQkhdP7NJic",
   authDomain: "studenteval-937f6.firebaseapp.com",
@@ -69,74 +71,101 @@ const firebaseConfig = {
   measurementId: "G-D5WD5LB2E5"
 };
 
-let db = null;
+let db = null, fbAuth = null;
 try {
   firebase.initializeApp(firebaseConfig);
   db = firebase.firestore();
-} catch(e) {}
+  fbAuth = firebase.auth();
+  fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){});
+} catch (e) { console.error('Firebase init failed:', e); }
 
-// Log login attempt to Firebase
 async function logLoginToFirebase(username, success) {
-  if (!db || firebaseConfig.apiKey === '"AIzaSyCUD1waV1kPYFKj1zRA7ANVjQkhdP7NJic"') return;
+  if (!db) return;
   try {
     await db.collection('loginLogs').add({
-      username:  username,
-      success:   success,
+      username, success,
       timestamp: new Date().toISOString(),
       userAgent: navigator.userAgent,
       loginType: 'admin'
     });
-  } catch(e) { console.warn('Login log error:', e.message); }
+  } catch (e) { console.warn('Login log error:', e.message); }
 }
 
-// Save/update admin credentials to Firebase when login is changed
-async function saveAdminCredsToFirebase(username, password) {
-  if (!db || firebaseConfig.apiKey === '"AIzaSyCUD1waV1kPYFKj1zRA7ANVjQkhdP7NJic"') return;
-  try {
-    await db.collection('settings').doc('adminCreds').set({ username, password });
-  } catch(e) { console.warn('Save creds error:', e.message); }
-}
+const STRICT_ADMIN = false; // keep in sync with dashboard.html
 
-// Load admin credentials from Firebase (so creds changed on one device sync everywhere)
-async function loadAdminCredsFromFirebase() {
-  if (!db || firebaseConfig.apiKey === '"AIzaSyCUD1waV1kPYFKj1zRA7ANVjQkhdP7NJic"') return null;
+async function ensureAdmin(user) {
   try {
-    const doc = await db.collection('settings').doc('adminCreds').get();
-    if (doc.exists) {
-      localStorage.setItem('adminCreds', JSON.stringify(doc.data()));
-      return doc.data();
+    const ref = db.collection('admins').doc(user.uid);
+    const doc = await ref.get();
+    if (doc.exists) return true;
+    try {
+      await ref.set({ role: 'admin', email: user.email || '', createdAt: new Date().toISOString() }, { merge: true });
+      console.log('Bootstrapped admins/' + user.uid);
+      return true;
+    } catch (writeErr) {
+      console.warn('Could not create admins doc (rules?):', writeErr.message);
+      return !STRICT_ADMIN;
     }
-  } catch(e) {}
-  return null;
+  } catch (readErr) {
+    console.warn('Could not read admins doc (rules?):', readErr.message);
+    return !STRICT_ADMIN;
+  }
+}
+
+function friendlyAuthError(e) {
+  const c = (e && e.code) || '';
+  if (c.indexOf('wrong-password') > -1 || c.indexOf('invalid-credential') > -1 || c.indexOf('user-not-found') > -1)
+    return 'Wrong email or password.';
+  if (c.indexOf('invalid-email') > -1)     return 'That email address is not valid.';
+  if (c.indexOf('operation-not-allowed') > -1 || c.indexOf('configuration-not-found') > -1)
+    return 'Email/Password sign-in is not enabled in Firebase Console &#8594; Authentication &#8594; Sign-in method.';
+  if (c.indexOf('too-many-requests') > -1) return 'Too many attempts. Please wait a moment and try again.';
+  if (c.indexOf('network') > -1)           return 'Network error. Check your internet connection.';
+  if (c.indexOf('not authorized') > -1)    return 'This account is not authorized as an admin.';
+  return (e && e.message) ? e.message : 'Sign-in failed. Please try again.';
+}
+
+function togglePass() {
+  const inp = document.getElementById('adminPass');
+  inp.type = (inp.type === 'password') ? 'text' : 'password';
 }
 
 async function doAdminLogin() {
-  const btn = document.querySelector('.btn-login');
-  const user = document.getElementById('adminUser').value.trim();
-  const pass = document.getElementById('adminPass').value;
-  if (!user || !pass) { document.getElementById('loginError').style.display = 'block'; return; }
+  const btn   = document.querySelector('.btn-login');
+  const email = document.getElementById('adminUser').value.trim();
+  const pass  = document.getElementById('adminPass').value;
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+  if (!email || !pass) { errEl.textContent = 'Enter your email and password.'; errEl.style.display = 'block'; return; }
+  if (!fbAuth) { errEl.textContent = 'Firebase Auth not loaded. Check your connection and reload.'; errEl.style.display = 'block'; return; }
 
-  // Show loading
-  if (btn) btn.textContent = 'Signing in...';
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
 
-  // Try to get latest credentials from Firebase first
-  const fbCreds = await loadAdminCredsFromFirebase();
-  const creds = fbCreds || JSON.parse(localStorage.getItem('adminCreds') || '{"username":"admin","password":"admin123"}');
-
-  if (user === creds.username && pass === creds.password) {
-    await logLoginToFirebase(user, true);
+  try {
+    const cred = await fbAuth.signInWithEmailAndPassword(email, pass);
+    const ok = await ensureAdmin(cred.user);
+    if (!ok) { await fbAuth.signOut(); throw new Error('not authorized'); }
+    await logLoginToFirebase(email, true);
+    
+    // ===== FIX: Set sessionStorage so the dashboard guard passes =====
     sessionStorage.setItem('adminLoggedIn', 'true');
-    sessionStorage.setItem('adminUsername', user);
+    // ==============================================================
+
     window.location.href = 'admin/dashboard.html';
-  } else {
-    await logLoginToFirebase(user, false);
-    document.getElementById('loginError').style.display = 'block';
-    document.getElementById('adminPass').value = '';
-    if (btn) btn.innerHTML = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign In as Admin`;
+  } catch (e) {
+    console.error('Login failed:', e.code, e.message);
+    await logLoginToFirebase(email, false);
+    let proj = '';
+    try { proj = firebase.app().options.projectId; } catch (_) {}
+    errEl.innerHTML = friendlyAuthError(e)
+      + '<div style="margin-top:8px;font-size:0.68rem;color:#94a3b8;font-weight:400;">'
+      + 'details: ' + (e.code || 'n/a') + ' &middot; project: ' + proj + ' &middot; email: "' + email + '" &middot; password length: ' + pass.length
+      + '</div>';
+    errEl.style.display = 'block';
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign In as Admin'; }
   }
 }
 </script>
 
-<script src="shared/js/data.js"></script>
 </body>
 </html>
