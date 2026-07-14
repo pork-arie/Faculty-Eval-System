@@ -912,7 +912,7 @@ window.renderTeacherDetailsContent = function(teacherId) {
   const totalWeighted = classBreakdown.reduce((sum, cr) => cr.avgScore > 0 ? sum + (cr.avgScore * cr.enrolledCount) : sum, 0);
   const totalStudents = classBreakdown.reduce((sum, cr) => sum + cr.enrolledCount, 0);
   const weightedSET = totalStudents > 0 ? (totalWeighted / totalStudents).toFixed(2) : '—';
-  const latestSEF = sefEvals.length > 0 ? sefEvals[sefEvals.length-1].totalScore.toFixed(2) : '—';
+  const latestSEF = sefEvals.length > 0 ? (sefEvals.reduce((a, b) => a + b.totalScore, 0) / sefEvals.length).toFixed(2) : '—';
 
   const container = document.getElementById(`teacher-details-content-${teacherId}`);
   if (!container) return;
@@ -1466,8 +1466,11 @@ function _buildTeacherEvalData() {
             s.teacherId === teacher.id && s.loadType !== 'Overload' && !s.isLabSchool
         );
         const classRatings = teacherSubjects.map(sub => {
-            const classEvals    = evals.filter(e => e.subjectId === sub.id && e.evaluatorType !== 'supervisor');
-            const enrolledCount = (sub.enrolledIds || []).filter(id => students.find(s => s.id === id)).length;
+            const classEvals    = evals.filter(e => e.subjectId === sub.id && e.evaluatorType !== 'supervisor'
+                && (typeof evalInActiveTerm !== 'function' || evalInActiveTerm(e)));
+            const enrolledCount = (sub.enrolledIds || [])
+                .filter(id => students.find(s => s.id === id))
+                .filter(id => typeof isStudentExempted !== 'function' || !isStudentExempted(id, sub.id)).length;
             const avgScore      = classEvals.length > 0
                 ? classEvals.reduce((a, b) => a + b.totalScore, 0) / classEvals.length : 0;
             return {
@@ -1490,9 +1493,10 @@ function _buildTeacherEvalData() {
 
         const supervisorEvals = evals.filter(e =>
             e.teacherId === teacher.id && e.evaluatorType === 'supervisor'
+            && (typeof evalInActiveTerm !== 'function' || evalInActiveTerm(e))
         );
         const sefScore = supervisorEvals.length > 0
-            ? supervisorEvals[supervisorEvals.length - 1].totalScore.toFixed(2) : '—';
+            ? (supervisorEvals.reduce((a, b) => a + b.totalScore, 0) / supervisorEvals.length).toFixed(2) : '—';
 
         return {
             ...teacher,
@@ -1522,7 +1526,7 @@ window.setReportsDeptFilter = function(dept) {
 // Build one faculty table row (shared by main table and View All modal)
 function _buildFacultyRow(t, idx) {
     return `
-        <tr class="report-teacher-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C &amp; D">
+        <tr class="report-teacher-row" onclick="showAnnexReports('${t.id}', true)" title="Click to view Annex C &amp; D">
             <td style="text-align:center;"><span class="rank-badge rank-${idx < 3 ? idx + 1 : ''}">${idx + 1}</span></td>
             <td>
                 <strong>${escapeHtml(t.name)}</strong><br>
@@ -1580,7 +1584,7 @@ function _renderFacultyTable() {
 // Build one supervisor table row (shared by main table and View All modal)
 function _buildSupervisorRow(t) {
     return `
-        <tr class="report-teacher-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C &amp; D">
+        <tr class="report-teacher-row" onclick="showAnnexReports('${t.id}', true)" title="Click to view Annex C &amp; D">
             <td>
                 <strong>${escapeHtml(t.name)}</strong><br>
                 <small style="color:var(--muted);">${escapeHtml(t.tid)}</small>
@@ -1668,6 +1672,9 @@ function _buildReportPills(teacherData) {
 window.renderReports = function() {
     // Reset filter on full re-render
     window._reportsDeptFilter = '';
+
+    // Populate/refresh the term (history) selector.
+    if (typeof _refreshReportTermLabel === 'function') _refreshReportTermLabel();
 
     // Build & cache all teacher data
     const allData = _buildTeacherEvalData();
@@ -2265,8 +2272,12 @@ window.printAnnexD = function() {
 // Stores current teacher id for tab switching
 window._currentAnnexTeacherId = null;
 
-window.showAnnexReports = function(teacherId) {
+window.showAnnexReports = function(teacherId, fromReports) {
     window._currentAnnexTeacherId = teacherId;
+    // Annex follows the Reports history selection ONLY when opened from Reports.
+    // Everywhere else (Teachers tab, dept views, etc.) it shows the present term.
+    window._annexTermOverride = fromReports ? null : 'ACTIVE';
+    window._currentAnnexFromReports = !!fromReports;
     const t = getData('teachers', []).find(t => t.id === teacherId);
     if (!t) return;
 
@@ -2318,12 +2329,13 @@ window.printActiveAnnex = function() {
 window.buildAnnexCContent = function(teacherId) {
     const t = getData('teachers', []).find(t => t.id === teacherId);
     if (!t) return;
-    const sy = getActiveSY();
+    const termInfo = (typeof annexTermInfo === 'function') ? annexTermInfo() : { label: '—' };
+    const inTerm = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : (() => true);
     const subjects = getData('subjects', []).filter(s => s.teacherId === teacherId && s.loadType !== 'Overload' && !s.isLabSchool);
-    const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor');
+    const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor' && inTerm(e));
     const students = getData('students', []).filter(s => !s.deleted);
-    const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor');
-    const sefScore = sefEvals.length > 0 ? sefEvals[sefEvals.length-1].totalScore.toFixed(2) : '—';
+    const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor' && inTerm(e));
+    const sefScore = sefEvals.length > 0 ? (sefEvals.reduce((a, b) => a + b.totalScore, 0) / sefEvals.length).toFixed(2) : '—';
 
     let totalStudents = 0;
     let totalWeightedScore = 0;
@@ -2345,7 +2357,7 @@ window.buildAnnexCContent = function(teacherId) {
     // Students: any non-supervisor evaluation for this faculty with a comment.
     // Supervisor: comments from the SEF submissions (Annex B) for this faculty.
     const studentComments = getData('evaluations', [])
-        .filter(e => e.teacherId === teacherId && e.evaluatorType !== 'supervisor' && e.comment && e.comment.trim())
+        .filter(e => e.teacherId === teacherId && e.evaluatorType !== 'supervisor' && inTerm(e) && e.comment && e.comment.trim())
         .map(e => e.comment.trim());
     const supervisorComments = sefEvals
         .filter(e => e.comment && e.comment.trim())
@@ -2376,7 +2388,7 @@ window.buildAnnexCContent = function(teacherId) {
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Name of Faculty Evaluated</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.name)}</td></tr>
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Department/College</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.dept || '—')}</td></tr>
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Current Faculty Rank</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.rank || '—')}</td></tr>
-            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Semester/Term &amp; Academic Year</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${sy ? sy.activeSem + ' / ' + sy.year : '—'}</td></tr>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Semester/Term &amp; Academic Year</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(termInfo.label)}</td></tr>
         </table>
 
         <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">B. Summary of Average SET Rating</h4>
@@ -2501,13 +2513,63 @@ window.buildAnnexCContent = function(teacherId) {
 };
 
 // Annex D — Faculty Evaluation and Development Acknowledgement Form
+// ===== FEDAF DEVELOPMENT PLAN & ACKNOWLEDGMENT (CMO §6.7, §10.2) =====
+// The Faculty Evaluation & Development Acknowledgment Form captures the jointly
+// agreed development plan and the faculty member's acknowledgment. Stored per
+// faculty per rating period.
+window._devPlanId = function(teacherId, term) {
+    return ('dp_' + teacherId + '_' + (term || '')).replace(/[^a-zA-Z0-9_-]/g, '_');
+};
+
+window.getDevelopmentPlan = function(teacherId) {
+    const term = (typeof annexTermInfo === 'function' ? annexTermInfo() : { label: '' }).label;
+    const id = _devPlanId(teacherId, term);
+    return getData('developmentPlans', []).find(p => p.id === id)
+        || { id, teacherId, term, areas: '', activities: '', actionPlan: '',
+             supervisorName: '', supervisorDate: '', facultyName: '', facultyDate: '',
+             acknowledged: false, savedAt: '' };
+};
+
+window.saveDevelopmentPlan = function(teacherId) {
+    const term = (typeof annexTermInfo === 'function' ? annexTermInfo() : { label: '' }).label;
+    const id = _devPlanId(teacherId, term);
+    const v = elId => (document.getElementById(elId) ? document.getElementById(elId).value.trim() : '');
+    const plan = {
+        id, teacherId, term,
+        areas:          v('dpAreas'),
+        activities:     v('dpActivities'),
+        actionPlan:     v('dpAction'),
+        supervisorName: v('dpSupName'),
+        supervisorDate: v('dpSupDate'),
+        facultyName:    v('dpFacName'),
+        facultyDate:    v('dpFacDate'),
+        acknowledged:   !!(v('dpFacName') && v('dpFacDate')),
+        savedAt:        new Date().toISOString()
+    };
+    const plans = getData('developmentPlans', []);
+    const i = plans.findIndex(p => p.id === id);
+    if (i > -1) plans[i] = plan; else plans.push(plan);
+    setData('developmentPlans', plans);
+    if (typeof syncCollectionToFirestore === 'function') syncCollectionToFirestore('developmentPlans', plans);
+    const t = getData('teachers', []).find(x => x.id === teacherId);
+    if (typeof addAudit === 'function') addAudit('FEDAF Saved', `Development plan${plan.acknowledged ? ' + acknowledgment' : ''} for ${t ? t.name : teacherId} (${term})`);
+    if (typeof showToast === 'function') showToast(plan.acknowledged ? 'Development plan saved & acknowledged.' : 'Development plan saved.', 'success');
+    // Refresh the Annex D panel so the acknowledged badge appears.
+    if (typeof switchAnnexTab === 'function') switchAnnexTab('D');
+};
+
 window.buildAnnexDContent = function(teacherId) {
     const t = getData('teachers', []).find(t => t.id === teacherId);
     if (!t) return;
-    const sy = getActiveSY();
-    const setScore = calculateWeightedSETRating(teacherId);
-    const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor');
-    const sefScore = sefEvals.length > 0 ? sefEvals[sefEvals.length-1].totalScore.toFixed(2) : '—';
+    const termInfo = (typeof annexTermInfo === 'function') ? annexTermInfo() : { label: '—' };
+    const inTerm = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : (() => true);
+    const setScore = (typeof getTeacherOverallRating === 'function') ? getTeacherOverallRating(teacherId).overallSET : calculateWeightedSETRating(teacherId);
+    const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor' && inTerm(e));
+    const sefScore = sefEvals.length > 0 ? (sefEvals.reduce((a, b) => a + b.totalScore, 0) / sefEvals.length).toFixed(2) : '—';
+
+    // Saved development plan / acknowledgment for this faculty & term (FEDAF).
+    const _dp = (typeof getDevelopmentPlan === 'function') ? getDevelopmentPlan(teacherId)
+        : { areas:'', activities:'', actionPlan:'', supervisorName:'', supervisorDate:'', facultyName:'', facultyDate:'', acknowledged:false, savedAt:'' };
 
     document.getElementById('annexDModalBody').innerHTML = `
     <div id="annexPrintArea" style="font-family:serif;font-size:0.88rem;padding:4px 0;min-width:0;">
@@ -2522,7 +2584,7 @@ window.buildAnnexDContent = function(teacherId) {
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Name of Faculty</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.name)}</td></tr>
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Department/College</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.dept || '—')}</td></tr>
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Current Faculty Rank</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.rank || '—')}</td></tr>
-            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Semester/Term &amp; Academic Year</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${sy ? sy.activeSem + ' / ' + sy.year : '—'}</td></tr>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Semester/Term &amp; Academic Year</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(termInfo.label)}</td></tr>
         </table>
 
         <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">B. Faculty Evaluation Summary</h4>
@@ -2545,12 +2607,12 @@ window.buildAnnexDContent = function(teacherId) {
             </tbody>
         </table>
 
-        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">C. Development Plan <span style="font-weight:400;font-size:0.72rem;">(to be jointly accomplished by the Supervisor and Faculty)</span></h4>
+        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">C. Development Plan <span style="font-weight:400;font-size:0.72rem;">(to be jointly accomplished by the Supervisor and Faculty)</span>${_dp.acknowledged ? ` <span style="background:#dcfce7;color:#16a34a;font-size:0.62rem;padding:2px 8px;border-radius:10px;">✓ ACKNOWLEDGED</span>` : ''}</h4>
         <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #ccc;table-layout:fixed;">
             <colgroup><col style="width:38%"/><col style="width:62%"/></colgroup>
-            <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;border:1px solid #ccc;vertical-align:top;word-break:break-word;">Areas for Improvement</td><td style="padding:50px 8px;border:1px solid #ccc;"></td></tr>
-            <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;border:1px solid #ccc;vertical-align:top;word-break:break-word;">Proposed Learning and Development Activities</td><td style="padding:50px 8px;border:1px solid #ccc;"></td></tr>
-            <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;border:1px solid #ccc;vertical-align:top;word-break:break-word;">Action Plan</td><td style="padding:50px 8px;border:1px solid #ccc;"></td></tr>
+            <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;border:1px solid #ccc;vertical-align:top;word-break:break-word;">Areas for Improvement</td><td style="padding:6px;border:1px solid #ccc;"><textarea id="dpAreas" rows="3" style="width:100%;border:none;font-family:inherit;font-size:0.8rem;resize:vertical;outline:none;">${escapeHtml(_dp.areas)}</textarea></td></tr>
+            <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;border:1px solid #ccc;vertical-align:top;word-break:break-word;">Proposed Learning and Development Activities</td><td style="padding:6px;border:1px solid #ccc;"><textarea id="dpActivities" rows="3" style="width:100%;border:none;font-family:inherit;font-size:0.8rem;resize:vertical;outline:none;">${escapeHtml(_dp.activities)}</textarea></td></tr>
+            <tr><td style="padding:8px;font-weight:600;font-size:0.8rem;border:1px solid #ccc;vertical-align:top;word-break:break-word;">Action Plan</td><td style="padding:6px;border:1px solid #ccc;"><textarea id="dpAction" rows="3" style="width:100%;border:none;font-family:inherit;font-size:0.8rem;resize:vertical;outline:none;">${escapeHtml(_dp.actionPlan)}</textarea></td></tr>
         </table>
 
         <p style="font-size:0.75rem;margin-bottom:16px;font-style:italic;">I acknowledge that I have received and reviewed the faculty evaluation conducted for the period mentioned above. I understand that my signature below does not necessarily indicate agreement with the evaluation but confirms that I have been given the opportunity to discuss it with my supervisor.</p>
@@ -2563,9 +2625,8 @@ window.buildAnnexDContent = function(teacherId) {
                 </tr>
             </thead>
             <tbody>
-                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Signature</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
-                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Name</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
-                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Date Signed</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Name</td><td style="padding:4px 8px;border:1px solid #ccc;"><input id="dpSupName" value="${escapeHtml(_dp.supervisorName)}" style="width:100%;border:none;font-family:inherit;font-size:0.8rem;outline:none;"/></td></tr>
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Date Signed</td><td style="padding:4px 8px;border:1px solid #ccc;"><input id="dpSupDate" type="date" value="${escapeHtml(_dp.supervisorDate)}" style="border:none;font-family:inherit;font-size:0.8rem;outline:none;"/></td></tr>
             </tbody>
         </table>
         <table style="width:100%;border-collapse:collapse;margin-top:0;border:1px solid #ccc;border-top:none;table-layout:fixed;">
@@ -2576,11 +2637,15 @@ window.buildAnnexDContent = function(teacherId) {
                 </tr>
             </thead>
             <tbody>
-                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Signature</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
-                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Name</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
-                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Date Signed</td><td style="padding:6px 8px;border:1px solid #ccc;"></td></tr>
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Name</td><td style="padding:4px 8px;border:1px solid #ccc;"><input id="dpFacName" value="${escapeHtml(_dp.facultyName)}" placeholder="Faculty types name to acknowledge" style="width:100%;border:none;font-family:inherit;font-size:0.8rem;outline:none;"/></td></tr>
+                <tr><td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">Date Signed</td><td style="padding:4px 8px;border:1px solid #ccc;"><input id="dpFacDate" type="date" value="${escapeHtml(_dp.facultyDate)}" style="border:none;font-family:inherit;font-size:0.8rem;outline:none;"/></td></tr>
             </tbody>
         </table>
+
+        <div class="annex-noprint" style="margin-top:14px;display:flex;align-items:center;gap:10px;">
+            <button onclick="saveDevelopmentPlan('${teacherId}')" style="padding:9px 18px;border:none;border-radius:8px;background:var(--primary,#059669);color:#fff;font-weight:600;font-size:0.82rem;cursor:pointer;">Save Development Plan &amp; Acknowledgment</button>
+            ${_dp.savedAt ? `<span style="font-size:0.72rem;color:var(--muted,#777);">Last saved ${new Date(_dp.savedAt).toLocaleString('en-PH')}</span>` : ''}
+        </div>
     </div>`;
 };
 
@@ -2635,9 +2700,12 @@ window.renderInstitutionalFER = function() {
     teachers.forEach(t => {
         if (!t.dept) return;
         if (!deptMap[t.dept]) deptMap[t.dept] = { setTotal: 0, setCount: 0, sefTotal: 0, sefCount: 0 };
-        const set = parseFloat(calculateWeightedSETRating(t.id));
-        const sefEvals = getData('evaluations', []).filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
-        const sef = sefEvals.length > 0 ? sefEvals[sefEvals.length-1].totalScore : 0;
+        // Use the shared, term-scoped rating (respects the selected term and
+        // averages supervisor SEFs per §9.3) so these cards match the table
+        // and change when you switch terms in the dropdown.
+        const r = (typeof getTeacherOverallRating === 'function') ? getTeacherOverallRating(t.id) : null;
+        const set = r ? parseFloat(r.overallSET) : 0;
+        const sef = (r && r.sefScore !== '—') ? parseFloat(r.sefScore) : 0;
         if (set > 0) { deptMap[t.dept].setTotal += set; deptMap[t.dept].setCount++; }
         if (sef > 0) { deptMap[t.dept].sefTotal += sef; deptMap[t.dept].sefCount++; }
     });
@@ -2653,7 +2721,7 @@ window.renderInstitutionalFER = function() {
     if (container) {
         container.innerHTML = `
             <div class="card">
-                <div class="card-header-bar"><h3>Institutional Statistical Trends (FER)</h3></div>
+                <div class="card-header-bar"><h3>Institutional Statistical Trends (FER)</h3><span class="badge badge-primary" style="font-size:0.68rem;">${typeof getReportTermInfo === 'function' ? escapeHtml(getReportTermInfo().label) : ''}</span></div>
                 <div class="card-body">
                     <p style="font-size:0.8rem;color:var(--muted);margin-bottom:15px;">SET and SEF per department — displayed separately per CMO 19. Used by President and VPAA for institutional decision-making.</p>
                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:15px;">
@@ -2731,7 +2799,7 @@ function exportReport() {
   teachers.forEach(teacher => {
     const setScore = calculateWeightedSETRating(teacher.id);
     const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacher.id && e.evaluatorType === 'supervisor');
-    const sefScore = sefEvals.length > 0 ? sefEvals[sefEvals.length-1].totalScore.toFixed(2) : '';
+    const sefScore = sefEvals.length > 0 ? (sefEvals.reduce((a, b) => a + b.totalScore, 0) / sefEvals.length).toFixed(2) : '';
     csv += `"${teacher.tid}","${teacher.name}","${teacher.dept || 'N/A'}","${teacher.facultyType || 'regular'}",${setScore}%,${sefScore ? sefScore + '%' : 'N/A'}\n`;
   });
   const a = Object.assign(document.createElement('a'), {
@@ -3089,7 +3157,8 @@ window.syncCollectionToFirestore = async function(key, value) {
             schoolYears: 'schoolYears',
             auditLog: 'auditLog',
             evalPeriod: 'settings',
-            adminCreds: 'settings'
+            developmentPlans: 'developmentPlans',
+            exemptions: 'exemptions'
         };
         const col = MAP[key];
         if (!col) return;

@@ -36,32 +36,76 @@ function getData(key, def) {
 }
 function setData(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
+// ===== PASSWORD HASHING (one-way) =====
+// Never store plaintext passwords. Use these to hash on create/change and to
+// verify on login. Uses the Web Crypto API (SHA-256) with a random per-user
+// salt. Stored form: "sha256$<saltHex>$<hashHex>".
+// NOTE: for a browser-only app this raises the bar significantly, but the
+// strongest option is to authenticate students through Firebase Auth too, so
+// no password hash lives in client-readable storage at all.
+async function hashPassword(plain) {
+  const enc = new TextEncoder();
+  const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+  const salt = [...saltBytes].map(b => b.toString(16).padStart(2, '0')).join('');
+  const data = enc.encode(salt + ':' + String(plain));
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return `sha256$${salt}$${hash}`;
+}
+
+async function verifyPassword(plain, stored) {
+  if (typeof stored !== 'string' || !stored.startsWith('sha256$')) {
+    // Legacy/plaintext value — accept once so existing accounts keep working,
+    // then the caller should re-hash and save. (Migration path.)
+    return { ok: String(plain) === String(stored), legacy: true };
+  }
+  const [, salt, expected] = stored.split('$');
+  const data = new TextEncoder().encode(salt + ':' + String(plain));
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return { ok: hash === expected, legacy: false };
+}
+
+// ===== DEMO SEED DATA TOGGLE =====
+// Set to true ONLY for local development/testing to pre-populate a few sample
+// teachers, students, and subjects. In production this MUST stay false so the
+// app starts empty and real records come from the admin dashboard / Firestore
+// (and the mobile app). Leaving demo data on would push fake records like
+// "Prof. Robert Johnson" into your live Firestore.
+const SEED_DEMO_DATA = false;
+
+const DEMO_TEACHERS = [
+  { id: 't1', tid: 'T001', name: 'Prof. Robert Johnson', status: 'active', deleted: false },
+  { id: 't2', tid: 'T002', name: 'Dr. Emily Davis', status: 'active', deleted: false },
+  { id: 't3', tid: 'T003', name: 'Prof. Michael Chen', status: 'active', deleted: false }
+];
+const DEMO_STUDENTS = [
+  { id: 's1', sid: '2021001', name: 'Maria Santos', year: '3rd Year', section: 'A', password: '2021001', status: 'active', forceReset: false, deleted: false },
+  { id: 's2', sid: '2021002', name: 'Juan dela Cruz', year: '3rd Year', section: 'A', password: '2021002', status: 'active', forceReset: false, deleted: false },
+  { id: 's3', sid: '2021003', name: 'Ana Reyes', year: '3rd Year', section: 'B', password: '2021003', status: 'active', forceReset: false, deleted: false }
+];
+const DEMO_SUBJECTS = [
+  { id: 'sub1', code: 'CS301', name: 'Data Structures and Algorithms', teacherId: 't1', enrolledIds: ['s1','s2','s3'] },
+  { id: 'sub2', code: 'CS302', name: 'Database Management Systems', teacherId: 't2', enrolledIds: ['s1','s2'] },
+  { id: 'sub3', code: 'CS303', name: 'Web Development', teacherId: 't3', enrolledIds: ['s2','s3'] },
+  { id: 'sub4', code: 'IT301', name: 'IT Project Management', teacherId: 't1', enrolledIds: ['s1','s2','s3'] }
+];
+
 function initData() {
   if (!getData('initialized', false)) {
     setData('schoolYears', [{ id: 'sy1', year: '2025-2026', semesters: [
       { id: 'sem1', label: '1st Semester', active: false },
       { id: 'sem2', label: '2nd Semester', active: true }
     ]}]);
-    setData('teachers', [
-      { id: 't1', tid: 'T001', name: 'Prof. Robert Johnson', status: 'active', deleted: false },
-      { id: 't2', tid: 'T002', name: 'Dr. Emily Davis', status: 'active', deleted: false },
-      { id: 't3', tid: 'T003', name: 'Prof. Michael Chen', status: 'active', deleted: false }
-    ]);
-    setData('students', [
-      { id: 's1', sid: '2021001', name: 'Maria Santos', year: '3rd Year', section: 'A', password: '2021001', status: 'active', forceReset: false, deleted: false },
-      { id: 's2', sid: '2021002', name: 'Juan dela Cruz', year: '3rd Year', section: 'A', password: '2021002', status: 'active', forceReset: false, deleted: false },
-      { id: 's3', sid: '2021003', name: 'Ana Reyes', year: '3rd Year', section: 'B', password: '2021003', status: 'active', forceReset: false, deleted: false }
-    ]);
-    setData('subjects', [
-      { id: 'sub1', code: 'CS301', name: 'Data Structures and Algorithms', teacherId: 't1', enrolledIds: ['s1','s2','s3'] },
-      { id: 'sub2', code: 'CS302', name: 'Database Management Systems', teacherId: 't2', enrolledIds: ['s1','s2'] },
-      { id: 'sub3', code: 'CS303', name: 'Web Development', teacherId: 't3', enrolledIds: ['s2','s3'] },
-      { id: 'sub4', code: 'IT301', name: 'IT Project Management', teacherId: 't1', enrolledIds: ['s1','s2','s3'] }
-    ]);
+    // Records start EMPTY in production; demo data only when explicitly enabled.
+    setData('teachers', SEED_DEMO_DATA ? DEMO_TEACHERS : []);
+    setData('students', SEED_DEMO_DATA ? DEMO_STUDENTS : []);
+    setData('subjects', SEED_DEMO_DATA ? DEMO_SUBJECTS : []);
     setData('evalPeriod', { open: false, deadline: '', minSubmissions: 5 });
     setData('evaluations', []);
     setData('auditLog', []);
-    setData('adminCreds', { username: 'admin', password: 'admin123' });
+    // NOTE: admin authentication is handled by Firebase Auth — no plaintext
+    // admin password is stored anywhere. (The old 'adminCreds' seed was removed.)
     setData('initialized', true);
   }
 }

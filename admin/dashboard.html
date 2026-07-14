@@ -46,8 +46,10 @@ try {
   throw e;
 }
 
-// Keep STRICT_ADMIN in sync with index.html. While false, the gate is self-healing.
-const STRICT_ADMIN = false;
+// Keep STRICT_ADMIN in sync with index.html. true = production (only users with
+// an /admins/{uid} doc pass the gate). Requires the deployed firestore.rules and
+// a first-admin doc created in the Firebase console.
+const STRICT_ADMIN = true;
 document.documentElement.style.visibility = 'hidden';
 
 // Safety net: never leave the page silently blank.
@@ -101,12 +103,6 @@ fbAuth.onAuthStateChanged(async (user) => {
   if (!allowed) { await fbAuth.signOut(); window.location.replace('../index.html'); return; }
   window._adminUser = { uid: user.uid, email: user.email };
   document.documentElement.style.visibility = 'visible';
-  try {
-    var _mk = document.createElement('div');
-    _mk.textContent = 'DASH BUILD v3';
-    _mk.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:99998;background:#064e3b;color:#3fb950;font:700 10px system-ui;padding:3px 8px;border-radius:10px;opacity:.8;';
-    document.body.appendChild(_mk);
-  } catch (e) {}
 });
 
 function setData(key, val) {
@@ -118,7 +114,7 @@ async function syncCollectionToFirestore(key, val) {
   const MAP = {
     students: 'students', teachers: 'teachers', subjects: 'subjects',
     evaluations: 'evaluations', schoolYears: 'schoolYears',
-    auditLog: 'auditLog', evalPeriod: 'settings', adminCreds: 'settings'
+    auditLog: 'auditLog', evalPeriod: 'settings'
   };
   // FIX: 'customDepartments' was a legacy key written by an old version of saveEditDept in adminfeatures.js.
   // It had no MAP entry, so Firestore received a blank document. Now that saveEditDept writes to 'departments',
@@ -184,8 +180,8 @@ async function loadFromFirebase() {
     }
     const evalPeriodDoc = await db.collection('settings').doc('evalPeriod').get();
     if (evalPeriodDoc.exists) localStorage.setItem('evalPeriod', JSON.stringify(evalPeriodDoc.data()));
-    const adminCredsDoc = await db.collection('settings').doc('adminCreds').get();
-    if (adminCredsDoc.exists) localStorage.setItem('adminCreds', JSON.stringify(adminCredsDoc.data()));
+    // NOTE: legacy 'adminCreds' (a plaintext admin password) is no longer read
+    // or stored — admin authentication is handled entirely by Firebase Auth.
     // FIX: Load customCourses from Firestore 'courses' collection on startup
     // so all clients (admin + students) always get the latest courses.
     const coursesSnap = await db.collection('courses').get();
@@ -614,9 +610,26 @@ window.addEventListener('load', () => {
     <div class="page" id="page-reports">
       <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;">
         <div class="page-title"><h1>Reports & Analytics</h1><p>View teacher ratings and evaluation results</p></div>
-        <button class="btn btn-ghost" onclick="exportReport()">
-          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV
-        </button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <div class="term-selector">
+            <svg class="term-cal" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <select id="reportTermSelect" onchange="setReportTerm(this.value)" title="View ratings for a school year & semester"></select>
+            <svg class="term-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <button class="btn btn-ghost" onclick="generateFERReport()" title="Institutional summary for the President / VPAA (CMO §6.8)">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Generate FER
+          </button>
+          <button class="btn btn-ghost" onclick="exportReport()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV
+          </button>
+          <button class="btn btn-ghost" onclick="exportSystemBackup()" title="Download a full JSON backup of all data">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>Backup
+          </button>
+          <button class="btn btn-ghost" onclick="triggerRestore()" title="Restore data from a backup file">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>Restore
+          </button>
+          <input type="file" id="restoreFileInput" accept="application/json,.json" style="display:none;" onchange="importSystemBackup(this)"/>
+        </div>
       </div>
       <div id="reportsContent"></div>
     </div>
@@ -847,7 +860,7 @@ window.addEventListener('load', () => {
       <!-- Search -->
       <div class="search-box" style="margin-bottom:20px;">
         <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input type="text" placeholder="Search by teacher, student, or subject..." oninput="filterFeedback(null, this.value)"/>
+        <input type="text" placeholder="Search by teacher or subject..." oninput="filterFeedback(null, this.value)"/>
       </div>
 
       <div id="feedbackList"></div>

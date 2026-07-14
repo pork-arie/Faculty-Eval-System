@@ -962,13 +962,13 @@ window._renderFeedbackList = function() {
     const filtered = allEvals.filter(ev => {
         const sub = allSubjects.find(s => s.id === ev.subjectId);
         const teacher = allTeachers.find(t => t.id === (sub ? sub.teacherId : null) || t.id === ev.teacherId);
-        const student = allStudents.find(s => s.id === ev.studentId);
         const dept = sub ? sub.dept : '';
 
         const matchDept = !_feedbackDeptFilter || (dept || '').toUpperCase() === _feedbackDeptFilter.toUpperCase();
+        // NOTE: searching by student name/ID is intentionally NOT supported —
+        // CMO No. 19 §6.10 requires student responses stay anonymous.
         const matchSearch = !q ||
             (teacher && teacher.name.toLowerCase().includes(q)) ||
-            (student && (student.name.toLowerCase().includes(q) || student.sid.toLowerCase().includes(q))) ||
             (sub && (sub.name.toLowerCase().includes(q) || sub.code.toLowerCase().includes(q))) ||
             (ev.comment || '').toLowerCase().includes(q);
 
@@ -1019,6 +1019,9 @@ window._renderFeedbackList = function() {
         const deptLabel = cfg ? cfg.short : group.dept;
         const colorClass = cfg ? cfg.colorClass : 'dept-custom';
 
+        // Anonymous respondent labels (CMO §6.10) — student identity is never shown.
+        const anonMap = _anonRespondentMap(tid);
+
         // A teacher can handle several subjects — separate the evaluations by subject.
         const bySubject = {};
         group.comments.forEach(({ ev, sub }) => {
@@ -1035,12 +1038,12 @@ window._renderFeedbackList = function() {
                 ? (scored.reduce((a, { ev }) => a + ev.totalScore, 0) / scored.length).toFixed(2)
                 : null;
 
-            const itemsHtml = sg.items.map(({ ev, sub }, idx) => {
-                const student = allStudents.find(s => s.id === ev.studentId);
+            const itemHtmls = sg.items.map(({ ev, sub }, idx) => {
                 const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
                 const ratingId = `fbrate-${tid}-${subKey}-${ev.id || idx}`;
                 const scoreVal = (typeof ev.totalScore === 'number') ? ev.totalScore.toFixed(2) : null;
                 const breakdownHtml = _buildFeedbackRatingBreakdown(ev);
+                const respondent = `Respondent ${anonMap[ev.id] || '—'}`;
                 return `<div class="feedback-comment-item">
                     <div class="feedback-comment-meta">
                         ${ts ? `<span class="feedback-timestamp">${ts}</span>` : ''}
@@ -1049,19 +1052,32 @@ window._renderFeedbackList = function() {
                         ? `<div class="feedback-comment-text">"${escapeHtml(ev.comment)}"</div>`
                         : `<div class="feedback-comment-text feedback-no-comment">No written comment — rating only</div>`}
                     <div class="feedback-comment-from">
-                        — ${student ? escapeHtml(student.name) : 'Anonymous Student'}
-                        ${student ? `<span style="color:var(--muted);font-size:0.7rem;margin-left:4px;">(${student.sid})</span>` : ''}
+                        — ${respondent} <span class="feedback-anon-tag">anonymous</span>
+                    </div>
+                    <div class="feedback-item-actions">
+                        ${scoreVal !== null ? `<button class="feedback-view-rating-btn" id="${ratingId}-btn" onclick="toggleFeedbackRating('${ratingId}', this)">View Rating</button>` : ''}
+                        <button class="feedback-printone-btn" onclick="printOneEvaluation('${ev.id}')" title="Print this comment & rating">
+                            <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                            Print
+                        </button>
                     </div>
                     ${scoreVal !== null ? `
-                    <div class="feedback-rating-row">
-                        <button class="feedback-view-rating-btn" id="${ratingId}-btn" onclick="toggleFeedbackRating('${ratingId}', this)">View Rating</button>
-                    </div>
                     <div class="feedback-rating-panel" id="${ratingId}" style="display:none;">
                         ${breakdownHtml}
                         <div class="feedback-rating-total">Overall Rating: <strong>${scoreVal}%</strong></div>
                     </div>` : ''}
                 </div>`;
-            }).join('');
+            });
+
+            // Show only the first rating per subject by default; the rest stay
+            // in a collapsed container toggled from the teacher-card header.
+            const groupId = `fbsub-${tid}-${subKey}`;
+            const firstHtml = itemHtmls[0] || '';
+            const restHtml = itemHtmls.slice(1).join('');
+            const hasMore = itemHtmls.length > 1;
+            const listHtml = `
+                ${firstHtml}
+                ${hasMore ? `<div class="feedback-more" id="${groupId}-more" style="display:none;">${restHtml}</div>` : ''}`;
 
             return `
             <div class="feedback-subject-group">
@@ -1071,12 +1087,15 @@ window._renderFeedbackList = function() {
                         ${sg.items.length} evaluation${sg.items.length !== 1 ? 's' : ''}${subAvg !== null ? ` · avg ${subAvg}%` : ''}
                     </span>
                 </div>
-                <div class="feedback-comments-list">${itemsHtml}</div>
+                <div class="feedback-comments-list">${listHtml}</div>
             </div>`;
         }).join('');
 
+        const numSubjects = Object.keys(bySubject).length;
+        const hasHidden = group.comments.length > numSubjects;
+
         return `
-        <div class="feedback-teacher-card">
+        <div class="feedback-teacher-card" id="fbteacher-${tid}">
             <div class="feedback-teacher-header">
                 <div class="feedback-teacher-avatar ${colorClass}">
                     ${teacher ? teacher.name.charAt(0).toUpperCase() : '?'}
@@ -1085,13 +1104,16 @@ window._renderFeedbackList = function() {
                     <div class="feedback-teacher-name">${teacher ? escapeHtml(teacher.name) : 'Unknown Teacher'}</div>
                     <div class="feedback-teacher-meta">
                         <span class="dept-tag-inline">${escapeHtml(deptLabel)}</span>
-                        <span style="color:var(--muted);font-size:0.72rem;margin-left:6px;">${Object.keys(bySubject).length} subject${Object.keys(bySubject).length !== 1 ? 's' : ''} · ${group.comments.length} evaluation${group.comments.length !== 1 ? 's' : ''}</span>
+                        <span style="color:var(--muted);font-size:0.72rem;margin-left:6px;">${numSubjects} subject${numSubjects !== 1 ? 's' : ''} · ${group.comments.length} evaluation${group.comments.length !== 1 ? 's' : ''}</span>
                     </div>
                 </div>
-                <button class="feedback-print-btn" onclick="printTeacherFeedback('${tid}')" title="Print all ratings for this faculty">
-                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                    Print All Ratings
-                </button>
+                <div class="feedback-header-actions">
+                    ${hasHidden ? `<button class="feedback-viewall-btn" id="fbteacher-${tid}-btn" onclick="toggleTeacherMore('${tid}', this, ${group.comments.length})">View all ${group.comments.length} ratings</button>` : ''}
+                    <button class="feedback-print-btn" onclick="printTeacherFeedback('${tid}')" title="Print all ratings for this faculty">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                        Print All Ratings
+                    </button>
+                </div>
             </div>
             ${subjectSections}
         </div>`;
@@ -1108,9 +1130,24 @@ function _teacherStudentEvals(teacherId) {
     );
 }
 
-// Entry point from the "Print All Ratings" button. If more than one student
-// has evaluated this faculty, first let the admin choose whether to print
-// everyone or just one specific student; otherwise print straight away.
+// Assign each of a faculty member's evaluations a STABLE anonymous number
+// ("Respondent 1", "Respondent 2", …). Ordered by submission time so the same
+// response always gets the same label across the screen, chooser, and prints.
+// CMO No. 19 §6.10: student identity must never be traceable — so we key on
+// the evaluation id, never on the student.
+function _anonRespondentMap(teacherId) {
+    const evals = _teacherStudentEvals(teacherId).slice().sort((a, b) =>
+        String(a.timestamp || '').localeCompare(String(b.timestamp || '')) ||
+        String(a.id || '').localeCompare(String(b.id || ''))
+    );
+    const map = {};
+    evals.forEach((e, i) => { map[e.id] = i + 1; });
+    return map;
+}
+
+// Entry point from the "Print All Ratings" button. If there is more than one
+// response, let the admin choose to print everything or one anonymous
+// respondent; otherwise print straight away. Student identity is never shown.
 window.printTeacherFeedback = function(teacherId) {
     const evals = _teacherStudentEvals(teacherId);
     if (!evals.length) {
@@ -1118,24 +1155,27 @@ window.printTeacherFeedback = function(teacherId) {
         return;
     }
 
-    const allStudents = getData('students', []);
-    const studentIds = [...new Set(evals.map(e => e.studentId))];
-
-    // Only one student → nothing to choose, print directly.
-    if (studentIds.length <= 1) {
+    // Only one response → nothing to choose, print directly.
+    if (evals.length <= 1) {
         _doPrintTeacherFeedback(teacherId, 'all');
         return;
     }
 
     const teacher = getData('teachers', []).find(t => t.id === teacherId);
+    const allSubjects = getData('subjects', []);
+    const anonMap = _anonRespondentMap(teacherId);
     const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s));
 
-    const options = studentIds.map(sid => {
-        const st = allStudents.find(s => s.id === sid);
-        const label = st ? `${esc(st.name)} (${esc(st.sid)})` : 'Anonymous Student';
-        const count = evals.filter(e => e.studentId === sid).length;
-        return `<option value="${sid}">${label} — ${count} evaluation${count !== 1 ? 's' : ''}</option>`;
-    }).join('');
+    // One option per evaluation, labelled by anonymous respondent number +
+    // subject (subject is not identifying). value = evaluation id.
+    const options = evals
+        .slice()
+        .sort((a, b) => (anonMap[a.id] || 0) - (anonMap[b.id] || 0))
+        .map(e => {
+            const sub = allSubjects.find(s => s.id === e.subjectId);
+            const subTxt = sub ? ` — ${esc(sub.code)}` : '';
+            return `<option value="${esc(e.id)}">Respondent ${anonMap[e.id] || '—'}${subTxt}</option>`;
+        }).join('');
 
     // Lightweight self-contained chooser overlay (no dependency on the app's modal system).
     const overlay = document.createElement('div');
@@ -1143,9 +1183,9 @@ window.printTeacherFeedback = function(teacherId) {
     overlay.innerHTML = `
         <div class="fb-print-dialog">
             <h3>Print Ratings — ${esc(teacher ? teacher.name : 'Faculty')}</h3>
-            <p>Choose what to print:</p>
+            <p>Choose what to print (responses are anonymous):</p>
             <select id="fbPrintScope" class="fb-print-select">
-                <option value="all">All students (${evals.length} evaluations)</option>
+                <option value="all">All responses (${evals.length} evaluations)</option>
                 ${options}
             </select>
             <div class="fb-print-actions">
@@ -1165,15 +1205,16 @@ window.printTeacherFeedback = function(teacherId) {
     };
 };
 
-// Builds and opens the printable report. studentId === 'all' prints every
-// evaluation; otherwise only that student's evaluations of this faculty.
-window._doPrintTeacherFeedback = function(teacherId, studentId) {
+// Builds and opens the printable report. scope === 'all' prints every
+// evaluation; otherwise scope is a single evaluation id (one anonymous
+// respondent). Student identity is never printed.
+window._doPrintTeacherFeedback = function(teacherId, scope) {
     const teacher = getData('teachers', []).find(t => t.id === teacherId);
     const allSubjects = getData('subjects', []);
-    const allStudents = getData('students', []);
+    const anonMap = _anonRespondentMap(teacherId);
     let evals = _teacherStudentEvals(teacherId);
-    if (studentId && studentId !== 'all') {
-        evals = evals.filter(e => e.studentId === studentId);
+    if (scope && scope !== 'all') {
+        evals = evals.filter(e => e.id === scope);
     }
 
     if (!evals.length) {
@@ -1181,8 +1222,7 @@ window._doPrintTeacherFeedback = function(teacherId, studentId) {
         return;
     }
 
-    const chosenStudent = (studentId && studentId !== 'all')
-        ? allStudents.find(s => s.id === studentId) : null;
+    const singleRespondent = (scope && scope !== 'all') ? (anonMap[scope] || null) : null;
 
     const cfg = (typeof getDepartments === 'function' ? getDepartments() : {})[teacher ? teacher.dept : ''] || {};
     const deptName = cfg.name || (teacher ? teacher.dept : '') || 'N/A';
@@ -1205,7 +1245,6 @@ window._doPrintTeacherFeedback = function(teacherId, studentId) {
 
     const oneEvalBlock = (ev, i) => {
         const sub = allSubjects.find(s => s.id === ev.subjectId);
-        const student = allStudents.find(s => s.id === ev.studentId);
         const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
         const rows = _extractRatingRows(ev);
         const scoreVal = (typeof ev.totalScore === 'number') ? ev.totalScore.toFixed(2) + '%' : '—';
@@ -1219,7 +1258,7 @@ window._doPrintTeacherFeedback = function(teacherId, studentId) {
         <div class="ev-block">
             <div class="ev-head">
                 <span class="ev-num">#${i + 1}</span>
-                <span class="ev-subj">${student ? esc(student.name) + ' (' + esc(student.sid) + ')' : 'Anonymous Student'}</span>
+                <span class="ev-subj">Respondent ${anonMap[ev.id] || '—'} <em style="font-weight:400;color:#777;">(anonymous)</em></span>
                 <span class="ev-date">${ts}</span>
             </div>
             <table class="q-table">
@@ -1287,7 +1326,7 @@ window._doPrintTeacherFeedback = function(teacherId, studentId) {
             <div><strong>Faculty ID:</strong> ${esc(teacher ? teacher.tid : '—')}</div>
             <div><strong>Department / College:</strong> ${esc(deptName)}</div>
             <div><strong>Faculty Type:</strong> ${esc(teacher ? (teacher.facultyType || 'regular') : '—')}</div>
-            <div><strong>Scope:</strong> ${chosenStudent ? 'Single student — ' + esc(chosenStudent.name) + ' (' + esc(chosenStudent.sid) + ')' : 'All students'}</div>
+            <div><strong>Scope:</strong> ${singleRespondent ? 'Single respondent — Respondent ' + singleRespondent + ' (anonymous)' : 'All respondents'}</div>
         </div>
         <div class="summary">
             <div class="box"><div class="n">${evals.length}</div><div class="l">Evaluations</div></div>
@@ -1303,7 +1342,78 @@ window._doPrintTeacherFeedback = function(teacherId, studentId) {
     w.focus();
     setTimeout(() => { try { w.print(); } catch (e) {} }, 350);
 
-    if (typeof addAudit === 'function') addAudit('Print Ratings', `Printed ${chosenStudent ? 'ratings by ' + chosenStudent.name : 'all ratings'} for ${teacher ? teacher.name : teacherId}`);
+    if (typeof addAudit === 'function') addAudit('Print Ratings', `Printed ${singleRespondent ? 'one anonymous respondent' : 'all ratings'} for ${teacher ? teacher.name : teacherId}`);
+};
+
+// Print a SINGLE evaluation — one student's comment and rating for one subject.
+window.printOneEvaluation = function(evalId) {
+    const ev = getData('evaluations', []).find(e => e.id === evalId);
+    if (!ev) { showToast('Could not find that evaluation.', 'warning'); return; }
+
+    const allSubjects = getData('subjects', []);
+    const sub = allSubjects.find(s => s.id === ev.subjectId);
+    const teacher = getData('teachers', []).find(t => t.id === ((sub ? sub.teacherId : null) || ev.teacherId));
+    const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s));
+    const respondentNo = _anonRespondentMap(teacher ? teacher.id : ev.teacherId)[ev.id] || '—';
+
+    const cfg = (typeof getDepartments === 'function' ? getDepartments() : {})[teacher ? teacher.dept : ''] || {};
+    const deptName = cfg.name || (teacher ? teacher.dept : '') || 'N/A';
+    const now = new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+    const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+
+    const rows = _extractRatingRows(ev);
+    const scoreVal = (typeof ev.totalScore === 'number') ? ev.totalScore.toFixed(2) + '%' : '—';
+    const commentHtml = (ev.comment && ev.comment.trim())
+        ? '"' + esc(ev.comment) + '"'
+        : '<em style="color:#777;">No written comment — rating only</em>';
+    const questionRows = rows.length
+        ? rows.map(r => `<tr><td>${esc(String(r.label))}</td><td style="text-align:center;font-weight:600;">${esc(String(r.score))}</td></tr>`).join('')
+        : `<tr><td colspan="2" style="color:#777;font-style:italic;">Per-question breakdown wasn't recorded — overall rating only.</td></tr>`;
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Rating — Respondent ${respondentNo}</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; margin: 32px; font-size: 12px; }
+        h1 { font-size: 18px; margin: 0 0 4px; }
+        .sub { color: #555; font-size: 12px; margin: 0 0 16px; }
+        .info { border: 1px solid #ccc; border-radius: 6px; padding: 12px 14px; margin-bottom: 16px; background: #f8f9fa; }
+        .info div { margin: 2px 0; }
+        .info strong { display: inline-block; min-width: 150px; }
+        .q-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+        .q-table th, .q-table td { border: 1px solid #ddd; padding: 5px 8px; font-size: 11px; text-align: left; }
+        .q-table thead th { background: #eef2f5; }
+        .q-table tfoot td { background: #f8f9fa; }
+        .cbox { border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; font-style: italic; font-size: 12px; }
+        @media print { body { margin: 12px; } .noprint { display: none; } }
+        .noprint { text-align: center; margin-bottom: 16px; }
+        .noprint button { padding: 8px 20px; font-size: 13px; border: none; border-radius: 6px; background: #059669; color: #fff; cursor: pointer; }
+    </style></head><body>
+        <div class="noprint"><button onclick="window.print()">🖨️ Print</button></div>
+        <h1>Student Evaluation — Single Record</h1>
+        <p class="sub">Student Evaluation of Teachers (SET) — generated ${now}</p>
+        <div class="info">
+            <div><strong>Faculty:</strong> ${esc(teacher ? teacher.name : 'Unknown')} (${esc(teacher ? teacher.tid : '—')})</div>
+            <div><strong>Department / College:</strong> ${esc(deptName)}</div>
+            <div><strong>Subject:</strong> ${sub ? esc(sub.code) + ' — ' + esc(sub.name) : 'Unknown Subject'}</div>
+            <div><strong>Respondent:</strong> Respondent ${respondentNo} <em style="color:#777;">(anonymous — CMO No. 19 §6.10)</em></div>
+            <div><strong>Date:</strong> ${ts}</div>
+        </div>
+        <table class="q-table">
+            <thead><tr><th>Question / Criterion</th><th style="width:90px;text-align:center;">Score</th></tr></thead>
+            <tbody>${questionRows}</tbody>
+            <tfoot><tr><td style="text-align:right;font-weight:700;">Overall Rating</td><td style="text-align:center;font-weight:700;">${scoreVal}</td></tr></tfoot>
+        </table>
+        <div class="cbox"><strong style="font-style:normal;">Comment:</strong> ${commentHtml}</div>
+    </body></html>`;
+
+    const w = window.open('', '_blank');
+    if (!w) { showToast('Please allow pop-ups to print.', 'warning'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch (e) {} }, 350);
+
+    if (typeof addAudit === 'function') addAudit('Print Rating', `Printed one anonymous rating (Respondent ${respondentNo} → ${teacher ? teacher.name : 'faculty'})`);
 };
 
 // The 15 CMO SET questions students actually answer (mirrors QUESTIONS in
@@ -1423,6 +1533,17 @@ window.toggleFeedbackRating = function(ratingId, btnEl) {
     const showing = el.style.display !== 'none';
     el.style.display = showing ? 'none' : 'block';
     if (btnEl) btnEl.textContent = showing ? 'View Rating' : 'Hide Rating';
+};
+
+// Expand/collapse every collapsed subject group within one teacher card at
+// once (button lives beside "Print All Ratings" in the header).
+window.toggleTeacherMore = function(teacherId, btnEl, total) {
+    const card = document.getElementById(`fbteacher-${teacherId}`);
+    if (!card) return;
+    const mores = card.querySelectorAll('.feedback-more');
+    const anyHidden = Array.from(mores).some(m => m.style.display === 'none');
+    mores.forEach(m => { m.style.display = anyHidden ? 'block' : 'none'; });
+    if (btnEl) btnEl.textContent = anyHidden ? 'Show less' : `View all ${total} ratings`;
 };
 
 window.filterFeedback = function(dept, search) {

@@ -367,7 +367,6 @@ window.syncCollectionToFirestore = async function(key, value) {
         schoolYears: 'schoolYears',
         auditLog: 'auditLog', 
         evalPeriod: 'settings', 
-        adminCreds: 'settings',
         finalReports: 'finalReports',
         customDepartments: 'customDepartments'
     };

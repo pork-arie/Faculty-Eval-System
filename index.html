@@ -79,6 +79,17 @@ try {
   fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){});
 } catch (e) { console.error('Firebase init failed:', e); }
 
+// If the admin is already signed in (e.g. they hit the browser "back" button
+// from the dashboard), don't show the login form again — bounce straight back
+// to the dashboard.
+if (fbAuth) {
+  fbAuth.onAuthStateChanged(function (user) {
+    if (user && sessionStorage.getItem('adminLoggedIn') === 'true') {
+      window.location.replace('admin/dashboard.html');
+    }
+  });
+}
+
 async function logLoginToFirebase(username, success) {
   if (!db) return;
   try {
@@ -91,7 +102,13 @@ async function logLoginToFirebase(username, success) {
   } catch (e) { console.warn('Login log error:', e.message); }
 }
 
-const STRICT_ADMIN = false; // keep in sync with dashboard.html
+// STRICT_ADMIN = true means ONLY users with an /admins/{uid} doc may sign in.
+// This is the production setting and matches "only authorized administrators".
+// Pair it with the deployed firestore.rules. First-admin bootstrap: create
+// admins/<your-uid> once in the Firebase console. If you ever get locked out,
+// temporarily set this to false, log in (which recreates the doc under open
+// rules), then set it back to true. Keep in sync with dashboard.html.
+const STRICT_ADMIN = true;
 
 async function ensureAdmin(user) {
   try {
@@ -151,16 +168,13 @@ async function doAdminLogin() {
     sessionStorage.setItem('adminLoggedIn', 'true');
     // ==============================================================
 
-    window.location.href = 'admin/dashboard.html';
+    // Use replace() so the login page is NOT left in browser history —
+    // otherwise the mouse "back" button would return here after logging in.
+    window.location.replace('admin/dashboard.html');
   } catch (e) {
     console.error('Login failed:', e.code, e.message);
     await logLoginToFirebase(email, false);
-    let proj = '';
-    try { proj = firebase.app().options.projectId; } catch (_) {}
-    errEl.innerHTML = friendlyAuthError(e)
-      + '<div style="margin-top:8px;font-size:0.68rem;color:#94a3b8;font-weight:400;">'
-      + 'details: ' + (e.code || 'n/a') + ' &middot; project: ' + proj + ' &middot; email: "' + email + '" &middot; password length: ' + pass.length
-      + '</div>';
+    errEl.textContent = friendlyAuthError(e);
     errEl.style.display = 'block';
     if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign In as Admin'; }
   }
