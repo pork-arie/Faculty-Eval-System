@@ -133,18 +133,143 @@ window.calculateWeightedSETRating = function(facultyId) {
         : 0;
 };
 
+// Editable cell for a printed form. Values typed here apply to this print run
+// only; the saved record is untouched. Rank in particular is often adjusted at
+// print time (a promotion mid-semester, or a rank the dropdown does not list).
+window.printField = function(value, minWidth, placeholder) {
+    // The rule is set INLINE rather than left to admin-styles.css. A stale cached
+    // stylesheet meant Name/Position rendered with no line at all, which looks
+    // like a broken form rather than a blank waiting to be filled.
+    // &nbsp; keeps an empty span from collapsing to zero height.
+    const v = escapeHtml(value || '');
+    return '<span contenteditable="true" spellcheck="false" data-print-field="1" '
+      + 'data-placeholder="' + escapeHtml(placeholder || '') + '" '
+      + 'style="display:inline-block;min-width:' + (minWidth || '60%')
+      + ';padding:0 4px;outline:none;border-bottom:1px solid #333;'
+      + 'line-height:1.4;min-height:1.15em;vertical-align:bottom;">'
+      + (v || '&nbsp;') + '</span>';
+};
+
+// Real date picker rather than a blank line, defaulted to today so the common
+// case needs no typing at all.
+window.printDate = function(idSuffix) {
+    const today = new Date().toISOString().slice(0, 10);
+    return '<input type="date" id="printDate_' + idSuffix + '" value="' + today + '" '
+      + 'style="border:none;border-bottom:1px solid #333;font-family:inherit;'
+      + 'font-size:0.75rem;padding:1px 3px;background:transparent;outline:none;"/>';
+};
+
+// ===== REPORT SIGNATORIES =====
+// The Prepared by / Reviewed by names are the same on every printed report, so
+// they are stored once and filled in automatically rather than being handwritten
+// on each copy. The printed block stays editable (contenteditable) so a one-off
+// stand-in can be typed before printing without changing the saved default.
+window.getSignatories = function() {
+    const d = getData('reportSignatories', {});
+    return {
+        preparedName: d.preparedName || '',
+        preparedRole: d.preparedRole || '',
+        reviewedName: d.reviewedName || '',
+        reviewedRole: d.reviewedRole || ''
+    };
+};
+
+window.openSignatoriesModal = function() {
+    const sig = getSignatories();
+    let ov = document.getElementById('sigModal');
+    if (ov) ov.remove();
+    ov = document.createElement('div');
+    ov.id = 'sigModal';
+    ov.className = 'modal-overlay open';
+    ov.innerHTML = `
+      <div class="modal" style="max-width:520px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Report Signatories</h2>
+          <button class="modal-close" onclick="closeModal('sigModal')">&#10005;</button>
+        </div>
+        <div class="modal-body" style="padding:20px;">
+          <p style="font-size:0.78rem;color:var(--muted);margin:0 0 16px;line-height:1.5;">
+            Filled in automatically on Annex C, Annex D and the FER. You can still type over
+            them on the printed page before printing without changing what is saved here.
+          </p>
+          <div class="form-group"><label class="form-label">Prepared by &mdash; Name of Staff</label>
+            <input class="form-control" id="sigPrepName" value="${escapeHtml(sig.preparedName)}" placeholder="JOHNNY BOY G. GALVAN"/></div>
+          <div class="form-group"><label class="form-label">Prepared by &mdash; Position</label>
+            <input class="form-control" id="sigPrepRole" value="${escapeHtml(sig.preparedRole)}" placeholder="Admin Officer II / QA I"/></div>
+          <div class="form-group"><label class="form-label">Reviewed by &mdash; Authorized Official</label>
+            <input class="form-control" id="sigRevName" value="${escapeHtml(sig.reviewedName)}" placeholder="ELEGRECIO M. TIMAN"/></div>
+          <div class="form-group"><label class="form-label">Reviewed by &mdash; Position</label>
+            <input class="form-control" id="sigRevRole" value="${escapeHtml(sig.reviewedRole)}" placeholder="Admin Officer V / QA Director"/></div>
+        </div>
+        <div class="modal-footer" style="padding:14px 20px;display:flex;gap:8px;justify-content:flex-end;">
+          <button class="btn btn-ghost" onclick="closeModal('sigModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveSignatories()">Save</button>
+        </div>
+      </div>`;
+    ov.addEventListener('click', e => { if (e.target === ov) closeModal('sigModal'); });
+    document.body.appendChild(ov);
+};
+
+window.saveSignatories = function() {
+    const v = id => (document.getElementById(id) || {}).value.trim() || '';
+    setData('reportSignatories', {
+        preparedName: v('sigPrepName'), preparedRole: v('sigPrepRole'),
+        reviewedName: v('sigRevName'),  reviewedRole: v('sigRevRole')
+    });
+    addAudit('Update Signatories', 'Report signatories updated');
+    closeModal('sigModal');
+    showToast('Signatories saved. They will appear on all printed reports.', 'success');
+};
+
+// A name/position line for the printed block. contenteditable so it can be
+// overtyped for a single print run; print:no-underline keeps it clean on paper.
+window.sigDate = function(which) {
+    return '<div style="font-size:0.75rem;">Date: ' + printDate(which) + '</div>';
+};
+
+window.sigLine = function(label, value, width) {
+    // Uses printField so the signatory lines get the same on-screen affordance
+    // and the same solid rule when printed as every other editable cell.
+    return '<div style="margin-bottom:6px;font-size:0.75rem;">' + label + ': '
+      + printField(value, width, label) + '</div>';
+};
+
+// ===== SUPERVISOR (SEF) AGGREGATION =====
+// More than one supervisor can legitimately rate the same faculty member: a
+// college may have a dean and a program chair, and a chairperson borrowed from
+// another department supervises there too. Every one of those ratings is valid.
+//
+// The codebase used to disagree with itself about what to do with them — some
+// screens averaged, others took sefData[last] or .pop(), i.e. whichever
+// supervisor happened to submit most recently, silently discarding the rest.
+// That made the same faculty show different SEF figures on different pages.
+//
+// One rule now, everywhere: the SEF score is the MEAN of all supervisor ratings
+// for that faculty in the term. Averaging is the defensible reading of CMO 19 —
+// each supervisor's judgement carries equal weight, and no rating is thrown away.
+window.getSEFForTeacher = function(teacherId, termFilter) {
+    const list = getData('evaluations', [])
+        .filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor')
+        .filter(e => typeof termFilter === 'function' ? termFilter(e) : true);
+
+    if (!list.length) return { count: 0, average: null, list: [] };
+
+    const sum = list.reduce((a, e) => a + (parseFloat(e.totalScore) || 0), 0);
+    return { count: list.length, average: sum / list.length, list };
+};
+
 // ===== CMO COMPLIANT: Calculate Final Rating (60% Student + 40% Supervisor) =====
 window.calculateFinalRating = function(teacherId) {
     const studentPercentage = parseFloat(calculateWeightedSETRating(teacherId));
-    const evals = getData('evaluations', []);
-    const sefData = evals.filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor');
+    const sefAgg = getSEFForTeacher(teacherId);
+    const sefData = sefAgg.list;
 
     // A real SET is never 0 (the lowest possible rating is 20%), so 0 means
     // "no student evaluations yet". Likewise, no SEF record means "not evaluated
     // by a supervisor" — it must NOT be treated as a score of 0.
     const hasSET = studentPercentage > 0;
     const hasSEF = sefData.length > 0;
-    const supervisorScore = hasSEF ? sefData[sefData.length - 1].totalScore : null;
+    const supervisorScore = hasSEF ? sefAgg.average : null;   // mean of ALL supervisors
 
     // CMO 19 reports SET and SEF separately. Only compute a combined 60/40 figure
     // when BOTH exist; otherwise there is no final score to show.
@@ -258,8 +383,7 @@ function renderDashboard() {
     if (!deptMap[t.dept]) deptMap[t.dept] = { setTotal: 0, sefTotal: 0, setCount: 0, sefCount: 0, faculty: 0 };
     deptMap[t.dept].faculty++;
     const set = parseFloat(calculateWeightedSETRating(t.id));
-    const tefEvals = getData('evaluations', []).filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
-    const sef = tefEvals.length > 0 ? tefEvals[tefEvals.length - 1].totalScore : 0;
+    const sef = getSEFForTeacher(t.id).average || 0;
     if (set > 0) { deptMap[t.dept].setTotal += set; deptMap[t.dept].setCount++; }
     if (sef > 0) { deptMap[t.dept].sefTotal += sef; deptMap[t.dept].sefCount++; }
   });
@@ -406,7 +530,7 @@ function renderStudents(search = '') {
   const filtered = students.filter(s =>
     (s.name.toLowerCase().includes(search.toLowerCase()) || s.sid.includes(search) || (s.dept||'').toLowerCase().includes(search.toLowerCase())) &&
     (!deptActive || s.dept === deptActive)
-  );
+  ).sort(byName);
   const tbody = document.getElementById('studentsTbody');
   if (!filtered.length) { tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted);">No students found.</td></tr>`; return; }
   tbody.innerHTML = filtered.map(s => `
@@ -428,6 +552,44 @@ function renderStudents(search = '') {
   `).join('');
 }
 
+// ===== NAME HELPERS =====
+// Assembles the display name in reading order: "Prof. Juan M. Santos Jr."
+function buildName(parts) {
+  return [parts.title, parts.first, parts.middle, parts.last, parts.suffix]
+    .map(v => String(v || '').trim()).filter(Boolean).join(' ');
+}
+
+// Splits an existing free-text name so the edit modal can pre-fill the fields.
+// Only used for records saved before the name was split into separate inputs.
+function splitName(full) {
+  const TITLES   = ['Prof.', 'Dr.', 'Engr.', 'Atty.', 'Rev.', 'Mr.', 'Ms.', 'Mrs.'];
+  const SUFFIXES = ['Jr.', 'Jr', 'Sr.', 'Sr', 'II', 'III', 'IV', 'V'];
+  const w = String(full || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const out = { title: '', first: '', middle: '', last: '', suffix: '' };
+  if (!w.length) return out;
+  if (TITLES.includes(w[0])) out.title = w.shift();
+  if (w.length && SUFFIXES.includes(w[w.length - 1])) out.suffix = w.pop();
+  if (!w.length) return out;
+  out.last  = w.length > 1 ? w.pop() : '';
+  out.first = w.shift() || '';
+  out.middle = w.join(' ');
+  if (!out.last) { out.last = out.first; out.first = ''; }
+  return out;
+}
+
+// Surname used for A-Z sorting. Falls back to the last word of the stored name
+// for records that predate the separate Last Name field.
+function sortKey(p) {
+  const last = (p && p.lastName) ? p.lastName : splitName(p && p.name).last;
+  return String(last || (p && p.name) || '').trim();
+}
+
+// Alphabetical by surname, then by full name for ties.
+function byName(a, b) {
+  return sortKey(a).localeCompare(sortKey(b), 'en', { sensitivity: 'base' })
+      || String(a.name || '').localeCompare(String(b.name || ''), 'en', { sensitivity: 'base' });
+}
+
 // ── Shared helper: populate any dept <select> from live getDepartments() ──
 function populateDeptDropdown(selectId, selectedValue) {
   const sel = document.getElementById(selectId);
@@ -440,15 +602,30 @@ function populateDeptDropdown(selectId, selectedValue) {
   if (selectedValue !== undefined) sel.value = selectedValue;
 }
 
+// Read / write the split name inputs on the student modal
+function stuNameParts() {
+  const v = id => (document.getElementById(id) || {}).value || '';
+  return { first: v('stuFirst'), middle: v('stuMiddle'), last: v('stuLast'), suffix: v('stuSuffix') };
+}
+function fillStuNameFields(s) {
+  const p = s && s.lastName
+    ? { first: s.firstName, middle: s.middleName, last: s.lastName, suffix: s.suffix }
+    : splitName(s && s.name);
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  set('stuFirst', p.first); set('stuMiddle', p.middle);
+  set('stuLast', p.last);   set('stuSuffix', p.suffix);
+}
+
 function openAddStudentModal() {
   editStudentId = null;
   _stuCourseActiveDept = '';
   document.getElementById('studentModalTitle').textContent = 'Add Student';
   document.getElementById('saveStudentBtn').textContent = 'Add Student';
-  ['stuId','stuName','stuSection','stuPass'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
+  ['stuId','stuSection','stuPass'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
+  fillStuNameFields(null);
   document.getElementById('stuYear').value = '1st Year';
   populateDeptDropdown('stuDept', '');
-  buildStuCourseDeptBar('');
+  loadStuCourses('');
   openModal('addStudentModal');
 }
 
@@ -459,34 +636,92 @@ function openEditStudentModal(id) {
   document.getElementById('studentModalTitle').textContent = 'Edit Student';
   document.getElementById('saveStudentBtn').textContent = 'Save Changes';
   document.getElementById('stuId').value = s.sid;
-  document.getElementById('stuName').value = s.name;
+  fillStuNameFields(s);
   document.getElementById('stuYear').value = s.year;
   document.getElementById('stuSection').value = s.section;
-  populateDeptDropdown('stuDept', s.dept || '');
+  const stuDeptCode = s.dept || deptForCourse(s.course);
+  populateDeptDropdown('stuDept', stuDeptCode);
   document.getElementById('stuPass').value = '';
-  buildStuCourseDeptBar(s.course || '');
+  _stuPendingCourse = s.course || '';
+  loadStuCourses(stuDeptCode);
   openModal('addStudentModal');
 }
 
+// ===== STUDENT ID FORMAT =====
+// NwSSU student IDs are YY-NNNNN: two-digit entry year, hyphen, five digits,
+// zero-padded. The padding is load-bearing - "22-1745" and "22-01745" are the
+// same person to a human but two different strings to the duplicate check, so
+// one mistyped entry creates a second record that looks identical on screen.
+const STUDENT_ID_RE = /^\d{2}-\d{5}$/;
+
+// Repairs the near-misses people actually type, and NOTHING else.
+//
+// The separator is required. An earlier version made it optional, which quietly
+// mangled every legacy ID in the roster: "2021001" is seven digits, so it
+// matched as 20 + 21001 and became "20-21001" - a different student, silently.
+// Bare digit strings are genuinely ambiguous (2201745 could be 22-01745 or an
+// old-format ID) so they are left alone and allowed to fail validation instead.
+function normalizeStudentId(raw) {
+  const v = String(raw || '').trim();
+  const m = v.match(/^(\d{2})\s*[-\u2013\u2014_ ]\s*(\d{1,5})$/);
+  if (!m) return v;
+  return m[1] + '-' + m[2].padStart(5, '0');
+}
+
 function saveStudent() {
-  const sid = document.getElementById('stuId').value.trim();
-  const name = document.getElementById('stuName').value.trim();
+  const sid = normalizeStudentId(document.getElementById('stuId').value);
+  // Write the normalized value back so the field shows what was actually saved.
+  document.getElementById('stuId').value = sid;
+  const nameParts = stuNameParts();
+  const name = buildName(nameParts);
   const course = (document.getElementById('stuCourse') ? document.getElementById('stuCourse').value.trim() : '');
   const year = document.getElementById('stuYear').value;
-  const section = document.getElementById('stuSection').value.trim();
+  // Uppercased on the way in, not just on screen. text-transform only changes
+  // how the input looks - a typed "a" still submits as "a" - and sections are
+  // compared as plain strings when grouping students, so "A" and "a" would
+  // show up as two different sections.
+  const section = document.getElementById('stuSection').value.trim().toUpperCase();
   const dept = document.getElementById('stuDept').value;
   const pass = document.getElementById('stuPass').value;
-  if (!sid || !name || !section) { showToast('Fill all required fields.', 'error'); return; }
+  if (!sid || !nameParts.first.trim() || !nameParts.last.trim() || !section) {
+    showToast('ID number, first name, last name and section are required.', 'error');
+    return;
+  }
+  // Enforced on NEW ids only. Students enrolled before the YY-NNNNN format was
+  // adopted keep ids like 2021001, and blocking those would mean you could not
+  // fix a legacy student's section without first changing their ID - which would
+  // break their login, since the app matches on sid exactly.
+  const priorSid = editStudentId
+    ? (students.find(s => s.id === editStudentId) || {}).sid
+    : null;
+  const sidUnchanged = priorSid != null && sid === priorSid;
+  if (!sidUnchanged && !STUDENT_ID_RE.test(sid)) {
+    showToast(`Student ID must look like 22-01745 (year, dash, 5 digits). Got "${sid}".`, 'error');
+    return;
+  }
+  const nameFields = {
+    firstName:  nameParts.first.trim(),
+    middleName: nameParts.middle.trim(),
+    lastName:   nameParts.last.trim(),
+    suffix:     nameParts.suffix.trim()
+  };
   const students = getData('students', []);
   if (editStudentId) {
+    // The duplicate check used to live only on the add path, so editing an
+    // existing student's ID to one already taken went straight through.
+    // Excludes the record being edited - otherwise saving without changing
+    // the ID would collide with itself.
+    if (students.find(s => s.sid === sid && !s.deleted && s.id !== editStudentId)) {
+      showToast('Another student already uses that ID.', 'error'); return;
+    }
     const idx = students.findIndex(s => s.id === editStudentId);
-    Object.assign(students[idx], { sid, name, course, year, section, dept });
+    Object.assign(students[idx], { sid, name, course, year, section, dept }, nameFields);
     if (pass) students[idx].password = pass;
     addAudit('Edit Student', `Updated: ${name} (${sid})`);
     showToast('Student updated!', 'success');
   } else {
     if (students.find(s => s.sid === sid && !s.deleted)) { showToast('ID already exists.', 'error'); return; }
-    students.push({ id: 'stu'+Date.now(), sid, name, course, year, section, dept, password: pass||sid, status:'active', forceReset:false, deleted:false });
+    students.push(Object.assign({ id: 'stu'+Date.now(), sid, name, course, year, section, dept, password: pass||sid, status:'active', forceReset:false, deleted:false }, nameFields));
     addAudit('Add Student', `Added: ${name} (${sid})`);
     showToast('Student added!', 'success');
   }
@@ -692,7 +927,7 @@ window.renderTeachers = function(search = '') {
       deptFull.includes(q);
     const matchesDept = !deptActive || t.dept === deptActive;
     return matchesSearch && matchesDept;
-  });
+  }).sort(byName);
 
   const tbody = document.getElementById('teachersTbody');
   if (!tbody) return;
@@ -827,7 +1062,7 @@ window.renderSupervisorTable = function(search) {
       deptFull.includes(sq);
     const matchesDept = !deptActive || t.dept === deptActive;
     return matchesSearch && matchesDept;
-  });
+  }).sort(byName);
 
   const tbody = document.getElementById('supervisorsTbody');
   if (!tbody) return;
@@ -865,13 +1100,11 @@ window.renderSupervisorTable = function(search) {
 
     supList.forEach(t => {
       const tSubs = subjects.filter(s => s.teacherId === t.id);
-      const roleLabel = t.deptRole === 'dean' ? '🎓 Dean' : t.deptRole === 'chairperson' ? '🪑 Chairperson' : '👤 Supervisor';
-      const roleColor = t.deptRole === 'dean' ? '#7c3aed' : t.deptRole === 'chairperson' ? '#0369a1' : '#374151';
       html += `<tr class="teacher-row dept-group-student-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
         <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
         <td><strong>${escapeHtml(t.name)}</strong></td>
         <td><span class="dept-tag-inline">${escapeHtml(t.dept || '—')}</span></td>
-        <td><span style="font-size:0.75rem;font-weight:600;color:${roleColor};">${roleLabel}</span></td>
+        <td>${supRoleCellHtml(t)}</td>
         <td>${tSubs.map(s => `<span class="badge badge-primary" style="margin:1px;">${escapeHtml(s.code)}</span>`).join('') || '<span style="color:var(--muted)">None</span>'}</td>
         <td><span class="badge ${t.status === 'active' ? 'badge-success' : 'badge-danger'}">${t.status}</span></td>
         <td><div class="td-actions" onclick="event.stopPropagation()">
@@ -951,16 +1184,32 @@ window.renderTeacherDetailsContent = function(teacherId) {
   `;
 };
 
+// Read / write the split name inputs on the faculty modal
+function tchNameParts() {
+  const v = id => (document.getElementById(id) || {}).value || '';
+  return { title: v('tchTitle'), first: v('tchFirst'), middle: v('tchMiddle'), last: v('tchLast'), suffix: v('tchSuffix') };
+}
+function fillTchNameFields(t) {
+  const p = t && t.lastName
+    ? { title: t.title, first: t.firstName, middle: t.middleName, last: t.lastName, suffix: t.suffix }
+    : splitName(t && t.name);
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  set('tchTitle', p.title);  set('tchFirst', p.first);
+  set('tchMiddle', p.middle); set('tchLast', p.last); set('tchSuffix', p.suffix);
+}
+
 function openAddTeacherModal() {
   editTeacherId = null;
   _pendingFacultyType = 'regular';
   document.getElementById('teacherModalTitle').textContent = 'Add Faculty';
   document.getElementById('saveTeacherBtn').textContent = 'Add Faculty';
   document.getElementById('tchId').value = '';
-  document.getElementById('tchName').value = '';
+  fillTchNameFields(null);
   populateDeptDropdown('tchDept', '');
   const catEl = document.getElementById('tchCategory');
   if (catEl) catEl.value = '';
+  const rkEl = document.getElementById('tchRank');
+  if (rkEl) rkEl.value = '';
   const ftEl = document.getElementById('tchFacultyType');
   if (ftEl) ftEl.value = 'regular';
   const hidden = document.getElementById('tchFacultyTypeHidden');
@@ -968,11 +1217,109 @@ function openAddTeacherModal() {
   const drEl = document.getElementById('tchDeptRole');
   const drGrp = document.getElementById('tchDeptRoleGroup');
   if (drEl) drEl.value = '';
+  renderSupRows(null);
   if (drGrp) drGrp.style.display = 'none';
   const ftGrp = document.getElementById('tchFacultyTypeGroup');
   if (ftGrp) ftGrp.style.display = '';
   openModal('addTeacherModal');
 }
+
+// Role cell for a supervisor. Shows every department they oversee, not just the
+// first — a Dean of COED who also chairs a CCIS program should read as both.
+window.supRoleCellHtml = function(t) {
+  const ROLE = {
+    dean:        { label: '\ud83c\udf93 Dean',        color: '#7c3aed' },
+    chairperson: { label: '\ud83e\ude91 Chairperson', color: '#0369a1' },
+    supervisor:  { label: '\ud83d\udc64 Supervisor',  color: '#374151' }
+  };
+  const list = getSupervisedDepts(t);
+  if (!list.length) return '<span style="color:var(--muted);font-size:0.75rem;">\u2014</span>';
+  return list.map(a => {
+    const r = ROLE[a.role] || ROLE.supervisor;
+    return '<div style="font-size:0.75rem;font-weight:600;color:' + r.color + ';white-space:nowrap;">'
+         + r.label + ' <span style="color:var(--muted);font-weight:500;">\u00b7 ' + escapeHtml(a.dept) + '</span></div>';
+  }).join('');
+};
+
+// ===== SUPERVISORY ASSIGNMENTS (multi-department) =====
+// A supervisor is not always tied to one department. A Dean of COED may also
+// chair a CCIS program, and a part-time program chair may cover two or three.
+// Assignments are therefore stored as a list:
+//     supervisedDepts: [ { dept: 'COED', role: 'dean' },
+//                        { dept: 'CCIS', role: 'chairperson' } ]
+// `dept` and `deptRole` on the teacher record are kept in sync with the FIRST
+// entry so older code (and the Android app until it is updated) still works.
+
+const SUP_ROLES = [
+  { value: 'dean',        label: '\ud83c\udf93 Dean' },
+  { value: 'chairperson', label: '\ud83e\ude91 Chairperson' },
+  { value: 'supervisor',  label: '\ud83d\udc64 General Supervisor' }
+];
+
+// Read whatever the record has, old shape or new, as a normalised list.
+window.getSupervisedDepts = function(t) {
+  if (!t) return [];
+  if (Array.isArray(t.supervisedDepts) && t.supervisedDepts.length) {
+    return t.supervisedDepts.filter(a => a && a.dept);
+  }
+  // Legacy record: a single dept + deptRole pair.
+  if (t.dept && t.deptRole) return [{ dept: t.dept, role: t.deptRole }];
+  if (t.dept) return [{ dept: t.dept, role: 'supervisor' }];
+  return [];
+};
+
+function _supRowHtml(idx, dept, role) {
+  const depts = (typeof getDepartments === 'function') ? getDepartments() : {};
+  const deptOpts = '<option value="">-- Department --</option>' +
+    Object.entries(depts).map(([code, cfg]) =>
+      `<option value="${code}"${code === dept ? ' selected' : ''}>${code} \u2014 ${escapeHtml(cfg.name)}</option>`
+    ).join('');
+  const roleOpts = '<option value="">-- Role --</option>' +
+    SUP_ROLES.map(r => `<option value="${r.value}"${r.value === role ? ' selected' : ''}>${r.label}</option>`).join('');
+  return `
+    <div class="sup-row" data-idx="${idx}" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+      <select class="form-control sup-dept" style="flex:1;">${deptOpts}</select>
+      <select class="form-control sup-role" style="flex:1;">${roleOpts}</select>
+      <button type="button" class="btn btn-ghost btn-icon btn-sm" title="Remove"
+              onclick="removeSupRow(this)" style="color:var(--danger,#dc2626);">&#10005;</button>
+    </div>`;
+}
+
+window.renderSupRows = function(assignments) {
+  const host = document.getElementById('tchSupRows');
+  if (!host) return;
+  const list = (assignments && assignments.length) ? assignments : [{ dept: '', role: '' }];
+  host.innerHTML = list.map((a, i) => _supRowHtml(i, a.dept || '', a.role || '')).join('');
+};
+
+window.addSupRow = function() {
+  const host = document.getElementById('tchSupRows');
+  if (!host) return;
+  host.insertAdjacentHTML('beforeend', _supRowHtml(host.children.length, '', ''));
+};
+
+window.removeSupRow = function(btn) {
+  const host = document.getElementById('tchSupRows');
+  const row = btn.closest('.sup-row');
+  if (row) row.remove();
+  if (host && host.children.length === 0) renderSupRows(null);   // never leave it empty
+};
+
+// Collect the rows, dropping blanks and duplicate departments.
+window.readSupRows = function() {
+  const host = document.getElementById('tchSupRows');
+  if (!host) return [];
+  const seen = new Set();
+  const out = [];
+  Array.prototype.forEach.call(host.querySelectorAll('.sup-row'), row => {
+    const dept = (row.querySelector('.sup-dept') || {}).value || '';
+    const role = (row.querySelector('.sup-role') || {}).value || '';
+    if (!dept || seen.has(dept)) return;
+    seen.add(dept);
+    out.push({ dept, role: role || 'supervisor' });
+  });
+  return out;
+};
 
 window.openAddSupervisorModal = function() {
   editTeacherId = null;
@@ -980,7 +1327,7 @@ window.openAddSupervisorModal = function() {
   document.getElementById('teacherModalTitle').textContent = 'Add Supervisor';
   document.getElementById('saveTeacherBtn').textContent = 'Add Supervisor';
   document.getElementById('tchId').value = '';
-  document.getElementById('tchName').value = '';
+  fillTchNameFields(null);
   populateDeptDropdown('tchDept', '');
   const ftEl = document.getElementById('tchFacultyType');
   if (ftEl) ftEl.value = 'supervisor';
@@ -989,6 +1336,7 @@ window.openAddSupervisorModal = function() {
   const drEl = document.getElementById('tchDeptRole');
   const drGrp = document.getElementById('tchDeptRoleGroup');
   if (drEl) drEl.value = '';
+  renderSupRows(null);
   if (drGrp) drGrp.style.display = '';
   const ftGrp = document.getElementById('tchFacultyTypeGroup');
   if (ftGrp) ftGrp.style.display = 'none';
@@ -1001,7 +1349,12 @@ window.openAddSupervisorModal = function() {
 };
 
 window.onFacultyTypeChange = function(val) {
-  window._pendingFacultyType = val;
+  // Assign the BARE identifier, not window._pendingFacultyType. This file declares
+  // `let _pendingFacultyType` at the top, and a top-level let/const in a classic
+  // <script> does NOT become a window property — so `window._pendingFacultyType`
+  // created a SEPARATE variable that saveTeacher never read. The dropdown showed
+  // "Supervisor" while the save quietly kept the teacher as Regular.
+  _pendingFacultyType = val;
   const hidden = document.getElementById('tchFacultyTypeHidden');
   if (hidden) hidden.value = val;
 
@@ -1026,8 +1379,9 @@ function openEditTeacherModal(id) {
   document.getElementById('teacherModalTitle').textContent = 'Edit Teacher';
   document.getElementById('saveTeacherBtn').textContent = 'Save Changes';
   document.getElementById('tchId').value = t.tid;
-  document.getElementById('tchName').value = t.name;
+  fillTchNameFields(t);
   populateDeptDropdown('tchDept', t.dept || '');
+  const rkEl2 = document.getElementById('tchRank'); if (rkEl2) rkEl2.value = t.rank || '';
   const catEl = document.getElementById('tchCategory');
   if (catEl) catEl.value = t.category || '';
   const resolvedType = t.facultyType || 'regular';
@@ -1039,6 +1393,7 @@ function openEditTeacherModal(id) {
   const drEl = document.getElementById('tchDeptRole');
   const drGrp = document.getElementById('tchDeptRoleGroup');
   if (drEl) drEl.value = t.deptRole || '';
+  renderSupRows(getSupervisedDepts(t));
   if (drGrp) drGrp.style.display = (resolvedType === 'supervisor') ? '' : 'none';
   const ftGrp = document.getElementById('tchFacultyTypeGroup');
   if (ftGrp) ftGrp.style.display = '';
@@ -1066,20 +1421,35 @@ window.forceSetSupervisor = function(id) {
 
 async function saveTeacher() {
   const tid = document.getElementById('tchId').value.trim();
-  const name = document.getElementById('tchName').value.trim();
+  const nameParts = tchNameParts();
+  const name = buildName(nameParts);
   const dept = document.getElementById('tchDept').value;
   const category = (document.getElementById('tchCategory') || {}).value || '';
+  const rank = (document.getElementById('tchRank') || {}).value || '';
   const facultyType = _pendingFacultyType || 'regular';
-  // If saving as regular faculty, always clear deptRole — a stale supervisor deptRole
-  // would cause the migration to re-promote them back to supervisor on next page load.
-  const deptRole = facultyType === 'supervisor'
-    ? ((document.getElementById('tchDeptRole') || {}).value || '')
-    : '';
+
+  // Supervisory assignments, one per department. `dept` and `deptRole` mirror the
+  // first entry so anything still reading the old single-department fields keeps
+  // working. Saving as regular faculty clears both, otherwise a stale deptRole
+  // makes migrateSupervisorRecords() re-promote them on the next page load.
+  const supervisedDepts = facultyType === 'supervisor' ? readSupRows() : [];
+  const deptRole = supervisedDepts.length ? supervisedDepts[0].role : '';
   
-  if (!tid || !name) { 
-    showToast('Fill all fields.', 'error'); 
-    return; 
+  if (!tid || !nameParts.first.trim() || !nameParts.last.trim()) {
+    showToast('Teacher ID, first name and last name are required.', 'error');
+    return;
   }
+  if (facultyType === 'supervisor' && supervisedDepts.length === 0) {
+    showToast('Add at least one department for this supervisor to oversee.', 'error');
+    return;
+  }
+  const nameFields = {
+    title:      nameParts.title.trim(),
+    firstName:  nameParts.first.trim(),
+    middleName: nameParts.middle.trim(),
+    lastName:   nameParts.last.trim(),
+    suffix:     nameParts.suffix.trim()
+  };
   
   const teachers = getData('teachers', []);
   
@@ -1087,14 +1457,24 @@ async function saveTeacher() {
   const pwFieldVal = (document.getElementById('tchPassword') || {}).value?.trim() || '';
 
   if (editTeacherId) {
+    // Same gap as students: the tid duplicate check only ran when adding.
+    if (teachers.find(t => t.tid === tid && !t.deleted && t.id !== editTeacherId)) {
+      showToast('Another teacher already uses that ID.', 'error'); return;
+    }
     const idx = teachers.findIndex(t => t.id === editTeacherId);
     const existing = teachers[idx];
     teachers[idx].tid = tid;
     teachers[idx].name = name;
+    Object.assign(teachers[idx], nameFields);
     teachers[idx].dept = dept;
     teachers[idx].category = category;
+    teachers[idx].rank = rank;
     teachers[idx].facultyType = facultyType;
     teachers[idx].deptRole = deptRole;
+    teachers[idx].supervisedDepts = supervisedDepts;
+    // Home department follows the first supervisory assignment when one exists,
+    // so a dean moved to a new college does not keep pointing at the old one.
+    if (supervisedDepts.length) teachers[idx].dept = supervisedDepts[0].dept;
 
     if (facultyType === 'supervisor') {
       if (pwFieldVal) {
@@ -1124,10 +1504,14 @@ async function saveTeacher() {
       id: 'tch'+Date.now(),
       tid,
       name,
-      dept,
+      ...nameFields,
+      // Home department follows the first supervisory assignment for supervisors.
+      dept: supervisedDepts.length ? supervisedDepts[0].dept : dept,
       category,
+      rank,
       facultyType,
       deptRole,
+      supervisedDepts,
       status:'active',
       deleted: false
     };
@@ -1252,6 +1636,96 @@ function renderSubjects(search = '') {
   tbody.innerHTML = html;
 }
 
+// ===== SUBJECT CURRICULUM SLOT (course + year level) =====
+// A department runs several courses, and one subject is frequently shared by more
+// than one of them - BSIT and BSCS both take Computer Programming 1. So `courses`
+// is a LIST, not a single value. An empty list means "every course in the
+// department", which is how GE, PE and NSTP work.
+//
+// Recording the slot is what lets the enrolment list pre-tick the right cohort
+// instead of showing every student in the college.
+let _subCourses = [];        // courses selected in the currently open modal
+
+window.renderSubCourseChips = function() {
+    const host    = document.getElementById('subCourseChips');
+    const summary = document.getElementById('subCourseSummary');
+    const actions = document.getElementById('subCourseActions');
+    if (!host) return;
+
+    const dept = (document.getElementById('subDept') || {}).value || '';
+    if (typeof reloadCoursesByDept === 'function') reloadCoursesByDept();
+    const courses = (typeof COURSES_BY_DEPT !== 'undefined' ? COURSES_BY_DEPT[dept] : null) || [];
+
+    const setSummary = html => { if (summary) summary.innerHTML = html; };
+    const setActions = html => { if (actions) actions.innerHTML = html; };
+
+    if (!dept) {
+        host.innerHTML = '<span class="sc-hint">Select a department first.</span>';
+        setSummary(''); setActions('');
+        return;
+    }
+    if (!courses.length) {
+        host.innerHTML = '<span class="sc-hint">No courses set up for ' + escapeHtml(dept)
+            + ' yet &mdash; this subject will be open to every student in the department.</span>';
+        setSummary(''); setActions('');
+        return;
+    }
+
+    // Drop any previously chosen course that does not belong to this department.
+    _subCourses = _subCourses.filter(c => courses.includes(c));
+
+    const n = _subCourses.length;
+    const allSelected = n === courses.length;
+
+    // "None selected" and "all selected" behave identically, but read very
+    // differently to an admin, so the summary states the effect in plain words.
+    setSummary(n === 0
+        ? '<span class="sc-summary-all">All ' + courses.length + ' courses</span>'
+        : '<span class="sc-summary-some">' + n + ' of ' + courses.length + ' selected</span>');
+
+    setActions(
+        (n === 0 || allSelected ? '' : '<button type="button" class="sc-link" onclick="setSubCoursesAll()">Select all</button>')
+      + (n > 0 ? '<button type="button" class="sc-link" onclick="clearSubCourses()">Clear</button>' : '')
+    );
+
+    host.innerHTML = courses.map(c =>
+        '<button type="button" class="student-dept-filter-btn' + (_subCourses.includes(c) ? ' active' : '') + '"'
+        + ' onclick="toggleSubCourse(\'' + escapeHtml(c).replace(/'/g, "\\'") + '\')">' + escapeHtml(c) + '</button>'
+    ).join('');
+};
+
+window.toggleSubCourse = function(course) {
+    const i = _subCourses.indexOf(course);
+    if (i > -1) _subCourses.splice(i, 1); else _subCourses.push(course);
+    renderSubCourseChips();
+};
+
+window.setSubCoursesAll = function() {
+    const dept = (document.getElementById('subDept') || {}).value || '';
+    _subCourses = ((typeof COURSES_BY_DEPT !== 'undefined' ? COURSES_BY_DEPT[dept] : null) || []).slice();
+    renderSubCourseChips();
+};
+
+window.clearSubCourses = function() { _subCourses = []; renderSubCourseChips(); };
+
+window.setSubCourses = function(list) {
+    _subCourses = Array.isArray(list) ? list.slice() : [];
+    renderSubCourseChips();
+};
+
+window.getSubCourses = function() { return _subCourses.slice(); };
+
+// Does this student sit in the subject's curriculum slot? Used to pre-tick the
+// cohort on the enrolment screen. A suggestion only - irregular students take
+// subjects off their year level legitimately, so this must never be enforced.
+window.studentMatchesSubject = function(student, sub) {
+    if (!sub) return false;
+    const courses  = Array.isArray(sub.courses) ? sub.courses : [];
+    const courseOk = courses.length === 0 || courses.includes(student.course);
+    const yearOk   = !sub.yearLevel || student.year === sub.yearLevel;
+    return courseOk && yearOk;
+};
+
 function openAddSubjectModal() {
   editSubjectId = null;
   document.getElementById('subjectModalTitle').textContent = 'Add Subject';
@@ -1259,6 +1733,8 @@ function openAddSubjectModal() {
   ['subCode','subName'].forEach(id => document.getElementById(id).value = '');
   populateDeptDropdown('subDept', '');
   const catEl = document.getElementById('subCategory'); if (catEl) catEl.value = '';
+  const yrEl = document.getElementById('subYear'); if (yrEl) yrEl.value = '';
+  setSubCourses([]);
   document.getElementById('subLoad').value = 'Regular';
   document.getElementById('subIsLab').checked = false;
   populateTeacherSelect();
@@ -1274,6 +1750,8 @@ function openEditSubjectModal(id) {
   document.getElementById('subName').value = sub.name;
   populateDeptDropdown('subDept', sub.dept || '');
   const catEl2 = document.getElementById('subCategory'); if (catEl2) catEl2.value = sub.category || '';
+  const yrEl2 = document.getElementById('subYear'); if (yrEl2) yrEl2.value = sub.yearLevel || '';
+  setSubCourses(sub.courses || []);
   document.getElementById('subLoad').value = sub.loadType || 'Regular';
   document.getElementById('subIsLab').checked = sub.isLabSchool || false;
   populateTeacherSelect(sub.teacherId);
@@ -1347,17 +1825,109 @@ function deleteSubject(id) {
   });
 }
 
+// A subject belongs to exactly one department, so the enrolment list is scoped
+// to that department's students. Showing the whole student body made it easy to
+// enrol, say, a CCIS student into a COED subject — which then puts that student
+// into the faculty's SET denominator and skews the CMO 19 response rate.
+//
+// Students already enrolled are always shown even if their department no longer
+// matches, so a transfer can be seen and unchecked rather than silently orphaned.
+function enrollCandidates(sub, showAll) {
+  const all = getData('students', []).filter(s => !s.deleted && s.status === 'active');
+  if (showAll || !sub || !sub.dept) return all;
+  const enrolled = new Set(sub.enrolledIds || []);
+  return all.filter(s => s.dept === sub.dept || enrolled.has(s.id));
+}
+
+function renderEnrollDeptNotice(sub) {
+  const el = document.getElementById('enrollDeptFilter');
+  if (!el) return;
+  if (!sub || !sub.dept) {
+    el.innerHTML = '<p style="font-size:0.76rem;color:var(--warning,#d97706);margin-bottom:10px;">'
+      + 'This subject has no department set, so every active student is listed. '
+      + 'Assign a department to the subject to narrow this down.</p>';
+    return;
+  }
+  const showAll = !!window._enrollShowAll;
+  const inDept = getData('students', []).filter(s => !s.deleted && s.status === 'active' && s.dept === sub.dept).length;
+  el.innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
+    + '<span class="dept-tag-inline">' + escapeHtml(sub.dept) + '</span>'
+    + '<span style="font-size:0.76rem;color:var(--muted);">'
+    +   (showAll ? 'Showing all departments.' : inDept + ' student' + (inDept !== 1 ? 's' : '') + ' in this department.')
+    + '</span>'
+    + '<button class="btn btn-ghost btn-sm" style="margin-left:auto;" onclick="toggleEnrollShowAll()">'
+    +   (showAll ? 'Show ' + escapeHtml(sub.dept) + ' only' : 'Show all departments')
+    + '</button>'
+    + '</div>'
+    // Spell out the curriculum slot so it is obvious which cohort was pre-ticked.
+    + (function () {
+        const courses = Array.isArray(sub.courses) ? sub.courses : [];
+        const slot = [courses.length ? courses.join(' / ') : 'All courses',
+                      sub.yearLevel || 'All year levels'].join(' \u00b7 ');
+        const cohortN = enrollCandidates(sub, false).filter(st => studentMatchesSubject(st, sub)).length;
+        return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;'
+          + 'padding:8px 11px;border-radius:8px;background:var(--surface2,#f8fafc);border:1px solid var(--border,#e2e8f0);">'
+          + '<span style="font-size:0.74rem;color:var(--muted);">Offered to</span>'
+          + '<strong style="font-size:0.78rem;">' + escapeHtml(slot) + '</strong>'
+          + '<span style="font-size:0.72rem;color:var(--muted);">' + cohortN + ' matching</span>'
+          + (cohortN ? '<button class="btn btn-ghost btn-sm" style="margin-left:auto;" onclick="enrollSelectCohort()">Select cohort</button>' : '')
+          + '</div>';
+      })();
+}
+
+window.toggleEnrollShowAll = function() {
+  window._enrollShowAll = !window._enrollShowAll;
+  const sub = getData('subjects', []).find(s => s.id === enrollSubjectId);
+  renderEnrollDeptNotice(sub);
+  const search = (document.getElementById('enrollSearchInput') || {}).value || '';
+  renderEnrollList(enrollCandidates(sub, window._enrollShowAll), sub.enrolledIds || [], search);
+};
+
 function openEnrollModal(subId) {
   enrollSubjectId = subId;
+  window._enrollShowAll = false;          // always start scoped to the department
   const sub = getData('subjects', []).find(s => s.id === subId);
-  const students = getData('students', []).filter(s => !s.deleted && s.status === 'active');
   document.getElementById('enrollSubjectName').textContent = `${sub.code} - ${sub.name}`;
-  renderEnrollList(students, sub.enrolledIds || []);
+  const searchEl = document.getElementById('enrollSearchInput');
+  if (searchEl) searchEl.value = '';
+  renderEnrollDeptNotice(sub);
+
+  // First time this subject is enrolled, pre-tick the cohort it is offered to.
+  // Once enrolment has been saved, the saved list wins - irregular students and
+  // deliberate exclusions must survive reopening the modal.
+  let preselected = sub.enrolledIds || [];
+  if (!preselected.length) {
+    const matches = enrollCandidates(sub, false).filter(st => studentMatchesSubject(st, sub));
+    if (matches.length) preselected = matches.map(st => st.id);
+  }
+
+  renderEnrollList(enrollCandidates(sub, false), preselected);
   openModal('enrollModal');
 }
 
+// "Select cohort" - re-applies the curriculum match ON TOP of whatever is already
+// ticked, so it never wipes a manual selection.
+window.enrollSelectCohort = function() {
+  const sub = getData('subjects', []).find(s => s.id === enrollSubjectId);
+  if (!sub) return;
+  const checked = new Set([...document.querySelectorAll('#enrollList input[type=checkbox]:checked')].map(c => c.value));
+  enrollCandidates(sub, window._enrollShowAll)
+    .filter(st => studentMatchesSubject(st, sub))
+    .forEach(st => checked.add(st.id));
+  const search = (document.getElementById('enrollSearchInput') || {}).value || '';
+  renderEnrollList(enrollCandidates(sub, window._enrollShowAll), [...checked], search);
+  showToast('Cohort selected. Untick anyone who should not be enrolled.', 'info');
+};
+
 function renderEnrollList(students, enrolledIds, search = '') {
   const filtered = students.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.sid.includes(search));
+  if (!filtered.length) {
+    document.getElementById('enrollList').innerHTML =
+      '<li style="padding:22px 0;text-align:center;color:var(--muted);font-size:0.82rem;">'
+      + 'No matching students in this department.</li>';
+    return;
+  }
   document.getElementById('enrollList').innerHTML = filtered.map(s => `
     <li style="padding:8px 0;border-bottom:1px solid var(--border);">
       <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:0.82rem;">
@@ -1370,8 +1940,7 @@ function renderEnrollList(students, enrolledIds, search = '') {
 
 function filterEnrollList(search) {
   const sub = getData('subjects', []).find(s => s.id === enrollSubjectId);
-  const students = getData('students', []).filter(s => !s.deleted && s.status === 'active');
-  renderEnrollList(students, sub.enrolledIds || [], search);
+  renderEnrollList(enrollCandidates(sub, window._enrollShowAll), sub.enrolledIds || [], search);
 }
 
 function saveEnrollment() {
@@ -1497,16 +2066,20 @@ function _buildTeacherEvalData() {
         );
         const sefScore = supervisorEvals.length > 0
             ? (supervisorEvals.reduce((a, b) => a + b.totalScore, 0) / supervisorEvals.length).toFixed(2) : '—';
+        // How many supervisors contributed. Shown next to the figure so an
+        // averaged rating is not mistaken for a single supervisor's judgement.
+        const sefRaters = supervisorEvals.length;
 
         return {
             ...teacher,
+            sefRaters,
             classRatings,
             overallSET,
             sefScore,
             totalClasses: teacherSubjects.length,
             totalEvaluations: classRatings.reduce((sum, cr) => sum + cr.evalCount, 0)
         };
-    }).sort((a, b) => parseFloat(b.overallSET || 0) - parseFloat(a.overallSET || 0));
+    }).sort(byName);
 }
 
 // Set the active dept pill and refresh both tables
@@ -1524,10 +2097,9 @@ window.setReportsDeptFilter = function(dept) {
 };
 
 // Build one faculty table row (shared by main table and View All modal)
-function _buildFacultyRow(t, idx) {
+function _buildFacultyRow(t) {
     return `
         <tr class="report-teacher-row" onclick="showAnnexReports('${t.id}', true)" title="Click to view Annex C &amp; D">
-            <td style="text-align:center;"><span class="rank-badge rank-${idx < 3 ? idx + 1 : ''}">${idx + 1}</span></td>
             <td>
                 <strong>${escapeHtml(t.name)}</strong><br>
                 <small style="color:var(--muted);">${escapeHtml(t.tid)}</small>
@@ -1543,6 +2115,7 @@ function _buildFacultyRow(t, idx) {
             <td style="text-align:center;">
                 <strong style="color:#d97706;font-size:1.05rem;">
                     ${t.sefScore}${t.sefScore !== '—' ? '%' : ''}
+                    ${t.sefRaters > 1 ? `<div style="font-size:0.62rem;color:var(--muted);font-weight:600;">avg of ${t.sefRaters} supervisors</div>` : ''}
                 </strong>
             </td>
         </tr>`;
@@ -1555,6 +2128,23 @@ function _rptEmptyRow(colspan, message, hint) {
         + `<div style="font-size:0.9rem;">${message}</div>`
         + (hint ? `<div style="font-size:0.78rem;margin-top:6px;opacity:0.85;">${hint}</div>` : '')
         + `</td></tr>`;
+}
+
+// Rows shown in the Reports summary tables before "View Full List" takes over.
+const RPT_PREVIEW_ROWS = 5;
+
+// Footer row telling the reader the table is truncated. Without it a capped table
+// silently looks like the complete set, which is worse than a long scroll.
+function _rptMoreRow(total, shown, colspan) {
+    if (total <= shown) return '';
+    return `
+        <tr>
+            <td colspan="${colspan}" style="text-align:center;padding:11px;background:var(--surface2,#f8fafc);">
+                <span style="font-size:0.76rem;color:var(--muted);">
+                    Showing ${shown} of ${total}
+                </span>
+            </td>
+        </tr>`;
 }
 
 function _renderFacultyTable() {
@@ -1571,14 +2161,18 @@ function _renderFacultyTable() {
     if (countEl) countEl.textContent = list.length;
 
     if (!list.length) {
-        tbody.innerHTML = _rptEmptyRow(7,
+        tbody.innerHTML = _rptEmptyRow(6,
             `No faculty found${dept ? ' for this department' : ''}.`,
             dept ? 'Assign faculty to this department to see their SET ratings here.' : '');
         return;
     }
 
-    tbody.innerHTML = list.map((t, idx) => _buildFacultyRow(t, idx)).join('');
-
+    // The dashboard table is a summary, not the register - "View Full List" is
+    // right there for the whole set. Capping it keeps Reports scannable instead
+    // of turning the page into an endless scroll once the roster fills up.
+    const shown = list.slice(0, RPT_PREVIEW_ROWS);
+    tbody.innerHTML = shown.map(t => _buildFacultyRow(t)).join('')
+        + _rptMoreRow(list.length, shown.length, 6);
 }
 
 // Build one supervisor table row (shared by main table and View All modal)
@@ -1598,6 +2192,7 @@ function _buildSupervisorRow(t) {
             <td style="text-align:center;">
                 <strong style="color:#d97706;">
                     ${t.sefScore}${t.sefScore !== '—' ? '%' : ''}
+                    ${t.sefRaters > 1 ? `<div style="font-size:0.62rem;color:var(--muted);font-weight:600;">avg of ${t.sefRaters} supervisors</div>` : ''}
                 </strong>
             </td>
             <td style="text-align:center;">
@@ -1632,7 +2227,9 @@ function _renderSupervisorTable() {
         return;
     }
 
-    tbody.innerHTML = list.map(t => _buildSupervisorRow(t)).join('');
+    const shownSup = list.slice(0, RPT_PREVIEW_ROWS);
+    tbody.innerHTML = shownSup.map(t => _buildSupervisorRow(t)).join('')
+        + _rptMoreRow(list.length, shownSup.length, 5);
 
 }
 
@@ -1700,9 +2297,6 @@ window.renderReports = function() {
                     <button id="rpt-faculty-viewall-btn" class="btn btn-ghost btn-sm rpt-viewall-btn" onclick="_openRptViewAllPage('faculty')">
                         <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:3px;"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>View Full List
                     </button>
-                    <button class="btn btn-ghost btn-sm" onclick="openSEFAudit()" title="Audit & clean supervisor (SEF) evaluation records" style="white-space:nowrap;">
-                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:3px;"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>SEF Audit
-                    </button>
                     <span class="badge badge-primary" style="font-size:0.68rem;">CMO 19 — SET &amp; SEF Displayed Separately</span>
                 </div>
             </div>
@@ -1710,7 +2304,6 @@ window.renderReports = function() {
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th style="text-align:center;width:52px;">Rank</th>
                             <th>Faculty Name</th>
                             <th>Department</th>
                             <th style="text-align:center;">Classes</th>
@@ -1802,7 +2395,6 @@ function renderRptViewAll() {
     if (isFaculty) {
         tbody = `<thead>
                     <tr>
-                        <th style="text-align:center;width:52px;">Rank</th>
                         <th>Faculty Name</th>
                         <th>Department</th>
                         <th style="text-align:center;">Classes</th>
@@ -1811,7 +2403,7 @@ function renderRptViewAll() {
                         <th style="color:#d97706;text-align:center;">SEF Rating</th>
                     </tr>
                 </thead>
-                <tbody>${list.map((t, idx) => _buildFacultyRow(t, idx)).join('')}</tbody>`;
+                <tbody>${list.map(t => _buildFacultyRow(t)).join('')}</tbody>`;
     } else {
         tbody = `<thead>
                     <tr>
@@ -1855,9 +2447,9 @@ function _exportRptViewAllCSV(tableType, list, deptLabel) {
     const isFaculty = tableType === 'faculty';
     let csv;
     if (isFaculty) {
-        csv = 'Rank,Teacher ID,Name,Department,Classes,Evals,SET Rating,SEF Rating\n';
-        list.forEach((t, idx) => {
-            csv += `${idx + 1},"${t.tid}","${t.name}","${t.dept || 'N/A'}",${t.totalClasses},${t.totalEvaluations},${t.overallSET !== '\u2014' ? t.overallSET + '%' : 'N/A'},${t.sefScore !== '\u2014' ? t.sefScore + '%' : 'N/A'}\n`;
+        csv = 'Teacher ID,Name,Department,Classes,Evals,SET Rating,SEF Rating\n';
+        list.forEach(t => {
+            csv += `"${t.tid}","${t.name}","${t.dept || 'N/A'}",${t.totalClasses},${t.totalEvaluations},${t.overallSET !== '\u2014' ? t.overallSET + '%' : 'N/A'},${t.sefScore !== '\u2014' ? t.sefScore + '%' : 'N/A'}\n`;
         });
     } else {
         csv = 'Teacher ID,Name,Department,SET Rating,SEF Rating,Status\n';
@@ -1967,9 +2559,15 @@ window.importBulkStudents = function() {
   let added = 0, skipped = 0;
   rows.forEach(r => {
     if (!r.sid || !r.name) { skipped++; return; }
+    // Normalize here as well - a CSV column typed as 22-1745 would otherwise
+    // sail past the duplicate check and create a twin of an existing student.
+    r.sid = normalizeStudentId(r.sid);
     if (students.find(s => s.sid === r.sid && !s.deleted)) { skipped++; return; }
+    // Already-known students are skipped above, so this only ever gates NEW
+    // records - re-importing a legacy roster is unaffected.
+    if (!STUDENT_ID_RE.test(r.sid)) { skipped++; return; }
     const newId = 'stu' + Date.now() + Math.random().toString(36).slice(2,6);
-    students.push({ id: newId, sid: r.sid, name: r.name, course: r.course || '', year: r.year, section: r.section, dept: r.dept, password: r.sid, status:'active', forceReset:false, deleted:false });
+    students.push({ id: newId, sid: r.sid, name: r.name, course: r.course || '', year: r.year, section: String(r.section || '').trim().toUpperCase(), dept: r.dept, password: r.sid, status:'active', forceReset:false, deleted:false });
     r.subjectCodes.forEach(code => {
       const sub = subjects.find(s => s.code.toLowerCase() === code.toLowerCase());
       if (sub) { if (!sub.enrolledIds) sub.enrolledIds = []; if (!sub.enrolledIds.includes(newId)) sub.enrolledIds.push(newId); }
@@ -2160,8 +2758,9 @@ window.showAnnexDReport = function(teacherId) {
 
     const sy = getActiveSY();
     const setScore = calculateWeightedSETRating(teacherId);
-    const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor');
-    const sefScore = sefEvals.length > 0 ? sefEvals[sefEvals.length-1].totalScore.toFixed(2) : '—';
+    const sefAgg2 = getSEFForTeacher(teacherId, inTerm);
+    const sefScore = sefAgg2.count ? sefAgg2.average.toFixed(2) : '—';
+
 
     const subjects = getData('subjects', []).filter(s => s.teacherId === teacherId && s.loadType !== 'Overload' && !s.isLabSchool);
     const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor');
@@ -2259,11 +2858,61 @@ window.showAnnexDReport = function(teacherId) {
     openModal('annexDModal');
 };
 
+// ===== PRINT SERIALISATION =====
+// innerHTML returns MARKUP, and text typed into a <textarea> or <input> lives in
+// the DOM `.value` property - it is never written back into the markup. Printing
+// via innerHTML therefore silently dropped everything typed into the Annex D
+// development plan and the signatory fields.
+//
+// This walks a CLONE (the live form is left untouched) and replaces every form
+// control with plain text carrying its current value. That fixes the data loss
+// and also gives a cleaner printout: no input borders, no date-picker chrome.
+function _annexPrintHtml(sourceEl) {
+    if (!sourceEl) return '';
+    const clone = sourceEl.cloneNode(true);
+    const src   = sourceEl;
+
+    const asText = (value, placeholder) => {
+        const d = document.createElement('div');
+        d.style.cssText = 'font-family:inherit;font-size:0.8rem;white-space:pre-wrap;'
+                        + 'min-height:1.1em;padding:2px 0;';
+        d.textContent = value || placeholder || '';
+        return d;
+    };
+
+    // Dates print as "15 December 2026" rather than 2026-12-15.
+    const prettyDate = v => {
+        if (!v) return '';
+        const d = new Date(v + 'T00:00:00');
+        return isNaN(d) ? v : d.toLocaleDateString('en-PH', { day: 'numeric', month: 'long', year: 'numeric' });
+    };
+
+    ['textarea', 'input', 'select'].forEach(tag => {
+        const live  = src.querySelectorAll(tag);
+        const copies = clone.querySelectorAll(tag);
+        // Same query on both trees, so index i refers to the same control.
+        copies.forEach((node, i) => {
+            const el = live[i];
+            if (!el) return;
+            let text;
+            if (tag === 'select')                text = el.options[el.selectedIndex] ? el.options[el.selectedIndex].text : '';
+            else if (el.type === 'checkbox')     text = el.checked ? 'Yes' : 'No';
+            else if (el.type === 'date')         text = prettyDate(el.value);
+            else                                 text = el.value;
+            node.replaceWith(asText(text));
+        });
+    });
+
+    // Buttons and on-screen-only controls have no place on paper.
+    clone.querySelectorAll('.annex-noprint, button').forEach(el => el.remove());
+    return clone.innerHTML;
+}
+
 window.printAnnexD = function() {
     const printContent = document.getElementById('annexDPrintArea');
     if (!printContent) return;
     const w = window.open('', '_blank');
-    w.document.write(`<html><head><title>Annex D</title><style>body{font-family:serif;margin:30px;font-size:12px;}table{width:100%;}@media print{button{display:none}}</style></head><body>${printContent.innerHTML}</body></html>`);
+    w.document.write(`<html><head><title>Annex D</title><style>body{font-family:serif;margin:30px;font-size:12px;}table{width:100%;}</style></head><body>${_annexPrintHtml(printContent)}</body></html>`);
     w.document.close();
     w.print();
 };
@@ -2320,22 +2969,130 @@ window.printActiveAnnex = function() {
     const tabD = document.getElementById('annexTabD');
     const isD = tabD && tabD.classList.contains('annex-tab-active');
     const w = window.open('', '_blank');
-    w.document.write(`<html><head><title>${isD ? 'Annex D — FEDAF' : 'Annex C — IFER'}</title><style>body{font-family:serif;margin:30px;font-size:12px;}table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ccc;padding:6px 8px;}@media print{button{display:none}}</style></head><body>${printContent.innerHTML}</body></html>`);
+    w.document.write(`<html><head><title>${isD ? 'Annex D — FEDAF' : 'Annex C — IFER'}</title><style>body{font-family:serif;margin:30px;font-size:12px;}table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ccc;padding:6px 8px;}</style></head><body>${_annexPrintHtml(printContent)}</body></html>`);
     w.document.close();
     w.print();
 };
 
 // Annex C — Individual Faculty Evaluation Report
+// Column (2) of Annex C section B is "Year/Section" - on the QA office's printed
+// form it reads like "BSCE 4A". It is not the subject name, which is what this
+// report used to put there.
+//
+// Derived from the students actually enrolled in the class rather than from the
+// subject's curriculum slot, because that is what the column documents: who sat
+// in the room. A class drawing from more than one cohort lists each, which is
+// what the office writes by hand. The subject's own courses[]/yearLevel is only
+// a fallback for a class whose roster has not been loaded yet.
+// Course names are stored in full ("Bachelor of Science in Civil Engineering"),
+// but Annex C's Year/Section column needs the short form - "BSCE 4A". Derived
+// rather than stored, so nothing has to be re-entered for existing records.
+//
+// Rules, in order:
+//   1. An explicit shorthand in parentheses wins - "Bachelor of Elementary
+//      Education (BEEd)" -> BEED. Use this whenever the initials would be wrong
+//      or ambiguous, e.g. Criminology (BSCrim), which otherwise gives BSC.
+//   2. Something already short with no spaces is left alone - "BSCE" -> BSCE.
+//   3. Otherwise take initials, skipping of/in/and/the, and keeping words that
+//      are ALREADY abbreviations whole, so "BS Nursing" gives BSN, not BN.
+window.courseShorthand = function(name) {
+    const n = String(name || '').trim();
+    if (!n) return '';
+
+    const paren = n.match(/\(([^)]{2,12})\)/);
+    if (paren) return paren[1].trim().toUpperCase();
+
+    if (n.indexOf(' ') === -1 && n.length <= 8) return n.toUpperCase();
+
+    const STOP = ['of', 'in', 'and', 'the', 'for', 'a'];
+    let out = '';
+    n.split(/[\s\-\/]+/).filter(Boolean).forEach(function(w) {
+        if (STOP.indexOf(w.toLowerCase()) > -1) return;
+        if (!/[A-Za-z]/.test(w[0])) return;
+        out += (w === w.toUpperCase() && w.length <= 4) ? w : w[0];
+    });
+    return out.length >= 2 ? out.toUpperCase() : n.toUpperCase();
+};
+
+window.annexYearSection = function(sub, students) {
+    const combos = new Set();
+    (sub.enrolledIds || []).forEach(function(id) {
+        const st = students.find(function(x) { return x.id === id; });
+        if (!st) return;
+        const course = courseShorthand(st.course);
+        const yr  = String(st.year || '').match(/\d+/);
+        const sec = String(st.section || '').trim().toUpperCase();
+        const label = (course + ' ' + (yr ? yr[0] : '') + sec).trim();
+        if (label) combos.add(label);
+    });
+    if (combos.size) return Array.from(combos).sort().join(', ');
+
+    const c = (sub.courses || []).map(courseShorthand).filter(Boolean).join('/');
+    const y = String(sub.yearLevel || '').match(/\d+/);
+    return [c, y ? y[0] : ''].filter(Boolean).join(' ') || '\u2014';
+};
+
+// The office's form labels the comments section "D" - the same letter it gives
+// "D. SET and SEF Ratings". That is an oversight from when NwSSU inserted its
+// own "C. Summary of Average SEF Rating" ahead of the CMO's lettering, and it
+// is reproduced here so the generated form matches what QA already signs.
+// Change to 'E' if you would rather the letters run in sequence.
+window.ANNEX_C_COMMENTS_LETTER = 'D';
+
 window.buildAnnexCContent = function(teacherId) {
     const t = getData('teachers', []).find(t => t.id === teacherId);
     if (!t) return;
     const termInfo = (typeof annexTermInfo === 'function') ? annexTermInfo() : { label: '—' };
     const inTerm = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : (() => true);
-    const subjects = getData('subjects', []).filter(s => s.teacherId === teacherId && s.loadType !== 'Overload' && !s.isLabSchool);
+    // Annex C section B lists this faculty's regular-load classes. Two separate
+    // links can break and both produce an empty-looking table, so they are
+    // measured apart here and reported distinctly further down.
+    const allSubjects = getData('subjects', []);
+    const assigned = allSubjects.filter(s => s.teacherId === teacherId);
+    const excluded = assigned.filter(s => s.loadType === 'Overload' || s.isLabSchool);
+    const subjects = assigned.filter(s => s.loadType !== 'Overload' && !s.isLabSchool);
     const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor' && inTerm(e));
     const students = getData('students', []).filter(s => !s.deleted);
+
+    // Why is section B empty? Say so instead of rendering a blank table.
+    let annexCNotice = '';
+    if (assigned.length === 0) {
+        annexCNotice = 'No subject is assigned to this faculty member. Open Subjects and set '
+            + escapeHtml(t.name) + ' as the teacher on their classes.';
+    } else if (subjects.length === 0) {
+        annexCNotice = 'All ' + assigned.length + ' subject(s) assigned to this faculty are marked '
+            + 'Overload or Lab School, which CMO 19 excludes from the SET computation.';
+    } else if (students.length === 0) {
+        annexCNotice = 'No student records are loaded, so enrolment counts show as 0.';
+    } else {
+        const totalEnrolled = subjects.reduce(
+            (n, sub) => n + (sub.enrolledIds || []).filter(id => students.find(st => st.id === id)).length, 0);
+        if (totalEnrolled === 0) {
+            annexCNotice = 'These subjects have no enrolled students that match the current student '
+                + 'records. If the roster was re-imported, re-check enrolment on each subject.';
+        }
+    }
     const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor' && inTerm(e));
     const sefScore = sefEvals.length > 0 ? (sefEvals.reduce((a, b) => a + b.totalScore, 0) / sefEvals.length).toFixed(2) : '—';
+
+    // Section C of the official form lists every supervisor who rated this
+    // faculty, one row each, then the average. A SEF written by the app stores
+    // the supervisor's document id in `studentId` (the evaluator field); records
+    // created from the admin SEF modal may carry `supervisorId` instead, and the
+    // oldest ones have neither.
+    const allTeachersForSef = getData('teachers', []);
+    const sig = getSignatories();          // auto-filled Prepared/Reviewed by
+    const sefAggC = getSEFForTeacher(teacherId, inTerm);
+    const sefRows = sefAggC.list.map((ev, i) => {
+        const supId = ev.supervisorId || ev.studentId || '';
+        const sup = allTeachersForSef.find(x => x.id === supId);
+        return {
+            seq: i + 1,
+            name: sup ? sup.name : (supId ? 'Supervisor (record removed)' : 'Not recorded'),
+            score: (parseFloat(ev.totalScore) || 0).toFixed(2)
+        };
+    });
+
 
     let totalStudents = 0;
     let totalWeightedScore = 0;
@@ -2348,8 +3105,27 @@ window.buildAnnexCContent = function(teacherId) {
         const weightedScore = avgScore * enrolledCount;
         totalStudents += enrolledCount;
         totalWeightedScore += weightedScore;
-        return { seq: idx + 1, sub, enrolledCount, evalCount: classEvals.length, avgScore: avgScore.toFixed(2), weightedScore: weightedScore.toFixed(0) };
+        // 2 decimals, not 0: the printed form carries 3304.00, and rounding the
+        // weighted score to a whole number loses precision the TOTAL and the
+        // overall SET rating are then computed from.
+        return { seq: idx + 1, sub, yearSection: annexYearSection(sub, students),
+                 enrolledCount, evalCount: classEvals.length,
+                 avgScore: avgScore.toFixed(2), weightedScore: weightedScore.toFixed(2) };
     });
+
+    // A subject set to "Any year level" carries no cohort of its own, so the
+    // Year/Section column can only be built from the students enrolled in it.
+    // When that comes up empty the cell reads "-", which looks like a rendering
+    // fault rather than missing data - say which classes and why.
+    const noYearSection = classBreakdown
+        .filter(cr => cr.yearSection === '\u2014')
+        .map(cr => cr.sub.code);
+    if (noYearSection.length && !annexCNotice) {
+        annexCNotice = 'Year/Section is blank for ' + noYearSection.join(', ') + '. That column is '
+            + 'built from the students enrolled in each class, so it needs their course, year level '
+            + 'and section on record. A subject set to "Any year level" contributes no cohort of its '
+            + 'own, and neither does a class with nobody enrolled.';
+    }
 
     const overallSET = totalStudents > 0 ? (totalWeightedScore / totalStudents).toFixed(2) : '0.00';
 
@@ -2387,7 +3163,7 @@ window.buildAnnexCContent = function(teacherId) {
             <colgroup><col style="width:42%"/><col style="width:58%"/></colgroup>
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Name of Faculty Evaluated</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.name)}</td></tr>
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Department/College</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.dept || '—')}</td></tr>
-            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Current Faculty Rank</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.rank || '—')}</td></tr>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Current Faculty Rank</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${printField(t.rank, '70%', 'e.g. Assistant Professor I')}</td></tr>
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Semester/Term &amp; Academic Year</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(termInfo.label)}</td></tr>
         </table>
 
@@ -2397,6 +3173,7 @@ window.buildAnnexCContent = function(teacherId) {
             <strong>Step 2:</strong> Multiply the number of students in each class with its average SET rating to get the Weighted SET Score per class. &nbsp;
             <strong>Step 3:</strong> Get the total number of students and the total weighted SET score.
         </p>
+        ${annexCNotice ? `<div style="border:1px solid #f0c36d;background:#fff8e6;color:#7a5b00;padding:9px 12px;border-radius:6px;font-size:0.76rem;margin-bottom:10px;">${escapeHtml(annexCNotice)}</div>` : ''}
         <div style="overflow-x:auto;margin-bottom:16px;">
         <table style="width:100%;min-width:480px;border-collapse:collapse;border:1px solid #ccc;table-layout:fixed;">
             <colgroup>
@@ -2409,12 +3186,12 @@ window.buildAnnexCContent = function(teacherId) {
             </colgroup>
             <thead>
                 <tr style="background:#e8e8e8;">
-                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">SEQ</th>
-                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;white-space:normal;word-break:break-word;vertical-align:top;">(1) COURSE CODE</th>
-                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;white-space:normal;word-break:break-word;vertical-align:top;">(2) COURSE / SUBJECT</th>
-                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">(3) NO. OF STUDENTS</th>
-                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">(4) AVG SET RATING</th>
-                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">(3×4) WEIGHTED SCORE</th>
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">Seq</th>
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;white-space:normal;word-break:break-word;vertical-align:top;">(1) Course Code</th>
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;white-space:normal;word-break:break-word;vertical-align:top;">(2) Year/Section</th>
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">(3) No. of Students</th>
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">(4) Average SET Rating</th>
+                    <th style="padding:6px 5px;border:1px solid #ccc;font-size:0.72rem;text-align:center;white-space:normal;word-break:break-word;vertical-align:top;">(3x4) Weighted SET Score</th>
                 </tr>
             </thead>
             <tbody>
@@ -2422,7 +3199,7 @@ window.buildAnnexCContent = function(teacherId) {
                 <tr>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.seq}</td>
                     <td style="padding:5px;border:1px solid #ccc;font-style:italic;font-size:0.78rem;word-break:break-word;">${escapeHtml(cr.sub.code)}</td>
-                    <td style="padding:5px;border:1px solid #ccc;font-size:0.78rem;word-break:break-word;">${escapeHtml(cr.sub.name)}</td>
+                    <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;word-break:break-word;">${escapeHtml(cr.yearSection)}</td>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.enrolledCount}</td>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.avgScore}</td>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-weight:600;font-size:0.78rem;">${cr.weightedScore}</td>
@@ -2431,15 +3208,40 @@ window.buildAnnexCContent = function(teacherId) {
                     <td colspan="3" style="padding:6px 8px;border:1px solid #ccc;text-align:right;font-size:0.78rem;">TOTAL</td>
                     <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${totalStudents}</td>
                     <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">TOTAL</td>
-                    <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${totalWeightedScore.toFixed(0)}</td>
+                    <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${totalWeightedScore.toFixed(2)}</td>
                 </tr>
             </tbody>
         </table>
         </div>
 
-        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">C. SET and SEF Ratings</h4>
+        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">C. Summary of Average SEF Rating</h4>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #ccc;table-layout:fixed;">
+            <colgroup><col style="width:12%"/><col style="width:58%"/><col style="width:30%"/></colgroup>
+            <thead>
+                <tr style="background:#e8e8e8;">
+                    <th style="padding:8px;text-align:center;border:1px solid #ccc;font-size:0.8rem;">Seq</th>
+                    <th style="padding:8px;text-align:center;border:1px solid #ccc;font-size:0.8rem;">Supervisor</th>
+                    <th style="padding:8px;text-align:center;border:1px solid #ccc;font-size:0.8rem;">SEF Rating</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${sefRows.length ? sefRows.map(r => `
+                <tr>
+                    <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${r.seq}</td>
+                    <td style="padding:6px 8px;border:1px solid #ccc;font-size:0.78rem;">${escapeHtml(r.name)}</td>
+                    <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${r.score}</td>
+                </tr>`).join('') : `
+                <tr><td colspan="3" style="padding:10px;text-align:center;color:#888;font-size:0.8rem;">No supervisor evaluation recorded for this term.</td></tr>`}
+                <tr style="font-weight:700;background:#f7f7f7;">
+                    <td colspan="2" style="padding:6px 8px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">Average</td>
+                    <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${sefScore}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">D. SET and SEF Ratings</h4>
         <p style="font-size:0.75rem;color:#555;margin:0 0 8px;padding:0 4px;">
-            <strong>Computation:</strong> Calculate the Overall SET Rating by dividing the total Weighted SET Score by the total number of students (${totalWeightedScore.toFixed(0)} ÷ ${totalStudents} = ${overallSET}).
+            <strong>Computation:</strong> Calculate the Overall SET Rating by dividing the total Weighted SET Score by the total number of students (${totalWeightedScore.toFixed(2)} ÷ ${totalStudents} = ${overallSET}).
         </p>
         <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #ccc;table-layout:fixed;">
             <colgroup><col style="width:50%"/><col style="width:50%"/></colgroup>
@@ -2467,7 +3269,7 @@ window.buildAnnexCContent = function(teacherId) {
         </table>
         <p style="font-size:0.72rem;color:#666;margin-bottom:16px;font-style:italic;">*Note: rating given by the supervisor using the SEF instrument (Annex B)</p>
 
-        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">D. Summary of Qualitative Comments and Suggestions</h4>
+        <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">${ANNEX_C_COMMENTS_LETTER}. Summary of Qualitative Comments and Suggestions</h4>
         <table style="width:100%;border-collapse:collapse;margin-bottom:10px;border:1px solid #ccc;table-layout:fixed;">
             <colgroup><col style="width:10%"/><col style="width:90%"/></colgroup>
             <thead>
@@ -2499,14 +3301,14 @@ window.buildAnnexCContent = function(teacherId) {
             <div style="flex:1;min-width:180px;">
                 <div style="font-size:0.75rem;font-weight:600;margin-bottom:4px;">Prepared by:</div>
                 <div style="margin-bottom:6px;font-size:0.75rem;">Signature of Staff: <span style="border-bottom:1px solid #333;display:inline-block;width:55%;"></span></div>
-                <div style="margin-bottom:6px;font-size:0.75rem;">Name of Staff: <span style="border-bottom:1px solid #333;display:inline-block;width:58%;"></span></div>
-                <div style="font-size:0.75rem;">Date: <span style="border-bottom:1px solid #333;display:inline-block;width:70%;"></span></div>
+                ${sigLine('Name of Staff', sig.preparedName + (sig.preparedRole ? ' /' + sig.preparedRole : ''), '58%')}
+                ${sigDate('prepared')}
             </div>
             <div style="flex:1;min-width:180px;">
                 <div style="font-size:0.75rem;font-weight:600;margin-bottom:4px;">Reviewed by:</div>
                 <div style="margin-bottom:6px;font-size:0.75rem;">Signature of Authorized Official: <span style="border-bottom:1px solid #333;display:inline-block;width:35%;"></span></div>
-                <div style="margin-bottom:6px;font-size:0.75rem;">Name of Authorized Official: <span style="border-bottom:1px solid #333;display:inline-block;width:38%;"></span></div>
-                <div style="font-size:0.75rem;">Date: <span style="border-bottom:1px solid #333;display:inline-block;width:70%;"></span></div>
+                ${sigLine('Name of Authorized Official', sig.reviewedName + (sig.reviewedRole ? ' /' + sig.reviewedRole : ''), '38%')}
+                ${sigDate('reviewed')}
             </div>
         </div>
     </div>`;
@@ -2583,7 +3385,7 @@ window.buildAnnexDContent = function(teacherId) {
             <colgroup><col style="width:42%"/><col style="width:58%"/></colgroup>
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Name of Faculty</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.name)}</td></tr>
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Department/College</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.dept || '—')}</td></tr>
-            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Current Faculty Rank</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(t.rank || '—')}</td></tr>
+            <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Current Faculty Rank</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${printField(t.rank, '70%', 'e.g. Assistant Professor I')}</td></tr>
             <tr><td style="padding:4px 8px;font-weight:600;word-break:break-word;">Semester/Term &amp; Academic Year</td><td style="padding:4px 8px;border-bottom:1px solid #999;word-break:break-word;">${escapeHtml(termInfo.label)}</td></tr>
         </table>
 
@@ -2824,7 +3626,9 @@ window.renderSupervisorList = function(search = '') {
 
   const teachers = getData('teachers', []).filter(t => !t.deleted && t.facultyType === 'supervisor');
   const filtered = teachers.filter(t =>
-    (!deptFilter || t.dept === deptFilter) &&
+    // Match on ANY supervised department, not just the home one, so a dean who
+    // also chairs another college appears under both filters.
+    (!deptFilter || getSupervisedDepts(t).some(a => a.dept === deptFilter)) &&
     (t.name.toLowerCase().includes(search.toLowerCase()) ||
     (t.tid || '').toLowerCase().includes(search.toLowerCase()))
   );
@@ -2857,9 +3661,7 @@ window.renderSupervisorList = function(search = '') {
 
     supervisors.forEach(t => {
       const evals = getData('evaluations', []);
-      const lastSef = evals.filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor').pop();
-      const roleLabel = t.deptRole === 'dean' ? '🎓 Dean' : t.deptRole === 'chairperson' ? '🪑 Chairperson' : '👤 Supervisor';
-      const roleColor = t.deptRole === 'dean' ? '#7c3aed' : t.deptRole === 'chairperson' ? '#0369a1' : '#374151';
+      const lastSef = getSEFForTeacher(t.id).count > 0;
 
       html += `<tr onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
         <td>
@@ -2867,7 +3669,7 @@ window.renderSupervisorList = function(search = '') {
           <small style="font-family:'JetBrains Mono',monospace;color:var(--muted);">${escapeHtml(t.tid)}</small>
         </td>
         <td>${escapeHtml(t.dept || '—')}</td>
-        <td><span style="font-size:0.75rem;font-weight:600;color:${roleColor};">${roleLabel}</span></td>
+        <td>${supRoleCellHtml(t)}</td>
         <td>
           <span class="badge ${lastSef ? 'badge-success' : 'badge-warning'}">
             ${lastSef ? 'Has Evaluated' : 'No SEF Yet'}
@@ -2912,23 +3714,19 @@ window.openSEFModal = function(teacherId) {
     const t = getData('teachers', []).find(item => item.id === teacherId);
     if (!t) return;
     
-    const sefItems = [
-        { id: 'sef1', text: "Comes to class on time.", mov: "DTR, Faculty Schedule" },
-        { id: 'sef2', text: "Submits updated syllabus, grade sheets, and reports on time.", mov: "Submission Log" },
-        { id: 'sef3', text: "Maximizes the allocated time/learning hours effectively.", mov: "Class Schedules, LMS Logs" },
-        { id: 'sef4', text: "Provides activities facilitating critical thinking/creativity.", mov: "Syllabus, Observation" },
-        { id: 'sef5', text: "Guides students to learn on their own and make decisions.", mov: "Student Work Samples" },
-        { id: 'sef6', text: "Communicates constructive feedback for growth.", mov: "Graded Work, Consultation Log" },
-        { id: 'sef7', text: "Demonstrates extensive knowledge of the subject.", mov: "Mentorship Records, Syllabus" },
-        { id: 'sef8', text: "Simplifies complex ideas for ease of understanding.", mov: "Classroom Observation" },
-        { id: 'sef9', text: "Integrates contemporary issues/developments in syllabus.", mov: "Learning Plan, Syllabus" },
-        { id: 'sef10', text: "Promotes active learning using ICT tools/platforms.", mov: "LMS Logs, Multimedia Materials" },
-        { id: 'sef11', text: "Uses assessments aligned with learning outcomes.", mov: "Assessment Tools, Rubrics" },
-        { id: 'sef12', text: "Recognizes and values diversity among students.", mov: "Observation, Learning Plan" },
-        { id: 'sef13', text: "Assists students during consultation hours.", mov: "Faculty Consultation Log" },
-        { id: 'sef14', text: "Provides immediate feedback on outputs.", mov: "Graded Work, Emails" },
-        { id: 'sef15', text: "Provides transparent criteria in rating performance.", mov: "Grade Sheets, Rubrics" }
-    ];
+    // Read the published SEF instrument rather than a second hardcoded copy.
+    // Two lists that must agree is one list too many: editing the questions here
+    // would silently diverge from what the app asks supervisors.
+    const _sefSet = (typeof getPublishedQuestionSet === 'function')
+        ? getPublishedQuestionSet('SEF') : null;
+    const sefItems = (_sefSet ? _sefSet.questions : []).map(q => ({
+        id: q.id, text: q.text, mov: q.mov || ''
+    }));
+    if (!sefItems.length) {
+        showToast('No SEF questions published yet. Open Reports \u2192 Questions to set them up.', 'error');
+        return;
+    }
+    const _sefSetId = _sefSet ? _sefSet.id : '';
 
     document.getElementById('reportModalTitle').textContent = `Supervisor's Evaluation: ${t.name}`;
     let html = `<div style="padding:10px;">
@@ -2952,65 +3750,96 @@ window.openSEFModal = function(teacherId) {
             </div>`;
     });
 
-    html += `<button class="btn btn-primary" onclick="saveSEFRating('${teacherId}')">Submit SEF Rating</button></div>`;
+    html += `<button class="btn btn-primary" onclick="saveSEFRating('${teacherId}','${_sefSetId}')">Submit SEF Rating</button></div>`;
     document.getElementById('reportModalBody').innerHTML = html;
     openModal('viewReportModal');
 };
 
-window.saveSEFRating = function(teacherId) {
+window.saveSEFRating = function(teacherId, setId) {
+    // Iterate the PUBLISHED instrument rather than a hardcoded 1..15 loop, so a
+    // version with a different number of items still saves correctly. Answers are
+    // keyed by the question's own id, and the version is stamped on the record so
+    // reports can resolve the exact wording this supervisor answered.
+    const set = setId ? getQuestionSetById(setId) : getPublishedQuestionSet('SEF');
+    const items = (set && set.questions) || [];
+    if (!items.length) { showToast('No SEF questions published.', 'error'); return; }
+
     const ratings = {};
-    let totalScore = 0;
-    let answeredCount = 0;
+    let totalScore = 0, answered = 0;
 
-    for (let i = 1; i <= 15; i++) {
-        const val = document.querySelector(`input[name="sef${i}"]:checked`);
+    items.forEach(q => {
+        const val = document.querySelector(`input[name="${q.id}"]:checked`);
         if (val) {
-            ratings[`sef${i}`] = parseInt(val.value);
+            ratings[q.id] = parseInt(val.value);
             totalScore += parseInt(val.value);
-            answeredCount++;
+            answered++;
         }
-    }
+    });
 
-    if (answeredCount < 15) {
-        showToast("Please rate all 15 benchmark statements required by Annex B.", "warning");
+    if (answered < items.length) {
+        showToast(`Please rate all ${items.length} benchmark statements required by Annex B.`, 'warning');
         return;
     }
 
-    const computedRating = ((totalScore / 75) * 100).toFixed(2);
+    // Percentage of the maximum possible (5 per item), not a fixed /75.
+    const computedRating = ((totalScore / (items.length * 5)) * 100).toFixed(2);
     const evals = getData('evaluations', []);
     evals.push({
         id: 'sef_' + Date.now(),
         teacherId: teacherId,
         evaluatorType: 'supervisor',
         ratings: ratings,
+        questionSetId: set.id,        // which version these answers belong to
         totalScore: parseFloat(computedRating),
         timestamp: new Date().toISOString(),
         semester: getActiveSY()?.activeSem
     });
 
     setData('evaluations', evals);
-    addAudit('Supervisor Evaluation', `Completed SEF for Teacher ID: ${teacherId}`);
-    showToast("Supervisor Evaluation (SEF) saved successfully!", "success");
+    addAudit('Supervisor Evaluation', `Completed SEF for Teacher ID: ${teacherId} (${set.id})`);
+    showToast('Supervisor Evaluation (SEF) saved successfully!', 'success');
     closeModal('viewReportModal');
     renderReports();
 };
 
 // ===== AUDIT LOG =====
 function renderAuditLog(search = '') {
-  const log = getData('auditLog', []).filter(l =>
-    l.action.toLowerCase().includes(search.toLowerCase()) || l.detail.toLowerCase().includes(search.toLowerCase())
-  );
   const el = document.getElementById('auditLogList');
-  if (!log.length) { el.innerHTML = '<div class="empty-state"><p>No audit logs found.</p></div>'; return; }
+  if (!el) return;
+
+  const q = String(search || '').toLowerCase();
+  const raw = getData('auditLog', []);
+
+  // Defensive on two counts:
+  //   1. An entry with no `action` or `detail` used to throw on .toLowerCase(),
+  //      and one bad entry killed the whole render — the page just stayed blank
+  //      with no error visible to the user.
+  //   2. Entries arriving from Firestore come back in document-id order, not
+  //      newest-first, so they need re-sorting by timestamp.
+  const log = raw
+    .filter(l => l && typeof l === 'object')
+    .filter(l => {
+      if (!q) return true;
+      return String(l.action || '').toLowerCase().includes(q)
+          || String(l.detail || '').toLowerCase().includes(q);
+    })
+    .sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+
+  if (!log.length) {
+    el.innerHTML = raw.length
+      ? '<div class="empty-state"><p>No audit entries match &ldquo;' + escapeHtml(search) + '&rdquo;.</p></div>'
+      : '<div class="empty-state"><p>No audit logs yet. Entries appear here as you add, edit, or delete records.</p></div>';
+    return;
+  }
   el.innerHTML = log.map(l => `
     <div class="audit-row">
       <div class="audit-dot"></div>
       <div style="flex:1;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-          <span class="badge badge-primary">${escapeHtml(l.action)}</span>
-          <span class="audit-time">${l.timestamp}</span>
+          <span class="badge badge-primary">${escapeHtml(l.action || 'Unknown')}</span>
+          <span class="audit-time">${escapeHtml(l.timestamp || '')}</span>
         </div>
-        <div style="font-size:0.75rem;color:var(--muted);margin-top:4px;">${escapeHtml(l.detail)}</div>
+        <div style="font-size:0.75rem;color:var(--muted);margin-top:4px;">${escapeHtml(l.detail || '')}</div>
       </div>
     </div>
   `).join('');
@@ -3158,6 +3987,7 @@ window.syncCollectionToFirestore = async function(key, value) {
             auditLog: 'auditLog',
             evalPeriod: 'settings',
             developmentPlans: 'developmentPlans',
+            questionSets: 'questionSets',
             exemptions: 'exemptions'
         };
         const col = MAP[key];
@@ -3191,60 +4021,46 @@ window.reloadCoursesByDept = function() {
 };
 
 let _stuCourseActiveDept = '';
+let _stuPendingCourse    = '';   // course to re-select once the list loads (edit mode)
 
-window.buildStuCourseDeptBar = function(selectedCourse) {
-  const bar = document.getElementById('stuCourseDeptBar');
-  if (!bar) return;
-  // Auto-detect dept if a course is pre-selected (edit mode)
-  if (selectedCourse && !_stuCourseActiveDept) {
-    for (const [code, list] of Object.entries(COURSES_BY_DEPT)) {
-      if (list.includes(selectedCourse)) { _stuCourseActiveDept = code; break; }
-    }
-  }
-  bar.innerHTML = Object.keys(COURSES_BY_DEPT).map(code => `
-    <button type="button"
-      class="student-dept-filter-btn${_stuCourseActiveDept === code ? ' active' : ''}"
-      style="font-size:0.72rem;padding:4px 10px;"
-      onclick="selectCourseByDept('${code}')"
-    >${code}</button>
-  `).join('');
-  if (_stuCourseActiveDept) {
-    populateStuCourseDropdown(_stuCourseActiveDept, selectedCourse || '');
-  } else {
-    const sel = document.getElementById('stuCourse');
-    if (sel) sel.innerHTML = '<option value="">— Select a Department above first —</option>';
-  }
-};
+// Department dropdown -> course list. Picking a department fills in its code
+// automatically and loads only that department's courses.
+window.loadStuCourses = function(deptCode) {
+  const sel  = document.getElementById('stuCourse');
+  const chip = document.getElementById('stuCourseDeptChip');
+  _stuCourseActiveDept = '';
 
-window.selectCourseByDept = function(deptCode) {
+  if (chip) { chip.textContent = ''; chip.style.display = 'none'; }
+  if (!sel) return;
+
+  if (!deptCode) {
+    sel.innerHTML = '<option value="">— Select a department first —</option>';
+    return;
+  }
+
+  if (chip) { chip.textContent = deptCode; chip.style.display = ''; }
+
+  const courses = COURSES_BY_DEPT[deptCode];
+  if (!courses || !courses.length) {
+    sel.innerHTML = '<option value="">— No courses set up for ' + deptCode + ' —</option>';
+    return;
+  }
+
   _stuCourseActiveDept = deptCode;
-  buildStuCourseDeptBar();
+  populateStuCourseDropdown(deptCode, _stuPendingCourse);
+  _stuPendingCourse = '';
 };
 
-// Sync stuDept dropdown → course pill bar (so selecting dept auto-loads course list)
-window.syncStuDeptToCourseBar = function(deptCode) {
-  // Map the dynamic dept code to COURSES_BY_DEPT key if it matches
-  const matchedKey = Object.keys(COURSES_BY_DEPT).find(k => k === deptCode);
-  if (matchedKey) {
-    _stuCourseActiveDept = matchedKey;
-    buildStuCourseDeptBar();
-  } else {
-    // Dept has no predefined courses — reset course dropdown gracefully
-    _stuCourseActiveDept = '';
-    const sel = document.getElementById('stuCourse');
-    if (sel) sel.innerHTML = '<option value="">— No courses defined for this department —</option>';
-    const bar = document.getElementById('stuCourseDeptBar');
-    if (bar) {
-      // Rebuild pills but leave none active
-      bar.innerHTML = Object.keys(COURSES_BY_DEPT).map(code => `
-        <button type="button"
-          class="student-dept-filter-btn"
-          style="font-size:0.72rem;padding:4px 10px;"
-          onclick="selectCourseByDept('${code}')"
-        >${code}</button>
-      `).join('');
-    }
+// Kept so older call sites keep working.
+window.syncStuDeptToCourseBar = function(deptCode) { loadStuCourses(deptCode); };
+
+// Which department owns a course — used when editing a record with no dept set.
+window.deptForCourse = function(course) {
+  if (!course) return '';
+  for (const [code, list] of Object.entries(COURSES_BY_DEPT)) {
+    if (list.includes(course)) return code;
   }
+  return '';
 };
 
 function populateStuCourseDropdown(deptCode, selected) {

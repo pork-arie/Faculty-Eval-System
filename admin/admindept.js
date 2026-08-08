@@ -158,6 +158,27 @@ function showDeptPage(deptCode) {
   closeSidebar();
 }
 
+/**
+ * Distinct students enrolled in a department's subjects.
+ *
+ * Single source of truth for "how many students does this department have".
+ * The dept stat card, the enrolled-students modal and the full-list page each
+ * used to work this out for themselves and disagreed with each other.
+ *
+ * Deleted students and ids pointing at nothing are dropped, so a stale id left
+ * behind on a subject cannot inflate the count.
+ */
+window.getDeptEnrolledStudentIds = function (deptCode) {
+  const living = new Set(getData('students', []).filter(s => !s.deleted).map(s => s.id));
+  const ids = new Set();
+  getData('subjects', [])
+    .filter(sub => sub.dept === deptCode)
+    .forEach(sub => (sub.enrolledIds || []).forEach(eid => {
+      if (living.has(eid)) ids.add(eid);
+    }));
+  return ids;
+};
+
 function renderDeptPage(deptCode) {
   const DEPT_CONFIG = getDepartments();
   const cfg = DEPT_CONFIG[deptCode];
@@ -199,17 +220,33 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
   document.getElementById('deptBannerName').textContent = cfg.name;
   document.getElementById('deptBannerDesc').textContent = cfg.desc;
 
-  const allTeachers = getData('teachers', []).filter(t => !t.deleted && t.dept === deptCode);
-  const regularTeachers = allTeachers.filter(t => (t.facultyType || 'regular') !== 'supervisor');
-  const deptSupervisors = allTeachers.filter(t => t.facultyType === 'supervisor');
+  const everyTeacher = getData('teachers', []).filter(t => !t.deleted);
+
+  // Regular faculty still belong to exactly one home department.
+  const regularTeachers = everyTeacher.filter(t =>
+    (t.facultyType || 'regular') !== 'supervisor' && t.dept === deptCode);
+
+  // Supervisors do NOT. A dean of COED may also chair a CCIS program, so this
+  // page lists anyone whose supervisedDepts includes THIS department - not just
+  // those whose home dept happens to match. Filtering on t.dept alone was why a
+  // supervisor assigned to a second department never appeared there.
+  const deptSupervisors = everyTeacher.filter(t =>
+    t.facultyType === 'supervisor' &&
+    (typeof getSupervisedDepts === 'function'
+      ? getSupervisedDepts(t).some(a => a.dept === deptCode)
+      : t.dept === deptCode));
+
+  const allTeachers = regularTeachers.concat(deptSupervisors);
   const allSubjects = getData('subjects', []).filter(s => s.dept === deptCode);
   const allEvals    = getData('evaluations', []);
   const allStudents = getData('students', []).filter(s => !s.deleted);
 
-  let totalEnrolled = 0;
-  allSubjects.forEach(s => {
-    totalEnrolled += (s.enrolledIds || []).filter(eid => allStudents.find(st => st.id === eid)).length;
-  });
+  // Was summing enrolledIds.length across every subject, which counts SEATS,
+  // not students - one student taking four subjects in this department read
+  // as 4. The card is labelled "Enrolled Students" and opens a list of
+  // students, so it has to be distinct students. Per-subject seat counts are
+  // still what Annex C weights by; that is a different number and unaffected.
+  const totalEnrolled = getDeptEnrolledStudentIds(deptCode).size;
   const deptEvals = allEvals.filter(e => allSubjects.some(s => s.id === e.subjectId));
 
 
@@ -228,7 +265,9 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
         const tEvals = allEvals.filter(e => tSubs.some(s => s.id === e.subjectId));
         const setSc = calculateWeightedSETRating(t.id);
         const sefEvs = getData('evaluations', []).filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
-        const sefSc = sefEvs.length > 0 ? sefEvs[sefEvs.length-1].totalScore.toFixed(2) : null;
+        // Mean of every supervisor rating — see getSEFForTeacher() in admin.js.
+        const sefAggD = getSEFForTeacher(t.id);
+        const sefSc = sefAggD.count ? sefAggD.average.toFixed(2) : null;
         return `<tr onclick="showAnnexReports('${t.id}')" title="Click to view Annex C/D" style="cursor:pointer;">
           <td><span style="font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;">${escapeHtml(t.tid)}</span></td>
           <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong></td>
@@ -245,14 +284,24 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
       deptSupervisorEl.style.display = '';
       document.getElementById('deptSupervisorCount').textContent = deptSupervisors.length;
       document.getElementById('deptSupervisorsTbody').innerHTML = deptSupervisors.map(t => {
-        const roleLabel = t.deptRole === 'dean' ? '🎓 Dean' : t.deptRole === 'chairperson' ? '🪑 Chairperson' : '👤 Supervisor';
-        const roleColor = t.deptRole === 'dean' ? '#7c3aed' : t.deptRole === 'chairperson' ? '#0369a1' : '#374151';
+        // The role shown is the one held in THIS department, which is not
+        // necessarily t.deptRole - that mirrors only their first assignment.
+        const here = (typeof getSupervisedDepts === 'function')
+          ? (getSupervisedDepts(t).find(a => a.dept === deptCode) || {})
+          : { role: t.deptRole };
+        const roleKey = here.role || t.deptRole || 'supervisor';
+        const roleLabel = roleKey === 'dean' ? '🎓 Dean' : roleKey === 'chairperson' ? '🪑 Chairperson' : '👤 Supervisor';
+        const roleColor = roleKey === 'dean' ? '#7c3aed' : roleKey === 'chairperson' ? '#0369a1' : '#374151';
+        // Make it obvious when someone's home department is elsewhere.
+        const visiting = t.dept && t.dept !== deptCode
+          ? `<div style="font-size:0.68rem;color:var(--muted);">home: ${escapeHtml(t.dept)}</div>`
+          : '';
         const sefEvs = getData('evaluations', []).filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
         const sefCount = sefEvs.length;
         return `<tr onclick="showAnnexReports('${t.id}')" title="Click to view Annex C/D" style="cursor:pointer;">
           <td><span style="font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;">${escapeHtml(t.tid)}</span></td>
           <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong></td>
-          <td><span style="font-size:0.75rem;font-weight:600;color:${roleColor};">${roleLabel}</span></td>
+          <td><span style="font-size:0.75rem;font-weight:600;color:${roleColor};">${roleLabel}</span>${visiting}</td>
           <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
           <td><span style="font-size:0.78rem;">${sefCount} SEF rating${sefCount !== 1 ? 's' : ''} given</span></td>
         </tr>`;
@@ -270,12 +319,17 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
         const teacherName = teacher ? teacher.name : '<span style="color:var(--danger); font-style:italic;">Unassigned</span>';
         return `<tr>
           <td><span style="font-family:\'JetBrains Mono\',monospace;font-weight:700;font-size:0.78rem;">${escapeHtml(sub.code)}</span></td>
-          <td style="font-size:0.82rem;">${escapeHtml(sub.name)}</div></td>
-          <td style="font-size:0.82rem;">${teacherName}</div></td> 
+          <td style="font-size:0.82rem;">${escapeHtml(sub.name)}</td>
+          <td style="font-size:0.82rem;">
+            ${sub.category
+              ? `<span class="badge" style="background:var(--primary-light,#eff6ff);color:var(--primary,#2563eb);font-size:0.68rem;">${escapeHtml(sub.category)}</span>`
+              : '<span style="color:var(--muted);font-size:0.72rem;">\u2014</span>'}
+          </td>
+          <td style="font-size:0.82rem;">${teacherName}</td>
           <td><span class="badge badge-primary" style="font-size:0.68rem;">${enrolled}</span></td>
         </tr>`;
       }).join('')
-    : `<tr><td colspan="4" style="text-align:center;padding:24px;">No subjects found.</td></tr>`;
+    : `<tr><td colspan="5" style="text-align:center;padding:24px;">No subjects found.</td></tr>`;
 }
 
 // ===== DEPT MANAGEMENT PAGE — layout preference =====

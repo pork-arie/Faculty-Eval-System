@@ -153,8 +153,23 @@ async function syncCollectionToFirestore(key, val) {
     const col = MAP[key];
     if (!col) return;
     if (Array.isArray(val)) {
+      let items = val;
+      // The audit log is append-only in the security rules. addAudit() re-sends the
+      // WHOLE log (up to 500 entries) on every save, so all the existing ones arrive
+      // as UPDATEs — which are denied — and a single denied write rejects the entire
+      // batch, taking the teacher/student record down with it. Send only new entries.
+      if (col === 'auditLog') {
+        let sent = [];
+        try { sent = JSON.parse(localStorage.getItem('_auditSyncedIds') || '[]'); } catch (e) {}
+        const sentSet = new Set(sent);
+        items = val.filter(it => it && it.id && !sentSet.has(it.id));
+        if (!items.length) return;
+        localStorage.setItem('_auditSyncedIds',
+          JSON.stringify(items.map(it => it.id).concat(sent).slice(0, 600)));
+      }
+      if (!items.length) return;
       const batch = db.batch();
-      val.forEach(item => { if (item.id) batch.set(db.collection(col).doc(item.id), item); });
+      items.forEach(item => { if (item.id) batch.set(db.collection(col).doc(item.id), item); });
       await batch.commit();
     } else {
       await db.collection(col).doc(key).set(val);
@@ -167,7 +182,17 @@ async function loadFromFirebase() {
   try {
     const collections = ['students','teachers','subjects','evaluations','schoolYears','auditLog'];
     for (const col of collections) {
-      const snap = await db.collection(col).get();
+      // Per-collection try/catch. Without it, one denied read (auditLog is the
+      // usual one — its rules are stricter than the rest) threw out of the whole
+      // loop, so every collection after it in this list was never loaded at all.
+      let snap;
+      try {
+        snap = await db.collection(col).get();
+      } catch (e) {
+        console.warn('Could not load "' + col + '" from Firestore:', e.code || e.message,
+                     '— keeping whatever is already in localStorage.');
+        continue;
+      }
       if (!snap.empty) {
         const docs = snap.docs.map(d => {
           const data = {id: d.id, ...d.data()};
@@ -608,26 +633,66 @@ window.addEventListener('load', () => {
 
     <!-- REPORTS -->
     <div class="page" id="page-reports">
-      <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;">
+      <!-- Title and toolbar share one row. Two things used to stop that:
+           1. The five action buttons plus the term selector measured 1024px
+              against roughly 1100px of content width, so the title never had
+              room. They now live in the "Actions" menu below, which takes the
+              toolbar to about 330px.
+           2. flex:1 1 auto made the browser measure the toolbar at its FULL
+              content width when deciding where to break the header's flex
+              line, so min-width:0 never got a chance to shrink it. The basis
+              is 0 now. Sizing lives in .reports-header / .reports-toolbar in
+              admin-styles.css rather than inline, so the two stay in step. -->
+      <div class="page-header reports-header">
         <div class="page-title"><h1>Reports & Analytics</h1><p>View teacher ratings and evaluation results</p></div>
-        <div style="display:flex;gap:8px;align-items:center;">
+        <div class="reports-toolbar">
           <div class="term-selector">
             <svg class="term-cal" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
             <select id="reportTermSelect" onchange="setReportTerm(this.value)" title="View ratings for a school year & semester"></select>
             <svg class="term-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
-          <button class="btn btn-ghost" onclick="generateFERReport()" title="Institutional summary for the President / VPAA (CMO §6.8)">
-            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Generate FER
-          </button>
-          <button class="btn btn-ghost" onclick="exportReport()">
-            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV
-          </button>
-          <button class="btn btn-ghost" onclick="exportSystemBackup()" title="Download a full JSON backup of all data">
-            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>Backup
-          </button>
-          <button class="btn btn-ghost" onclick="triggerRestore()" title="Restore data from a backup file">
-            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>Restore
-          </button>
+          <!-- Sliders icon rather than a hamburger on purpose: the hamburger is
+               already the sidebar toggle on mobile (.mobile-menu-btn), and two
+               hamburgers on one screen meaning different things is a trap. The
+               menu groups the two everyday report actions apart from the three
+               setup ones, which is the real distinction between them. -->
+          <div class="reports-actions" id="reportsActions">
+            <button type="button" class="btn btn-toolbar reports-actions-btn" id="reportsActionsBtn"
+                    onclick="toggleReportsMenu(event)"
+                    aria-haspopup="true" aria-expanded="false" aria-controls="reportsActionsMenu"
+                    title="Report actions and setup">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>Actions
+              <svg class="ra-chevron" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="reports-actions-menu" id="reportsActionsMenu" role="menu" aria-labelledby="reportsActionsBtn">
+              <div class="reports-menu-group">Generate</div>
+              <button type="button" class="reports-menu-item" role="menuitem" onclick="closeReportsMenu();generateFERReport()">
+                <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                <span class="reports-menu-text"><span class="reports-menu-label">Generate FER</span><span class="reports-menu-desc">Institutional summary for the President / VPAA (CMO &sect;6.8)</span></span>
+              </button>
+              <button type="button" class="reports-menu-item" role="menuitem" onclick="closeReportsMenu();exportReport()">
+                <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span class="reports-menu-text"><span class="reports-menu-label">Export CSV</span><span class="reports-menu-desc">Download the current term&rsquo;s ratings as a spreadsheet</span></span>
+              </button>
+              <div class="reports-menu-sep"></div>
+              <div class="reports-menu-group">Setup</div>
+              <button type="button" class="reports-menu-item" role="menuitem" onclick="closeReportsMenu();openQuestionsModal('SET')">
+                <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/><circle cx="12" cy="12" r="10"/></svg>
+                <span class="reports-menu-text"><span class="reports-menu-label">Questions</span><span class="reports-menu-desc">View or revise the SET and SEF questions</span></span>
+              </button>
+              <button type="button" class="reports-menu-item" role="menuitem" onclick="closeReportsMenu();openSEFAudit()">
+                <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <span class="reports-menu-text"><span class="reports-menu-label">SEF Audit</span><span class="reports-menu-desc">Audit &amp; clean supervisor (SEF) evaluation records</span></span>
+              </button>
+              <button type="button" class="reports-menu-item" role="menuitem" onclick="closeReportsMenu();openSignatoriesModal()">
+                <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+                <span class="reports-menu-text"><span class="reports-menu-label">Signatories</span><span class="reports-menu-desc">Names printed as Prepared by / Reviewed by</span></span>
+              </button>
+            </div>
+          </div>
+          <!-- Backup and Restore moved out: they wipe or replace every collection,
+               which is system maintenance, not a reporting action. Sitting one click
+               from Export CSV made a destructive mis-click far too easy. -->
           <input type="file" id="restoreFileInput" accept="application/json,.json" style="display:none;" onchange="importSystemBackup(this)"/>
         </div>
       </div>
@@ -732,7 +797,7 @@ window.addEventListener('load', () => {
           <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>Code</th><th>Name</th><th>Teacher</th><th>Enrolled</th></tr>
+                <tr><th>Code</th><th>Name</th><th>Type</th><th>Teacher</th><th>Enrolled</th></tr>
               </thead>
               <tbody id="deptSubjectsTbody"></tbody>
             </table>
@@ -880,25 +945,34 @@ window.addEventListener('load', () => {
         <div class="modal-header"><h3 id="studentModalTitle">Add Student</h3><button class="modal-close" onclick="closeModal('addStudentModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
         <div class="modal-body">
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ID Number</label><input class="form-control" id="stuId" placeholder="2024001"/></div>
-            <div class="form-group"><label class="form-label">Full Name</label><input class="form-control" id="stuName" placeholder="Juan dela Cruz"/></div>
+            <div class="form-group"><label class="form-label">ID Number</label><input class="form-control" id="stuId" placeholder="22-01745" inputmode="numeric" maxlength="8"/></div>
+            <div class="form-group"><label class="form-label">First Name</label><input class="form-control" id="stuFirst" placeholder="Juan"/></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Middle Name</label><input class="form-control" id="stuMiddle" placeholder="Miguel"/></div>
+            <div class="form-group"><label class="form-label">Last Name</label><input class="form-control" id="stuLast" placeholder="Dela Cruz"/></div>
+          </div>
+          <div class="form-group" style="max-width:180px;">
+            <label class="form-label">Suffix</label><input class="form-control" id="stuSuffix" placeholder="Jr. (optional)"/>
+          </div>
+          <input type="hidden" id="stuName"/>
+          <div class="form-group">
+            <label class="form-label">Department</label>
+            <select class="form-control" id="stuDept" onchange="loadStuCourses(this.value)">
+              <option value="">-- Select Department --</option>
+            </select>
           </div>
           <div class="form-group">
-            <label class="form-label">Course</label>
-            <div id="stuCourseDeptBar" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;"></div>
+            <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+              Course <span class="dept-tag-inline" id="stuCourseDeptChip" style="display:none;"></span>
+            </label>
             <select class="form-control" id="stuCourse">
-              <option value="">— Select Department above first —</option>
+              <option value="">— Select a department first —</option>
             </select>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">Year Level</label><select class="form-control" id="stuYear"><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>4th Year</option></select></div>
-            <div class="form-group"><label class="form-label">Section</label><input class="form-control" id="stuSection" placeholder="A"/></div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Department</label>
-            <select class="form-control" id="stuDept" onchange="syncStuDeptToCourseBar(this.value)">
-              <option value="">-- Select Department --</option>
-            </select>
+            <div class="form-group"><label class="form-label">Year Level</label><select class="form-control" id="stuYear"><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>4th Year</option><option>5th Year</option></select></div>
+            <div class="form-group"><label class="form-label">Section</label><input class="form-control" id="stuSection" placeholder="A" style="text-transform:uppercase;" autocapitalize="characters" maxlength="8"/></div>
           </div>
           <div class="form-group"><label class="form-label">Password (default: ID number)</label><input class="form-control" id="stuPass" placeholder="Leave blank to use ID number"/></div>
         </div>
@@ -924,13 +998,57 @@ window.addEventListener('load', () => {
         <div class="modal-body">
           <div class="form-row">
             <div class="form-group"><label class="form-label">Teacher ID</label><input class="form-control" id="tchId" placeholder="T001"/></div>
-            <div class="form-group"><label class="form-label">Full Name</label><input class="form-control" id="tchName" placeholder="Prof. Juan Santos"/></div>
+            <div class="form-group">
+              <label class="form-label">Title</label>
+              <select class="form-control" id="tchTitle">
+                <option value="">— None —</option>
+                <option>Prof.</option><option>Dr.</option><option>Engr.</option>
+                <option>Atty.</option><option>Mr.</option><option>Ms.</option><option>Mrs.</option>
+              </select>
+            </div>
           </div>
-          <div class="form-group">
-            <label class="form-label">Department</label>
-            <select class="form-control" id="tchDept">
-              <option value="">-- Select Department --</option>
-            </select>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">First Name</label><input class="form-control" id="tchFirst" placeholder="Juan"/></div>
+            <div class="form-group"><label class="form-label">Middle Name</label><input class="form-control" id="tchMiddle" placeholder="Miguel"/></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Last Name</label><input class="form-control" id="tchLast" placeholder="Santos"/></div>
+            <div class="form-group"><label class="form-label">Suffix</label><input class="form-control" id="tchSuffix" placeholder="Jr. (optional)"/></div>
+          </div>
+          <input type="hidden" id="tchName"/>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Department</label>
+              <select class="form-control" id="tchDept">
+                <option value="">-- Select Department --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <!-- Printed on Annex C section A ("Current Faculty Rank"). It was
+                   read from t.rank but nothing ever set it, so the form always
+                   showed a dash. -->
+              <label class="form-label">Current Faculty Rank</label>
+              <select class="form-control" id="tchRank">
+                <option value="">-- Select Rank --</option>
+                <optgroup label="Instructor">
+                  <option>Instructor I</option><option>Instructor II</option><option>Instructor III</option>
+                </optgroup>
+                <optgroup label="Assistant Professor">
+                  <option>Assistant Professor I</option><option>Assistant Professor II</option>
+                  <option>Assistant Professor III</option><option>Assistant Professor IV</option>
+                </optgroup>
+                <optgroup label="Associate Professor">
+                  <option>Associate Professor I</option><option>Associate Professor II</option>
+                  <option>Associate Professor III</option><option>Associate Professor IV</option>
+                  <option>Associate Professor V</option>
+                </optgroup>
+                <optgroup label="Professor">
+                  <option>Professor I</option><option>Professor II</option><option>Professor III</option>
+                  <option>Professor IV</option><option>Professor V</option><option>Professor VI</option>
+                </optgroup>
+                <option>Part-time Lecturer</option>
+              </select>
+            </div>
           </div>
           <!-- Hidden field = source of truth. saveTeacher() reads this, NOT the select. -->
           <input type="hidden" id="tchFacultyTypeHidden" value="regular"/>
@@ -942,14 +1060,23 @@ window.addEventListener('load', () => {
             </select>
           </div>
           <div class="form-group" id="tchDeptRoleGroup" style="display:none;">
-            <label class="form-label">Department Role</label>
-            <select class="form-control" id="tchDeptRole">
-              <option value="">-- Select Role --</option>
-              <option value="dean">🎓 Dean</option>
-              <option value="chairperson">🪑 Chairperson</option>
-              <option value="supervisor">👤 General Supervisor</option>
-            </select>
-            <small style="color:var(--muted);font-size:0.72rem;margin-top:4px;display:block;">
+            <label class="form-label">Supervisory Assignments</label>
+            <small style="color:var(--muted);font-size:0.72rem;display:block;margin-bottom:8px;">
+              One row per department this person supervises. A Dean of COED who also
+              chairs a CCIS program gets two rows, with a different role in each.
+            </small>
+
+            <div id="tchSupRows"></div>
+
+            <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="addSupRow()">
+              + Add department
+            </button>
+
+            <!-- Kept so any code still reading a single role keeps working; it
+                 mirrors the FIRST row above. -->
+            <input type="hidden" id="tchDeptRole"/>
+
+            <small style="color:var(--muted);font-size:0.72rem;margin-top:8px;display:block;">
               Supervisors log in using their Teacher ID and the password below.
             </small>
           </div>
@@ -977,13 +1104,43 @@ window.addEventListener('load', () => {
           <div class="form-row">
             <div class="form-group"><label class="form-label">Subject Code</label><input class="form-control" id="subCode" placeholder="CS301"/></div>
             <div class="form-group"><label class="form-label">Subject Name</label><input class="form-control" id="subName" placeholder="Data Structures"/></div>
+          </div>
+          <!-- Category and Year Level describe what KIND of subject this is, so they
+               sit together on one line. -->
+          <div class="form-row">
             <div class="form-group"><label class="form-label">Category</label><select class="form-control" id="subCategory"><option value="">-- Select Category --</option><option value="Major">Major</option><option value="Minor">Minor</option><option value="GE">General Education</option><option value="PE">Physical Education</option><option value="NSTP">NSTP</option><option value="Elective">Elective</option></select></div>
+            <div class="form-group">
+              <label class="form-label">Year Level</label>
+              <select class="form-control" id="subYear">
+                <option value="">Any year level</option>
+                <option>1st Year</option><option>2nd Year</option><option>3rd Year</option>
+                <option>4th Year</option><option>5th Year</option>
+              </select>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">Department</label>
-            <select class="form-control" id="subDept" onchange="populateTeacherSelect()">
+            <select class="form-control" id="subDept" onchange="populateTeacherSelect(); renderSubCourseChips();">
               <option value="">-- Select Department --</option>
             </select>
+          </div>
+
+          <!-- One subject is often shared by several courses in the same department
+               (BSIT and BSCS both take Computer Programming 1), so this is a
+               multi-select. It sits AFTER Department because the available courses
+               depend on it, and takes the full row width so a department with five
+               or six courses does not wrap into an unreadable block. -->
+          <div class="form-group">
+            <label class="form-label" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              Offered to Course(s)
+              <span id="subCourseSummary" class="sc-summary"></span>
+              <span id="subCourseActions" style="margin-left:auto;display:flex;gap:6px;"></span>
+            </label>
+            <div id="subCourseChips" class="sc-chips"></div>
+            <small style="color:var(--muted);font-size:0.71rem;display:block;margin-top:5px;">
+              Tap each course this subject is offered to. Leaving all unselected means
+              every course in the department &mdash; use that for GE, PE and NSTP.
+            </small>
           </div>
 
           <div class="form-row">
@@ -1001,7 +1158,14 @@ window.addEventListener('load', () => {
         </div>
       </div>
 
-          <div class="form-group"><label class="form-label">Assign Teacher</label><select class="form-control" id="subTeacher"><option value="">-- Select Teacher --</option></select></div>
+          <div class="form-group">
+            <label class="form-label">Assign Teacher</label>
+            <!-- A plain <select> got unusable once faculty from every department were
+                 listed. This is a search-and-filter picker instead; the hidden input
+                 keeps the id `subTeacher` so saveSubject() reads it unchanged. -->
+            <input type="hidden" id="subTeacher" value=""/>
+            <div id="teacherPicker" class="tp-wrap"></div>
+          </div>
         </div>
         <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('addSubjectModal')">Cancel</button><button class="btn btn-primary" id="saveSubjectBtn" onclick="saveSubject()">Add Subject</button></div>
       </div>
@@ -1110,7 +1274,7 @@ window.addEventListener('load', () => {
           <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;margin-bottom:16px;font-size:0.8rem;">
             <strong>CSV Format:</strong> ID Number, Full Name, Year Level, Section, Course, Department, Subject Codes (semicolon-separated)<br>
             <code style="display:block;margin-top:6px;color:#166534;background:#dcfce7;padding:6px 10px;border-radius:4px;">2024001,Juan dela Cruz,1st Year,A,BSINFOT (Bachelor of Science in Information Technology),CCIS,CS301;CS302</code>
-            <span style="color:var(--muted);">Year Level options: 1st Year / 2nd Year / 3rd Year / 4th Year &nbsp;|&nbsp; Course column can be full name or short code</span>
+            <span style="color:var(--muted);">Year Level options: 1st Year / 2nd Year / 3rd Year / 4th Year / 5th Year &nbsp;|&nbsp; Course column can be full name or short code</span>
           </div>
           <div style="border:2px dashed var(--border);border-radius:10px;padding:28px;text-align:center;margin-bottom:14px;cursor:pointer;" onclick="document.getElementById('bulkStudentFile').click()" id="bulkStudentDropZone">
             <svg width="32" height="32" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24" style="margin-bottom:8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -1188,6 +1352,7 @@ window.addEventListener('load', () => {
     <script src="adminrate.js"></script>
     <script src="adminEval.js"></script>
     <script src="adminfeatures.js"></script>
+    <script src="adminQuestions.js"></script>
 
     
     

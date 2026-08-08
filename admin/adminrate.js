@@ -1,58 +1,13 @@
 // ===== FIREBASE SYNC & FIXES =====
 
 // Fix: Ensure getData works with localStorage
-window.getData = function(key, defaultValue = []) {
-    const data = localStorage.getItem(key);
-    if (data) {
-        try {
-            return JSON.parse(data);
-        } catch(e) {
-            return defaultValue;
-        }
-    }
-    return defaultValue;
-};
+// REMOVED duplicate getData() — byte-identical to the copy in admin.js.
 
 // Fix: Add audit log function if missing
-window.addAudit = function(action, detail) {
-    const log = getData('auditLog', []);
-    log.unshift({
-        id: 'audit' + Date.now(),
-        action: action,
-        detail: detail,
-        timestamp: new Date().toISOString().slice(0, 19).replace('T', ' ')
-    });
-    while (log.length > 500) log.pop();
-    setData('auditLog', log);
-};
+// REMOVED duplicate addAudit() — byte-identical to the copy in admin.js.
 
 // Fix: Show toast function
-window.showToast = function(message, type = 'info') {
-    let toastContainer = document.getElementById('toastContainer');
-    if (!toastContainer) {
-        toastContainer = document.createElement('div');
-        toastContainer.id = 'toastContainer';
-        toastContainer.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;';
-        document.body.appendChild(toastContainer);
-    }
-    
-    const toast = document.createElement('div');
-    const colors = {
-        success: '#16a34a',
-        error: '#dc2626',
-        info: '#3b82f6',
-        warning: '#f59e0b'
-    };
-    toast.style.cssText = `background:${colors[type] || colors.info};color:#fff;padding:12px 20px;border-radius:8px;font-size:0.875rem;box-shadow:0 4px 12px rgba(0,0,0,0.15);animation:slideIn 0.3s ease;`;
-    toast.textContent = message;
-    toastContainer.appendChild(toast);
-    
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transition = 'opacity 0.3s';
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-};
+// REMOVED duplicate showToast() — byte-identical to the copy in admin.js.
 
 // Add animation styles if not present
 if (!document.querySelector('#toastStyles')) {
@@ -86,21 +41,9 @@ window.SUPERVISOR_CATEGORIES = [
 
 // Updated Remarks based on percentage
 // CMO 19 compliant interpretation scale
-window.getRemarks = function(percentage) {
-    if (percentage >= 90) return 'Outstanding';
-    if (percentage >= 75) return 'Very Satisfactory';
-    if (percentage >= 60) return 'Satisfactory';
-    if (percentage >= 50) return 'Fair';
-    return 'Unsatisfactory';
-};
+// REMOVED duplicate getRemarks() — byte-identical to the copy in admin.js.
 
-window.getRemarksColor = function(percentage) {
-    if (percentage >= 90) return '#16a34a';  // green
-    if (percentage >= 75) return '#2563eb';  // blue
-    if (percentage >= 60) return '#d97706';  // amber
-    if (percentage >= 50) return '#ea580c';  // orange
-    return '#dc2626';                        // red
-};
+// REMOVED duplicate getRemarksColor() — byte-identical to the copy in admin.js.
 
 // Calculate final rating: 60% Student + 40% Supervisor
 
@@ -127,8 +70,9 @@ window.generateFinalReports = function() {
     const teachers = getData('teachers', []).filter(t => !t.deleted);
     const finalReports = teachers.map(teacher => {
         const setSc = calculateWeightedSETRating(teacher.id);
-        const sefEvs = getData('evaluations', []).filter(e => e.teacherId === teacher.id && e.evaluatorType === 'supervisor');
-        const sefSc = sefEvs.length > 0 ? sefEvs[sefEvs.length-1].totalScore.toFixed(2) : null;
+        // Mean of every supervisor rating — see getSEFForTeacher() in admin.js.
+        const sefAggR = getSEFForTeacher(teacher.id);
+        const sefSc = sefAggR.count ? sefAggR.average.toFixed(2) : null;
         return {
             teacherId: teacher.id,
             teacherName: teacher.name,
@@ -147,109 +91,166 @@ window.generateFinalReports = function() {
 setInterval(checkAndAutoFinalize, 3600000);
 
 // Fix: Add missing getActiveSY function
-window.getActiveSY = function() {
-    const syl = getData('schoolYears', []);
-    for (const sy of syl) {
-        const activeSem = sy.semesters.find(s => s.active);
-        if (activeSem) {
-            return { year: sy.year, activeSem: activeSem.label };
-        }
-    }
-    return null;
-};
+// REMOVED duplicate getActiveSY() — byte-identical to the copy in admin.js.
 
-// Fix: Ensure populateTeacherSelect works with department filtering
+// ===== TEACHER PICKER =====
+// A native <select> was fine while the list was filtered to one department. Now
+// that any faculty can teach any subject (part-timers, cross-department loads),
+// the list runs to the whole institution and a dropdown is unusable: no search,
+// no way to scan by department, and optgroups collapse into an undifferentiated
+// scroll on mobile.
+//
+// This replaces it with a search box, department filter pills, and a scrollable
+// list. The selected value still lives in a hidden input with id `subTeacher`,
+// so saveSubject() and every other reader work unchanged.
+
+let _tpSearch = '';
+let _tpDept   = '';          // '' = all departments
+
+function _tpTeachers() {
+    return getData('teachers', []).filter(t => !t.deleted && t.status !== 'archived');
+}
+
 window.populateTeacherSelect = function(selectedId = '') {
-    const teachers = getData('teachers', []).filter(t => !t.deleted);
-    const deptFilter = document.getElementById('subDept') ? document.getElementById('subDept').value : '';
-    
-    let filteredTeachers = teachers;
-    if (deptFilter) {
-        filteredTeachers = teachers.filter(t => t.dept === deptFilter);
-    }
-    
-    const select = document.getElementById('subTeacher');
-    if (select) {
-        select.innerHTML = '<option value="">-- Select Teacher --</option>' +
-            filteredTeachers.map(t => `<option value="${t.id}" ${t.id === selectedId ? 'selected' : ''}>${t.name} (${t.tid})${t.dept ? ' - ' + t.dept : ''}</option>`).join('');
+    const hidden = document.getElementById('subTeacher');
+    if (hidden) hidden.value = selectedId || '';
+    // Default the filter to the subject's own department: that is the common
+    // case, and one tap on "All" widens it when a part-timer is needed.
+    _tpDept   = (document.getElementById('subDept') || {}).value || '';
+    _tpSearch = '';
+    renderTeacherPicker();
+};
+
+window.tpSetDept = function(dept) { _tpDept = dept; renderTeacherPicker(); };
+window.tpSetSearch = function(q)  { _tpSearch = q;  renderTeacherPicker(true); };
+
+window.tpSelect = function(id) {
+    const hidden = document.getElementById('subTeacher');
+    if (hidden) hidden.value = id;
+    renderTeacherPicker();
+};
+
+window.renderTeacherPicker = function(keepFocus) {
+    const host = document.getElementById('teacherPicker');
+    if (!host) return;
+
+    const selectedId = (document.getElementById('subTeacher') || {}).value || '';
+    const subDept    = (document.getElementById('subDept') || {}).value || '';
+    const all        = _tpTeachers();
+
+    // Counts drive the pills, so an empty department is never offered.
+    const counts = {};
+    all.forEach(t => { const d = t.dept || 'No dept'; counts[d] = (counts[d] || 0) + 1; });
+
+    // How many classes each faculty already carries this term. Faculty with none
+    // are surfaced first: when an admin is assigning a subject, the useful answer
+    // is almost always "who is still free", and an unassigned lecturer buried
+    // alphabetically between two people already carrying four classes is exactly
+    // the person you want to find. The load count is shown on every row so a
+    // heavier assignment is a deliberate choice rather than an accident.
+    const subjects = getData('subjects', []).filter(x => !x.deleted);
+    const editingId = (typeof editSubjectId !== 'undefined') ? editSubjectId : null;
+    const loadOf = {};
+    subjects.forEach(x => {
+        // Don't count the subject currently being edited - reassigning it would
+        // otherwise make its own teacher look busier than they are.
+        if (editingId && x.id === editingId) return;
+        if (x.teacherId) loadOf[x.teacherId] = (loadOf[x.teacherId] || 0) + 1;
+    });
+
+    const q = _tpSearch.trim().toLowerCase();
+    const list = all
+        .filter(t => !_tpDept || (t.dept || 'No dept') === _tpDept)
+        .filter(t => !q || (t.name + ' ' + t.tid + ' ' + (t.dept || '')).toLowerCase().includes(q))
+        .sort((a, b) => {
+            const la = loadOf[a.id] || 0, lb = loadOf[b.id] || 0;
+            if (la !== lb) return la - lb;                       // lightest load first
+            return String(a.name).localeCompare(String(b.name)); // then alphabetical
+        });
+
+    const chosen = all.find(t => t.id === selectedId);
+
+    // Same classes as the Teachers page filter bar (.student-dept-filter-btn /
+    // .dept-filter-count) so both bars stay visually identical by construction,
+    // rather than through two copies of the same CSS that can drift apart.
+    const pill = (label, value, n, isActive) =>
+        `<button type="button" class="student-dept-filter-btn${isActive ? ' active' : ''}" onclick="tpSetDept('${value}')">`
+        + escapeHtml(label) + (n != null ? ` <span class="dept-filter-count">${n}</span>` : '') + `</button>`;
+
+    const deptKeys = Object.keys(counts).sort((a, b) => {
+        if (a === subDept) return -1;          // subject's own department first
+        if (b === subDept) return 1;
+        return a.localeCompare(b);
+    });
+
+    host.innerHTML = `
+      <div class="tp-selected">
+        ${chosen
+          ? `<div class="tp-chosen">
+               <div>
+                 <strong>${escapeHtml(chosen.name)}</strong>
+                 <span class="tp-tid">${escapeHtml(chosen.tid)}</span>
+                 ${chosen.dept ? `<span class="dept-tag-inline">${escapeHtml(chosen.dept)}</span>` : ''}
+                 ${chosen.dept && subDept && chosen.dept !== subDept
+                    ? '<span class="tp-outside">outside this department</span>' : ''}
+               </div>
+               <button type="button" class="tp-clear" onclick="tpSelect('')" title="Clear">&#10005;</button>
+             </div>`
+          : '<div class="tp-empty">No teacher assigned yet \u2014 pick one below.</div>'}
+      </div>
+
+      <input type="text" id="tpSearchInput" class="form-control tp-search"
+             placeholder="Search by name, ID or department\u2026"
+             value="${escapeHtml(_tpSearch)}" oninput="tpSetSearch(this.value)"/>
+
+      <div class="tp-pills">
+        ${pill('All', '', all.length, _tpDept === '')}
+        ${deptKeys.map(d => pill(d, d, counts[d], _tpDept === d)).join('')}
+      </div>
+
+      <div class="tp-list">
+        ${list.length ? list.map(t => `
+          <button type="button" class="tp-item${t.id === selectedId ? ' selected' : ''}"
+                  onclick="tpSelect('${t.id}')">
+            <span class="tp-avatar">${escapeHtml((t.name || '?').charAt(0).toUpperCase())}</span>
+            <span class="tp-info">
+              <span class="tp-name">${escapeHtml(t.name)}</span>
+              <span class="tp-meta">${escapeHtml(t.tid)}${t.dept ? ' \u00b7 ' + escapeHtml(t.dept) : ''}${
+                t.facultyType === 'supervisor' ? ' \u00b7 Supervisor' : ''}</span>
+            </span>
+            ${(loadOf[t.id] || 0) === 0
+                ? '<span class="tp-load free">No subjects yet</span>'
+                : `<span class="tp-load">${loadOf[t.id]} class${loadOf[t.id] === 1 ? '' : 'es'}</span>`}
+            ${t.id === selectedId ? '<span class="tp-check">\u2713</span>' : ''}
+          </button>`).join('')
+        : '<div class="tp-none">No faculty match that search.</div>'}
+      </div>`;
+
+    // Typing re-renders the list, so focus and caret have to be restored.
+    if (keepFocus) {
+        const el = document.getElementById('tpSearchInput');
+        if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
     }
 };
 
-// Add department filter listener for subject teacher selection
+// Changing the subject's department re-sorts the pills but never clears the
+// chosen teacher - the whole point is that they need not match.
 document.addEventListener('DOMContentLoaded', function() {
     const subDeptSelect = document.getElementById('subDept');
     if (subDeptSelect) {
         subDeptSelect.addEventListener('change', function() {
-            const currentTeacher = document.getElementById('subTeacher').value;
-            populateTeacherSelect(currentTeacher);
+            _tpDept = this.value || '';
+            renderTeacherPicker();
         });
     }
 });
 
-// Patch saveTeacher to include dept field
-const _origSaveTeacher = window.saveTeacher;
-// Patch saveTeacher to include dept field and properly handle supervisors
-// Patch saveTeacher to perfectly preserve supervisor state and refresh both tables
-window.saveTeacher = function() {
-  const tid  = document.getElementById('tchId').value.trim();
-  const name = document.getElementById('tchName').value.trim();
-  const dept = document.getElementById('tchDept') ? document.getElementById('tchDept').value : '';
-  
-  // Read from the global tracking variable initialized by modal setup
-  const facultyType = window._pendingFacultyType || 'regular';
-  const deptRole = document.getElementById('tchDeptRole') ? document.getElementById('tchDeptRole').value : '';
-  
-  if (!tid || !name) { showToast('Fill all fields.', 'error'); return; }
-  const teachers = getData('teachers', []);
-  
-  if (typeof editTeacherId !== 'undefined' && editTeacherId) {
-    const idx = teachers.findIndex(t => t.id === editTeacherId);
-    teachers[idx].tid = tid; 
-    teachers[idx].name = name; 
-    teachers[idx].dept = dept;
-    teachers[idx].facultyType = facultyType; 
-    teachers[idx].deptRole = deptRole;
-    addAudit('Edit Teacher', `Updated: ${name} (${tid}) — Role: ${facultyType}`);
-    showToast('Record updated successfully!', 'success');
-  } else {
-    if (teachers.find(t => t.tid === tid && !t.deleted)) {
-      showToast('Teacher ID already exists.', 'error');
-      return;
-    }
-
-    const newTeacher = { 
-      id: 'tch'+Date.now(), 
-      tid, 
-      name, 
-      dept, 
-      facultyType, 
-      deptRole, 
-      status:'active', 
-      deleted:false 
-    };
-    
-    // Auto-assign their Teacher ID as password for their dedicated login portal
-    if (facultyType === 'supervisor') {
-      newTeacher.password = tid; 
-    }
-    
-    teachers.push(newTeacher);
-    addAudit('Add Teacher', `Added ${facultyType}: ${name} (${tid})`);
-    showToast(facultyType === 'supervisor' ? `Supervisor Added! Portal PW set to: ${tid}` : 'Faculty added successfully!', 'success');
-  }
-  
-  setData('teachers', teachers);
-  closeModal('addTeacherModal');
-  
-  // Clear layout filters
-  const teacherDeptBar = document.getElementById('teacherDeptFilterBar');
-  if (teacherDeptBar) teacherDeptBar.dataset.active = '';
-  const supervisorDeptBar = document.getElementById('supervisorDeptFilterBar');
-  if (supervisorDeptBar) supervisorDeptBar.dataset.active = '';
-
-  // Force synchronous UI updates for both tables
-  if (typeof window.renderTeachers === 'function') window.renderTeachers();
-};
+// REMOVED: the saveTeacher override that used to live here.
+// It read the old single 'tchName' box, which is now a hidden field — so every
+// save failed with "Fill all fields" no matter what was typed. It had also
+// drifted behind admin.js's version, losing the supervisor password field, the
+// category field, the deptRole reset on demote, and the pushTeacherToCloud call.
+// admin.js's saveTeacher is now the only definition.
 
 // Patch saveSubject to include dept + category fields
 window.saveSubject = function() {
@@ -261,6 +262,9 @@ window.saveSubject = function() {
     const isLabSchool = document.getElementById('subIsLab').checked;
     // BUG FIX: category was never read, causing it to silently reset to '' on every save
     const category = (document.getElementById('subCategory') ? document.getElementById('subCategory').value : '') || '';
+    // Curriculum slot. Empty courses = open to every course (GE/PE/NSTP).
+    const courses = (typeof getSubCourses === 'function') ? getSubCourses() : [];
+    const yearLevel = (document.getElementById('subYear') || {}).value || '';
 
     if (!code || !name) { showToast('Fill all fields.', 'error'); return; }
 
@@ -282,7 +286,8 @@ window.saveSubject = function() {
                 showToast(`Teacher changed — ${removed} student rating(s) reset.`, 'info');
             }
         }
-        Object.assign(subjects[idx], { code, name, teacherId, dept, loadType, isLabSchool, category });
+        Object.assign(subjects[idx], { code, name, teacherId, dept, loadType, isLabSchool, category,
+                                       courses, yearLevel });
         addAudit('Edit Subject', `Updated: ${name} (${code})`);
         showToast('Subject updated!', 'success');
     } else {
@@ -290,6 +295,7 @@ window.saveSubject = function() {
             id: 'sub' + Date.now(),
             code, name, teacherId, dept,
             loadType, isLabSchool, category,
+            courses, yearLevel,
             enrolledIds: []
         });
         addAudit('Add Subject', `Added: ${name} (${code})`);
@@ -301,23 +307,10 @@ window.saveSubject = function() {
     renderSubjects();
 };
 
-// Patch openEditTeacherModal to fill dept dropdown
-const _origOpenEditTeacher = window.openEditTeacherModal;
-window.openEditTeacherModal = function(id) {
-  _origOpenEditTeacher(id);
-  const t = getData('teachers', []).find(t => t.id === id);
-  const sel = document.getElementById('tchDept');
-  if (sel && t) sel.value = t.dept || '';
-};
-
-// Patch openEditSubjectModal to fill dept dropdown
-const _origOpenEditSubject = window.openEditSubjectModal;
-window.openEditSubjectModal = function(id) {
-  _origOpenEditSubject(id);
-  const sub = getData('subjects', []).find(s => s.id === id);
-  const sel = document.getElementById('subDept');
-  if (sel && sub) sel.value = sub.dept || '';
-};
+// REMOVED: the openEditTeacherModal and openEditSubjectModal wrappers that used to
+// live here. Both only re-set a department dropdown that the originals in admin.js
+// already fill via populateDeptDropdown(), so they did nothing but add a second
+// definition of each function.
 
 // Ensure Firestore sync works properly
 window.syncCollectionToFirestore = async function(key, value) {
@@ -368,7 +361,14 @@ window.syncCollectionToFirestore = async function(key, value) {
         auditLog: 'auditLog', 
         evalPeriod: 'settings', 
         finalReports: 'finalReports',
-        customDepartments: 'customDepartments'
+        customDepartments: 'customDepartments',
+        // These were missing, so the data never left this browser. questionSets in
+        // particular MUST reach Firestore - it is where the Android app reads the
+        // published instrument from.
+        questionSets: 'questionSets',
+        developmentPlans: 'developmentPlans',
+        exemptions: 'exemptions',
+        reportSignatories: 'settings'
     };
     const col = MAP[key];
     if (!col) return;
@@ -395,7 +395,16 @@ window.syncCollectionToFirestore = async function(key, value) {
 // Force a full sync of all data to Firebase on page load
 window.fullSyncToFirebase = async function() {
     console.log('🔄 Performing full sync to Firebase...');
-    const keys = ['students', 'teachers', 'subjects', 'evaluations', 'schoolYears', 'auditLog', 'evalPeriod', 'finalReports', 'customDepartments', 'customCourses'];
+    // 'questionSets' matters as much as any of these: the Android app reads the
+    // published SET/SEF instrument straight out of that collection. setData()
+    // pushes it on every publish, but that push only console.warn's on failure -
+    // so without it here, one failed write left the dashboard showing v2 as
+    // published while every phone kept serving v1, with nothing to retry it.
+    // developmentPlans and exemptions were the last two collections with no
+    // retry: setData pushes them once and only console.warn's on failure, so a
+    // single failed write left a saved FEDAF sitting in one browser forever.
+    // This list is now every key MAP knows about.
+    const keys = ['students', 'teachers', 'subjects', 'evaluations', 'schoolYears', 'auditLog', 'evalPeriod', 'finalReports', 'customDepartments', 'customCourses', 'questionSets', 'developmentPlans', 'exemptions', 'reportSignatories'];
     
     for (const key of keys) {
         const data = localStorage.getItem(key);
@@ -412,12 +421,7 @@ window.fullSyncToFirebase = async function() {
 
 // Override setData to sync with Firebase
 window.originalSetData = window.setData;
-window.setData = function(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
-    if (typeof syncCollectionToFirestore === 'function') {
-        syncCollectionToFirestore(key, value);
-    }
-};
+// REMOVED duplicate setData() — byte-identical to the copy in admin.js.
 
 // Call full sync after load
 setTimeout(() => {
@@ -426,73 +430,22 @@ setTimeout(() => {
     }
 }, 2000);
 
-// ===== FIX: Add department + course field to Student =====
-const _origSaveStudent = window.saveStudent;
-window.saveStudent = function() {
-  const sid = document.getElementById('stuId').value.trim();
-  const name = document.getElementById('stuName').value.trim();
-  const year = document.getElementById('stuYear').value;
-  const section = document.getElementById('stuSection').value.trim();
-  const dept = document.getElementById('stuDept') ? document.getElementById('stuDept').value : '';
-  // BUG FIX: read course from the stuCourse select (was omitted, losing course data on every save)
-  const course = document.getElementById('stuCourse') ? document.getElementById('stuCourse').value.trim() : '';
-  const pass = document.getElementById('stuPass').value;
-  
-  if (!sid || !name || !section) { 
-    showToast('Fill all required fields.', 'error'); 
-    return; 
-  }
-  
-  const students = getData('students', []);
-  
-  if (typeof editStudentId !== 'undefined' && editStudentId) {
-    const idx = students.findIndex(s => s.id === editStudentId);
-    students[idx] = { ...students[idx], sid, name, course, year, section, dept };
-    if (pass) students[idx].password = pass;
-    addAudit('Edit Student', `Updated: ${name} (${sid}) — Dept: ${dept || 'None'}`);
-    showToast('Student updated!', 'success');
-  } else {
-    if (students.find(s => s.sid === sid && !s.deleted)) { 
-      showToast('ID already exists.', 'error'); 
-      return; 
-    }
-    students.push({ 
-      id: 'stu' + Date.now(), 
-      sid, name, course, year, section, dept,
-      password: pass || sid, 
-      status: 'active', 
-      forceReset: false, 
-      deleted: false 
-    });
-    addAudit('Add Student', `Added: ${name} (${sid}) — Dept: ${dept || 'None'}`);
-    showToast('Student added!', 'success');
-  }
-  
-  setData('students', students);
-  closeModal('addStudentModal');
-  if (typeof renderStudents === 'function') renderStudents();
-};
+// REMOVED: the saveStudent override that used to live here.
+// Same problem — it read the hidden 'stuName' box, so adding or editing a student
+// always reported "Fill all required fields". admin.js's saveStudent already reads
+// the split First/Middle/Last/Suffix inputs and stores them as separate fields.
 
-const _origOpenEditStudent = window.openEditStudentModal;
-window.openEditStudentModal = function(id) {
-  if (_origOpenEditStudent) _origOpenEditStudent(id);
-  const student = getData('students', []).find(s => s.id === id);
-  const sel = document.getElementById('stuDept');
-  if (sel && student) sel.value = student.dept || '';
-};
+// REMOVED: the openEditStudentModal wrapper that used to live here. It was worse
+// than redundant. admin.js deliberately derives a department when the student record
+// has none:
+//     const stuDeptCode = s.dept || deptForCourse(s.course);
+// This wrapper ran afterwards and overwrote the dropdown with `student.dept || ''`,
+// throwing that fallback away — so editing a student whose dept field was blank
+// showed no department even though the course could determine it.
 
 // Helper escape function
-if (typeof escapeHtml === 'undefined') {
-  window.escapeHtml = function(str) {
-    if (!str) return '';
-    return str.replace(/[&<>]/g, function(m) {
-      if (m === '&') return '&amp;';
-      if (m === '<') return '&lt;';
-      if (m === '>') return '&gt;';
-      return m;
-    });
-  };
-}
+// REMOVED dead escapeHtml() — it sat behind `if (typeof escapeHtml === 'undefined')`,
+// but admin.js always defines escapeHtml first, so this block never ran.
 
 const DEPT_NAMES = {
     COED: 'College of Education',

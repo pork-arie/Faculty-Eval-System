@@ -6,6 +6,14 @@
 <title>Admin Login — Teacher Evaluation System</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="index.css">
+<style>
+  /* Edge and IE inject their OWN password reveal control, which sat right next
+     to the custom eye button - two eyes, and they fight: the native one only
+     reveals while held, so the icons could disagree about what state the field
+     was in. Hide the built-in and keep ours, which works in every browser. */
+  input[type="password"]::-ms-reveal,
+  input[type="password"]::-ms-clear { display: none; }
+</style>
 </head>
 <body>
 
@@ -29,7 +37,7 @@
     <div class="form-group">
       <label class="form-label">Email</label>
       <div class="input-wrap">
-        <svg class="input-icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <svg class="input-icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/></svg>
         <input class="form-control" type="text" id="adminUser" placeholder="admin@yourschool.edu" autocomplete="username"/>
       </div>
     </div>
@@ -39,7 +47,7 @@
       <div class="input-wrap">
         <svg class="input-icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
         <input class="form-control" type="password" id="adminPass" placeholder="Enter password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doAdminLogin()" style="padding-right:44px;"/>
-        <button type="button" id="togglePass" onclick="togglePass()" title="Show / hide password" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:#64748b;cursor:pointer;padding:4px;">
+        <button type="button" id="passToggleBtn" onclick="togglePass()" title="Show / hide password" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:#64748b;cursor:pointer;padding:4px;">
           <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
       </div>
@@ -135,16 +143,31 @@ function friendlyAuthError(e) {
     return 'Wrong email or password.';
   if (c.indexOf('invalid-email') > -1)     return 'That email address is not valid.';
   if (c.indexOf('operation-not-allowed') > -1 || c.indexOf('configuration-not-found') > -1)
-    return 'Email/Password sign-in is not enabled in Firebase Console &#8594; Authentication &#8594; Sign-in method.';
+    // Set with textContent below, so an HTML entity would print literally as
+    // "&#8594;". Use the character itself.
+    return 'Email/Password sign-in is not enabled in Firebase Console \u2192 Authentication \u2192 Sign-in method.';
   if (c.indexOf('too-many-requests') > -1) return 'Too many attempts. Please wait a moment and try again.';
   if (c.indexOf('network') > -1)           return 'Network error. Check your internet connection.';
   if (c.indexOf('not authorized') > -1)    return 'This account is not authorized as an admin.';
   return (e && e.message) ? e.message : 'Sign-in failed. Please try again.';
 }
 
+// The button used to carry id="togglePass", the same name as this function.
+// Any element with an id becomes a property of window, so the element and the
+// function were competing for window.togglePass - it happened to work because
+// the function declaration ran last and overwrote the element reference, but it
+// would break the moment this script moved above the markup. Button renamed to
+// passToggleBtn so nothing shadows anything.
 function togglePass() {
   const inp = document.getElementById('adminPass');
-  inp.type = (inp.type === 'password') ? 'text' : 'password';
+  const showing = inp.type === 'text';
+  inp.type = showing ? 'password' : 'text';
+  const btn = document.getElementById('passToggleBtn');
+  if (btn) {
+    btn.title = showing ? 'Show password' : 'Hide password';
+    btn.setAttribute('aria-label', btn.title);
+    btn.setAttribute('aria-pressed', showing ? 'false' : 'true');
+  }
 }
 
 async function doAdminLogin() {

@@ -63,6 +63,48 @@ window.listEvaluationTerms = function() {
     return [...terms.values()];
 };
 
+// -- Reports header "Actions" menu --------------------------------------
+// The five report buttons used to sit loose in the header and never fitted
+// beside the page title. They live in this dropdown now. The .open class goes
+// on the wrapper rather than the panel so the trigger button and its chevron
+// can react to the state too.
+window.toggleReportsMenu = function(e) {
+    // Without this the document listener below sees the very same click and
+    // closes the menu in the tick it was opened.
+    if (e) e.stopPropagation();
+    const wrap = document.getElementById('reportsActions');
+    if (!wrap) return;
+    const btn = document.getElementById('reportsActionsBtn');
+    const isOpen = wrap.classList.toggle('open');
+    if (btn) btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+};
+
+window.closeReportsMenu = function() {
+    const wrap = document.getElementById('reportsActions');
+    if (!wrap) return;
+    wrap.classList.remove('open');
+    const btn = document.getElementById('reportsActionsBtn');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+};
+
+// A click anywhere outside closes the menu. Clicks inside are left alone so the
+// panel cannot vanish mid-interaction - each item closes it explicitly in its
+// own onclick before running its action.
+document.addEventListener('click', function(e) {
+    const wrap = document.getElementById('reportsActions');
+    if (!wrap || !wrap.classList.contains('open')) return;
+    if (!wrap.contains(e.target)) closeReportsMenu();
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape') return;
+    const wrap = document.getElementById('reportsActions');
+    if (!wrap || !wrap.classList.contains('open')) return;
+    closeReportsMenu();
+    const btn = document.getElementById('reportsActionsBtn');
+    if (btn) btn.focus();   // Esc should not strand keyboard focus in a hidden panel.
+});
+
 // Fill / refresh the Reports term dropdown and keep the current choice selected.
 window._refreshReportTermLabel = function() {
     const sel = document.getElementById('reportTermSelect');

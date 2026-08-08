@@ -43,6 +43,26 @@
    ANNEX D PRINT STYLES
    ============================================================ */
 @media print {
+    /* Printed forms: the editable rank/name fields and the date pickers must come
+       out as plain text on a ruled line. Without this the browser prints the
+       date input's calendar icon and spinner controls onto the paper. */
+    [data-print-field] {
+        border-bottom: 1px solid #333 !important;
+    }
+    input[type="date"] {
+        border: none !important;
+        border-bottom: 1px solid #333 !important;
+        -webkit-appearance: none;
+        appearance: none;
+        color: #000 !important;
+        background: transparent !important;
+    }
+    input[type="date"]::-webkit-calendar-picker-indicator,
+    input[type="date"]::-webkit-inner-spin-button,
+    input[type="date"]::-webkit-clear-button {
+        display: none !important;
+    }
+
     .sidebar,
     .page-header,
     .btn,
@@ -1854,4 +1874,225 @@ body::before {
 .teacher-section-body.collapsed {
     max-height: 0;
     opacity: 0;
+}
+/* Editable fields inside printed forms (Annex C / D). Dashed underline on screen
+   signals "you can type here"; @media print above swaps it for a solid rule. */
+[data-print-field] {
+    /* Solid rule, always drawn, even when the field is empty — an empty dashed
+       box read as a rendering glitch rather than a blank to be filled in. This
+       matches the ruled lines already used elsewhere on the form. */
+    border-bottom: 1px solid #333;
+    min-height: 1.15em;
+    line-height: 1.35;
+}
+/* Only on hover/focus does it advertise that it is editable. */
+[data-print-field]:hover  { background: #f8fafc; }
+[data-print-field]:focus  { background: #fff7ed; border-bottom-color: #d97706; }
+/* Placeholder text for an empty field, so the line is labelled rather than bare. */
+[data-print-field]:empty::before {
+    content: attr(data-placeholder);
+    color: #94a3b8;
+    font-style: italic;
+}
+@media print {
+    [data-print-field]:empty::before { content: ''; }
+}
+
+/* ===== TEACHER PICKER (Add/Edit Subject modal) =====
+   Replaces the native <select> for assigning a teacher. Faculty from every
+   department are selectable now, so the list needs search and filtering rather
+   than a single long scroll. */
+.tp-wrap { display: flex; flex-direction: column; gap: 8px; }
+
+.tp-selected { min-height: 42px; }
+.tp-chosen {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-radius: 8px;
+    background: var(--primary-light, #eff6ff);
+    border: 1px solid var(--primary, #2563eb);
+}
+.tp-chosen > div { flex: 1; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 0.85rem; }
+.tp-tid { font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--muted); }
+.tp-outside { font-size: 0.68rem; color: #b45309; background: #fef3c7; padding: 1px 7px; border-radius: 20px; }
+.tp-clear { border: none; background: transparent; cursor: pointer; color: var(--muted); font-size: 0.9rem; padding: 2px 6px; }
+.tp-clear:hover { color: var(--danger, #dc2626); }
+.tp-empty {
+    padding: 9px 12px; border-radius: 8px; font-size: 0.8rem; color: var(--muted);
+    background: var(--surface2, #f8fafc); border: 1px dashed var(--border, #e2e8f0);
+}
+
+.tp-search { font-size: 0.85rem; }
+
+.tp-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Pills reuse .student-dept-filter-btn and .dept-filter-count from the Teachers
+   page filter bar, so both bars stay identical by construction. */
+
+.tp-list {
+    max-height: 230px; overflow-y: auto;
+    border: 1px solid var(--border, #e2e8f0); border-radius: 8px;
+}
+.tp-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 9px 11px; border: none; background: #fff; cursor: pointer;
+    text-align: left; border-bottom: 1px solid var(--border, #e2e8f0);
+}
+.tp-item:last-child { border-bottom: none; }
+.tp-item:hover { background: var(--surface2, #f8fafc); }
+.tp-item.selected { background: var(--primary-light, #eff6ff); }
+.tp-avatar {
+    width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+    background: var(--primary, #2563eb); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.78rem; font-weight: 700;
+}
+.tp-info { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.tp-name { font-size: 0.83rem; font-weight: 600; }
+.tp-meta { font-size: 0.71rem; color: var(--muted); }
+.tp-check { color: var(--primary, #2563eb); font-weight: 700; }
+.tp-none { padding: 22px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+.tp-load {
+    font-size: 0.66rem; font-weight: 600; white-space: nowrap;
+    padding: 2px 8px; border-radius: 20px;
+    background: var(--surface2, #f1f5f9); color: var(--muted, #64748b);
+}
+.tp-load.free { background: #dcfce7; color: #15803d; }
+/* Page-toolbar buttons (Reports header). White on the light page background so
+   they read as buttons rather than as plain text - .btn-ghost is transparent,
+   which disappeared against the header. */
+.btn-toolbar {
+    background: #fff;
+    border: 1px solid var(--border, #e2e8f0);
+    color: var(--foreground, #0f172a);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+.btn-toolbar:hover {
+    background: var(--primary-light, #eff6ff);
+    border-color: var(--primary, #2563eb);
+    color: var(--primary, #2563eb);
+}
+
+
+/* ==== REPORTS & ANALYTICS HEADER ==== */
+.reports-header {
+    align-items: center;
+    justify-content: flex-start;
+    gap: 18px;
+    flex-wrap: wrap;
+}
+.reports-header .page-title {
+    flex: 0 0 auto;
+    margin: 0;
+}
+
+.reports-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    /* Basis 0, not auto. With an auto basis the flex algorithm uses this
+       element's hypothetical main size - its full content width - when it
+       collects items into flex lines, so the toolbar was pushed onto a second
+       line before min-width:0 ever got a chance to shrink it. */
+    flex: 1 1 0%;
+    min-width: 0;
+    flex-wrap: nowrap;
+}
+
+/* Term selector and Actions button both keep their natural width - with only
+   two controls left there is roughly 700px of slack, so nothing needs to be
+   squeezed or truncated. */
+.reports-toolbar > * { flex: 0 0 auto; }
+
+/* Narrow viewports: drop the toolbar onto its own full-width row, still flush
+   left with the heading. */
+@media (max-width: 900px) {
+    .reports-toolbar { flex: 1 0 100%; flex-wrap: wrap; }
+}
+
+/* ==== REPORTS HEADER "ACTIONS" MENU ==== */
+.reports-actions { position: relative; }
+
+.reports-actions-btn { display: inline-flex; align-items: center; gap: 6px; }
+.reports-actions-btn .ra-chevron {
+    color: var(--muted, #64748b);
+    margin-left: 2px;
+    transition: transform 0.15s ease;
+}
+.reports-actions.open .ra-chevron { transform: rotate(180deg); }
+.reports-actions.open .reports-actions-btn {
+    border-color: var(--primary, #2563eb);
+    color: var(--primary, #2563eb);
+    background: var(--primary-light, #eff6ff);
+}
+
+.reports-actions-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: 300px;
+    padding: 6px;
+    background: #fff;
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 12px;
+    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+    /* Above page content but below the sidebar (z-index 100) and any modal. */
+    z-index: 60;
+}
+.reports-actions.open .reports-actions-menu {
+    display: block;
+    animation: fadeIn 0.14s ease;
+}
+
+.reports-menu-group {
+    padding: 8px 10px 4px;
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--muted, #64748b);
+}
+.reports-menu-sep {
+    height: 1px;
+    background: var(--border, #e2e8f0);
+    margin: 6px 4px;
+}
+
+.reports-menu-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 10px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    font-family: inherit;
+    color: var(--ink, #0f172a);
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+.reports-menu-item:hover,
+.reports-menu-item:focus-visible {
+    background: var(--primary-light, #eff6ff);
+    color: var(--primary, #2563eb);
+    outline: none;
+}
+.reports-menu-item svg { flex-shrink: 0; margin-top: 1px; }
+
+.reports-menu-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.reports-menu-label { font-size: 0.82rem; font-weight: 600; }
+/* The old buttons carried these explanations in title attributes, where they
+   only appeared on hover. In a menu there is room to show them outright. */
+.reports-menu-desc {
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--muted, #64748b);
+    line-height: 1.35;
+}
+.reports-menu-item:hover .reports-menu-desc { color: inherit; opacity: 0.85; }
+
+@media print {
+    .reports-actions { display: none !important; }
 }

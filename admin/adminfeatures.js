@@ -11,85 +11,114 @@ window.showDeptEnrolledStudents = function(deptCode) {
     const allStudents = getData('students', []).filter(s => !s.deleted);
     const allSubjects = getData('subjects', []).filter(s => s.dept === deptCode);
 
-    // Collect unique enrolled student IDs across all subjects in this dept
-    const enrolledIds = new Set();
-    allSubjects.forEach(sub => {
-        (sub.enrolledIds || []).forEach(eid => enrolledIds.add(eid));
-    });
-
-    // Also include students directly assigned to this dept
-    const deptStudents = allStudents.filter(s => s.dept === deptCode);
-    deptStudents.forEach(s => enrolledIds.add(s.id));
-
+    // Same set the dept stat card counts - see getDeptEnrolledStudentIds in
+    // admindept.js - so the card and the list agree by construction.
+    const enrolledIds = getDeptEnrolledStudentIds(deptCode);
     const enrolledStudents = allStudents.filter(s => enrolledIds.has(s.id));
 
-    // Build subject-student lookup for display
+    // Each student's classes, with enough detail to be worth expanding: who
+    // teaches it and whether they have actually evaluated it this term. Subject
+    // codes alone were already visible as badges; the point of opening a row is
+    // to see something the collapsed view cannot show.
+    const teachers = getData('teachers', []);
+    const inTerm = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : function () { return true; };
+    const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor' && inTerm(e));
+
     const subjectMap = {};
     allSubjects.forEach(sub => {
+        const teacher = teachers.find(t => t.id === sub.teacherId);
         (sub.enrolledIds || []).forEach(eid => {
             if (!subjectMap[eid]) subjectMap[eid] = [];
-            subjectMap[eid].push(sub.code);
+            subjectMap[eid].push({
+                code: sub.code,
+                name: sub.name,
+                teacher: teacher ? teacher.name : 'No teacher assigned',
+                evaluated: evals.some(e => e.studentId === eid && e.subjectId === sub.id)
+            });
         });
     });
 
-    const modal = document.getElementById('deptEnrolledModal');
-    document.getElementById('deptEnrolledTitle').textContent = `${cfg.name} — Enrolled Students`;
-    document.getElementById('deptEnrolledCount').textContent = `${enrolledStudents.length} student${enrolledStudents.length !== 1 ? 's' : ''}`;
+    document.getElementById('deptEnrolledTitle').textContent = `${cfg.name} \u2014 Enrolled Students`;
+    document.getElementById('deptEnrolledCount').textContent =
+        `${enrolledStudents.length} student${enrolledStudents.length !== 1 ? 's' : ''} \u00b7 click a row to see their subjects`;
 
-    const tbody = document.getElementById('deptEnrolledTbody');
-    if (!enrolledStudents.length) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--muted);">No enrolled students found for this department.</td></tr>`;
-    } else {
-        tbody.innerHTML = enrolledStudents.map(s => {
-            const subs = subjectMap[s.id] || [];
-            return `<tr>
-                <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:0.8rem;">${escapeHtml(s.sid)}</span></td>
-                <td><strong style="font-size:0.85rem;">${escapeHtml(s.name)}</strong></td>
-                <td style="font-size:0.8rem;">${escapeHtml(s.year)}</td>
-                <td style="font-size:0.8rem;">Sec ${escapeHtml(s.section)}</td>
-                <td>
-                    ${subs.length ? subs.map(c => `<span class="badge badge-primary" style="margin:1px;font-size:0.65rem;">${escapeHtml(c)}</span>`).join('') : '<span style="color:var(--muted);font-size:0.75rem;">Dept only</span>'}
-                </td>
-                <td><span class="badge ${s.status === 'active' ? 'badge-success' : 'badge-danger'}" style="font-size:0.68rem;">${s.status}</span></td>
-            </tr>`;
-        }).join('');
-    }
-
-    // Store for search
+    // Stored before rendering: the row markup is shared with the search filter,
+    // and _deptEnrolledRow reads the map from here rather than taking it as an
+    // argument, so the two paths cannot drift apart again.
     window._deptEnrolledStudents = enrolledStudents;
     window._deptEnrolledSubjectMap = subjectMap;
 
+    _deptEnrolledRender(enrolledStudents, 'No enrolled students found for this department.');
     openModal('deptEnrolledModal');
+};
+
+// One renderer for both the initial list and the search results. These were two
+// near-identical copies that had already drifted - the empty state used
+// colspan="5" against a six-column table, so it under-spanned.
+window._deptEnrolledRender = function(list, emptyMsg) {
+    const tbody = document.getElementById('deptEnrolledTbody');
+    if (!tbody) return;
+    if (!list.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">${escapeHtml(emptyMsg)}</td></tr>`;
+        return;
+    }
+    tbody.innerHTML = list.map(_deptEnrolledRow).join('');
+};
+
+window._deptEnrolledRow = function(s) {
+    const subs = (window._deptEnrolledSubjectMap || {})[s.id] || [];
+    const done = subs.filter(x => x.evaluated).length;
+
+    const detail = subs.length ? subs.map(x => `
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 4px;border-bottom:1px solid var(--border,#e2e8f0);">
+            <span class="badge badge-primary" style="font-size:0.65rem;min-width:74px;text-align:center;">${escapeHtml(x.code)}</span>
+            <span style="flex:1;font-size:0.78rem;">${escapeHtml(x.name)}</span>
+            <span style="font-size:0.72rem;color:var(--muted,#64748b);">${escapeHtml(x.teacher)}</span>
+            <span class="badge ${x.evaluated ? 'badge-success' : ''}" style="font-size:0.62rem;${x.evaluated ? '' : 'background:var(--surface2,#f1f5f9);color:var(--muted,#64748b);'}">
+                ${x.evaluated ? 'Evaluated' : 'Pending'}
+            </span>
+        </div>`).join('')
+      : '<div style="padding:8px 4px;color:var(--muted);font-size:0.78rem;">No subjects in this department.</div>';
+
+    return `<tr onclick="toggleDeptEnrolledDetail('${escapeHtml(s.id)}')" style="cursor:pointer;">
+        <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:0.8rem;">${escapeHtml(s.sid)}</span></td>
+        <td><strong style="font-size:0.85rem;">${escapeHtml(s.name)}</strong></td>
+        <td style="font-size:0.8rem;">${escapeHtml(s.year)}</td>
+        <td style="font-size:0.8rem;">Sec ${escapeHtml(s.section)}</td>
+        <td style="font-size:0.78rem;white-space:nowrap;">
+            <svg id="dechev-${escapeHtml(s.id)}" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="vertical-align:-1px;margin-right:5px;transition:transform 0.15s;"><polyline points="9 18 15 12 9 6"/></svg>
+            ${subs.length} subject${subs.length !== 1 ? 's' : ''} &middot; ${done}/${subs.length} evaluated
+        </td>
+        <td><span class="badge ${s.status === 'active' ? 'badge-success' : 'badge-danger'}" style="font-size:0.68rem;">${escapeHtml(s.status)}</span></td>
+    </tr>
+    <tr id="dedet-${escapeHtml(s.id)}" style="display:none;">
+        <td colspan="6" style="background:var(--surface2,#f8fafc);padding:10px 16px;">${detail}</td>
+    </tr>`;
+};
+
+window.toggleDeptEnrolledDetail = function(studentId) {
+    const row = document.getElementById('dedet-' + studentId);
+    if (!row) return;
+    // Treat anything that is not an open row as closed, rather than testing for
+    // the literal 'none'. Reading back an inline style is brittle - a stylesheet
+    // or a browser default can leave it as an empty string and the first click
+    // then closes an already-closed row instead of opening it.
+    const open = row.style.display !== 'table-row';
+    row.style.display = open ? 'table-row' : 'none';
+    const chev = document.getElementById('dechev-' + studentId);
+    if (chev) chev.style.transform = open ? 'rotate(90deg)' : 'rotate(0deg)';
 };
 
 window.filterDeptEnrolledStudents = function(query) {
     const students = window._deptEnrolledStudents || [];
-    const subjectMap = window._deptEnrolledSubjectMap || {};
-    const q = query.toLowerCase();
+    const q = String(query || '').toLowerCase();
     const filtered = students.filter(s =>
-        s.name.toLowerCase().includes(q) ||
-        s.sid.toLowerCase().includes(q) ||
+        (s.name || '').toLowerCase().includes(q) ||
+        (s.sid || '').toLowerCase().includes(q) ||
         (s.section || '').toLowerCase().includes(q) ||
         (s.year || '').toLowerCase().includes(q)
     );
-    const tbody = document.getElementById('deptEnrolledTbody');
-    if (!filtered.length) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">No students match your search.</td></tr>`;
-        return;
-    }
-    tbody.innerHTML = filtered.map(s => {
-        const subs = subjectMap[s.id] || [];
-        return `<tr>
-            <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:0.8rem;">${escapeHtml(s.sid)}</span></td>
-            <td><strong style="font-size:0.85rem;">${escapeHtml(s.name)}</strong></td>
-            <td style="font-size:0.8rem;">${escapeHtml(s.year)}</td>
-            <td style="font-size:0.8rem;">Sec ${escapeHtml(s.section)}</td>
-            <td>
-                ${subs.length ? subs.map(c => `<span class="badge badge-primary" style="margin:1px;font-size:0.65rem;">${escapeHtml(c)}</span>`).join('') : '<span style="color:var(--muted);font-size:0.75rem;">Dept only</span>'}
-            </td>
-            <td><span class="badge ${s.status === 'active' ? 'badge-success' : 'badge-danger'}" style="font-size:0.68rem;">${s.status}</span></td>
-        </tr>`;
-    }).join('');
+    _deptEnrolledRender(filtered, 'No students match your search.');
 };
 
 // Patch renderDeptPage to make ALL FOUR dept stat cards clickable:
@@ -1618,8 +1647,13 @@ window.buildSupervisorDeptFilterBar = function() {
     const DEPT_CONFIG = getDepartments();
     const allSupervisors = getData('teachers', []).filter(t => !t.deleted && t.facultyType === 'supervisor');
 
+    // A supervisor covering two departments is counted under both pills.
     const counts = {};
-    allSupervisors.forEach(t => { counts[t.dept || 'UNASSIGNED'] = (counts[t.dept || 'UNASSIGNED'] || 0) + 1; });
+    allSupervisors.forEach(t => {
+        const list = (typeof getSupervisedDepts === 'function') ? getSupervisedDepts(t) : [];
+        if (!list.length) { counts['UNASSIGNED'] = (counts['UNASSIGNED'] || 0) + 1; return; }
+        list.forEach(a => { counts[a.dept] = (counts[a.dept] || 0) + 1; });
+    });
 
     let html = `<button class="student-dept-filter-btn ${!_supervisorDeptFilter ? 'active' : ''}" data-dept="" onclick="filterSupervisorsByDept('')">
         All <span class="dept-filter-count">${allSupervisors.length}</span>
@@ -1657,6 +1691,17 @@ window.filterSupervisorsByDept = function(deptCode) {
 // an in-app page (sidebar stays) using .page-header / .card /
 // .data-table, with a Back button and Export CSV.
 // ============================================================
+// Expand/collapse the subject list under an enrolled-student row.
+window._dflToggle = function(studentId) {
+    const row = document.querySelector('tr._dfl-detail[data-for="' + studentId + '"]');
+    if (!row) return;
+    const open = row.style.display !== 'table-row';
+    row.style.display = open ? 'table-row' : 'none';
+    const prev = row.previousElementSibling;
+    const chev = prev && prev.querySelector('._dfl-chev');
+    if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
+};
+
 window.showDeptFullList = function(deptCode, type) {
   const esc = (typeof escapeHtml === 'function') ? escapeHtml : (x => String(x == null ? '' : x));
   const DEPT = (typeof getDepartments === 'function') ? getDepartments() : {};
@@ -1674,12 +1719,29 @@ window.showDeptFullList = function(deptCode, type) {
   let columns, rows;
 
   if (type === 'teachers') {
-    const list = allTeachers.filter(t => t.dept === deptCode && (t.facultyType || 'regular') !== 'supervisor');
+    // Regular faculty by home department, plus any supervisor assigned to oversee
+    // this department - a chairperson borrowed from another college belongs on
+    // this list too, same as on the department page itself.
+    const list = allTeachers.filter(t => {
+        const isSup = (t.facultyType || 'regular') === 'supervisor';
+        if (!isSup) return t.dept === deptCode;
+        return (typeof getSupervisedDepts === 'function')
+            ? getSupervisedDepts(t).some(a => a.dept === deptCode)
+            : t.dept === deptCode;
+    });
     columns = ['ID', 'Name', 'Status', 'SET %', 'SEF %'];
     rows = list.map(t => {
       const setSc = (typeof calculateWeightedSETRating === 'function') ? calculateWeightedSETRating(t.id) : '0';
-      const sefEvs = allEvals.filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
-      const sefSc = sefEvs.length ? sefEvs[sefEvs.length - 1].totalScore.toFixed(2) + '%' : 'N/A';
+      // Mean of every supervisor rating, matching getSEFForTeacher() in admin.js.
+      // This used to take the last one written, so a faculty with two supervisors
+      // showed a different figure here than on the reports page.
+      const sefAgg = (typeof getSEFForTeacher === 'function')
+        ? getSEFForTeacher(t.id)
+        : (() => {
+            const l = allEvals.filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
+            return { count: l.length, average: l.length ? l.reduce((a,b)=>a+b.totalScore,0)/l.length : null };
+          })();
+      const sefSc = sefAgg.count ? sefAgg.average.toFixed(2) + '%' : 'N/A';
       return {
         s: ((t.tid || '') + ' ' + (t.name || '')).toLowerCase(),
         onclick: "showAnnexReports('" + t.id + "')",
@@ -1701,22 +1763,62 @@ window.showDeptFullList = function(deptCode, type) {
     });
   } else { // enrolled
     columns = ['Student ID', 'Name', 'Year & Section', 'Subjects'];
+    // Row set is getDeptEnrolledStudentIds(); the loop below only attaches which
+    // subjects each one takes, so this page cannot drift from the card again.
+    const deptIds = getDeptEnrolledStudentIds(deptCode);
+    const inTerm = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : function () { return true; };
+    const termEvals = allEvals.filter(e => e.evaluatorType !== 'supervisor' && inTerm(e));
     const map = {};
     allSubjects.forEach(sub => {
       (sub.enrolledIds || []).forEach(eid => {
+        if (!deptIds.has(eid)) return;
         const st = allStudents.find(s => s.id === eid);
         if (!st) return;
         if (!map[eid]) map[eid] = { st: st, subs: [] };
-        map[eid].subs.push(sub.code);
+        const tch = allTeachers.find(t => t.id === sub.teacherId);
+        // Whether THIS student has evaluated THIS class, in the active term.
+        // Same term test Annex C uses, so the two can never disagree.
+        // Whether, not when. A submission date is a trace back to an individual
+        // student's response, which CMO 6.10 asks the designated office to
+        // prevent - and "Evaluated" already answers the only question this view
+        // needs to answer. The timestamp is deliberately not carried here.
+        const ev = termEvals.find(e => e.studentId === eid && e.subjectId === sub.id);
+        map[eid].subs.push({
+          code: sub.code, name: sub.name || '',
+          teacher: tch ? tch.name : 'Unassigned',
+          done: !!ev
+        });
       });
     });
     rows = Object.keys(map).map(k => {
       const st = map[k].st, subs = map[k].subs;
       const ys = (st.year || '') + (st.section ? ' - ' + st.section : '');
+      // Columns are unchanged. The only visible addition is a chevron in the
+      // Subjects cell, so the row reads as expandable without altering the table.
+      // The codes live in the dropdown now, not here. The cell keeps a plain
+      // count so the row still says how many classes the student carries - and
+      // so the cell is not an empty box with only a chevron in it.
+      const chev = '<svg class="_dfl-chev" width="11" height="11" fill="none" stroke="currentColor" '
+        + 'stroke-width="2.5" viewBox="0 0 24 24" style="vertical-align:-1px;margin-right:7px;'
+        + 'color:var(--muted,#64748b);transition:transform 0.15s;"><polyline points="9 18 15 12 9 6"/></svg>';
+      const summary = chev + '<span style="color:var(--muted,#64748b);">'
+        + subs.length + ' subject' + (subs.length !== 1 ? 's' : '') + '</span>';
+
+      const detail = subs.map(x => '<div style="display:flex;gap:12px;align-items:center;padding:5px 0;'
+          + 'border-bottom:1px solid var(--border,#e2e8f0);">'
+          + '<span style="font-family:\'JetBrains Mono\',monospace;font-size:0.76rem;min-width:88px;">' + esc(x.code) + '</span>'
+          + '<span style="flex:1;font-size:0.8rem;">' + esc(x.name) + '</span>'
+          + '<span style="font-size:0.74rem;color:var(--muted,#64748b);min-width:150px;">' + esc(x.teacher) + '</span>'
+          + (x.done
+              ? '<span class="badge badge-success" style="font-size:0.62rem;">Evaluated</span>'
+              : '<span class="badge" style="font-size:0.62rem;background:#fef3c7;color:#92400e;">Pending</span>')
+        + '</div>').join('');
       return {
-        s: ((st.sid || '') + ' ' + (st.name || '')).toLowerCase(),
-        cells: [mono(st.sid), strong(st.name), esc(ys), esc(subs.join(', '))],
-        plain: [st.sid || '', st.name || '', ys, subs.join(', ')]
+        id: st.id,
+        s: ((st.sid || '') + ' ' + (st.name || '') + ' ' + subs.map(x => x.code).join(' ')).toLowerCase(),
+        cells: [mono(st.sid), strong(st.name), esc(ys), summary],
+        plain: [st.sid || '', st.name || '', ys, subs.map(x => x.code).join(', ')],
+        detail: detail || '<div style="font-size:0.8rem;color:var(--muted);">No subjects.</div>'
       };
     });
   }
@@ -1738,8 +1840,19 @@ window.showDeptFullList = function(deptCode, type) {
 
   const headHtml = '<tr>' + columns.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr>';
   const bodyHtml = rows.length
-    ? rows.map(r => '<tr data-s="' + r.s + '"' + (r.onclick ? ' onclick="' + r.onclick + '" style="cursor:pointer;" title="Open report"' : '') + '>'
-        + r.cells.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('')
+    ? rows.map(r => {
+        // Rows with a detail payload toggle it; rows with an onclick keep their
+        // existing behaviour. Nothing else about the table changes.
+        const open = r.detail ? ' onclick="_dflToggle(\'' + r.id + '\')" style="cursor:pointer;" title="Show this student\'s subjects and evaluation status"' : '';
+        const click = r.onclick ? ' onclick="' + r.onclick + '" style="cursor:pointer;" title="Open report"' : open;
+        return '<tr data-s="' + r.s + '"' + click + '>'
+          + r.cells.map(c => '<td>' + c + '</td>').join('') + '</tr>'
+          + (r.detail
+              ? '<tr class="_dfl-detail" data-for="' + r.id + '" style="display:none;">'
+                + '<td colspan="' + columns.length + '" style="background:var(--surface2,#f8fafc);padding:10px 18px;">'
+                + r.detail + '</td></tr>'
+              : '');
+      }).join('')
     : '<tr><td colspan="' + columns.length + '" style="text-align:center;padding:40px;color:var(--muted);">Nothing here yet for ' + deptLabel + '.</td></tr>';
 
   pageEl.innerHTML =
@@ -1775,6 +1888,10 @@ window.showDeptFullList = function(deptCode, type) {
         tr.style.display = hit ? '' : 'none';
         if (hit) shown++;
       });
+      // Collapse every open detail row. Leaving one open while its parent is
+      // filtered out would strand a subject list under an unrelated student.
+      Array.prototype.forEach.call(bodyEl.querySelectorAll('tr._dfl-detail'), tr => { tr.style.display = 'none'; });
+      Array.prototype.forEach.call(bodyEl.querySelectorAll('._dfl-chev'), c => { c.style.transform = ''; });
       if (subEl) subEl.textContent = shown + ' ' + (shown === 1 ? 'record' : 'records');
     });
   }
