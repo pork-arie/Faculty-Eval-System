@@ -280,10 +280,16 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
   // ===== DEPARTMENT SUPERVISORS SECTION =====
   const deptSupervisorEl = document.getElementById('deptSupervisorsSection');
   if (deptSupervisorEl) {
-    if (deptSupervisors.length > 0) {
-      deptSupervisorEl.style.display = '';
-      document.getElementById('deptSupervisorCount').textContent = deptSupervisors.length;
-      document.getElementById('deptSupervisorsTbody').innerHTML = deptSupervisors.map(t => {
+    // Always visible, like the Faculty and Subjects tables. It used to be hidden
+    // whenever the department had no supervisor, which reads as "this department
+    // has no supervisor table" rather than "no supervisor is assigned yet" - and
+    // a missing supervisor is exactly the thing an admin needs to notice, since
+    // CMO 9.1 makes the SEF mandatory and nobody can file one without a chair.
+    deptSupervisorEl.style.display = '';
+    document.getElementById('deptSupervisorCount').textContent = deptSupervisors.length;
+    {
+      document.getElementById('deptSupervisorsTbody').innerHTML = deptSupervisors.length
+        ? deptSupervisors.map(t => {
         // The role shown is the one held in THIS department, which is not
         // necessarily t.deptRole - that mirrors only their first assignment.
         const here = (typeof getSupervisedDepts === 'function')
@@ -305,9 +311,14 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
           <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
           <td><span style="font-size:0.78rem;">${sefCount} SEF rating${sefCount !== 1 ? 's' : ''} given</span></td>
         </tr>`;
-      }).join('');
-    } else {
-      deptSupervisorEl.style.display = 'none';
+        }).join('')
+        : `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted);">
+             No supervisor assigned to this department yet.
+             <div style="font-size:0.72rem;margin-top:4px;">
+               Faculty here cannot receive a SEF rating until a Program Chair or Dean
+               is assigned (CMO 19 &sect;9.1, &sect;9.2). Open Teachers &rarr; Supervisors to assign one.
+             </div>
+           </td></tr>`;
     }
   }
 
@@ -834,102 +845,10 @@ window.addDeptFromModal = function() {
     _renderDeptMgmtBody();
 };
 
-// ===== EDIT DEPARTMENT MODAL =====
-window.openEditDeptModal = function(code) {
-    const depts = getDepartments();
-    const cfg = depts[code];
-    if (!cfg) return;
-
-    let editOverlay = document.getElementById('deptEditModal');
-    if (!editOverlay) {
-        editOverlay = document.createElement('div');
-        editOverlay.id = 'deptEditModal';
-        editOverlay.className = 'modal-overlay';
-        editOverlay.innerHTML = `
-        <div class="modal" style="padding:0;overflow:hidden;max-height:92vh;display:flex;flex-direction:column;">
-            <div class="modal-header" style="padding:14px 18px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;">
-                <h2 class="modal-title" style="font-size:0.95rem;font-weight:700;flex:1;" id="editDeptModalTitle">Edit Department</h2>
-                <button class="modal-close" onclick="closeModal('deptEditModal')">✕</button>
-            </div>
-            <div class="modal-body" id="editDeptModalBody" style="padding:20px;overflow-y:auto;flex:1;"></div>
-        </div>`;
-        editOverlay.addEventListener('click', e => { if (e.target === editOverlay) closeModal('deptEditModal'); });
-        document.body.appendChild(editOverlay);
-    }
-
-    const isDefault = !cfg.isCustom;
-    const isImg = cfg.icon && (cfg.icon.includes('.jpg') || cfg.icon.includes('.png') || cfg.icon.includes('.jpeg') || cfg.icon.startsWith('data:'));
-    const previewHtml = isImg
-        ? `<img src="${cfg.icon}" style="width:100%;height:100%;object-fit:cover;border-radius:9px;">`
-        : `<svg width="28" height="28" fill="none" stroke="${cfg.color || 'var(--primary)'}" stroke-width="1.5" viewBox="0 0 24 24" style="opacity:.5;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
-    const currentColor = cfg.color || '#2563eb';
-
-    document.getElementById('editDeptModalTitle').textContent = `Edit — ${cfg.short}`;
-    document.getElementById('editDeptModalBody').innerHTML = `
-        <input type="hidden" id="editDeptCode" value="${escapeHtml(code)}">
-        <input type="hidden" id="editDeptIconValue" value="${escapeHtml(cfg.icon || '')}">
-        <input type="hidden" id="editDeptColorValue" value="${escapeHtml(currentColor)}">
-
-        <!-- Icon row -->
-        <div class="dem-icon-row">
-            <div class="dem-icon-preview" id="editDeptIconPreview">${previewHtml}</div>
-            <div style="flex:1;">
-                <div style="font-size:0.72rem;font-weight:600;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">Icon / Image</div>
-                <label class="dem-upload-btn">
-                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                    Upload Image
-                    <input type="file" accept="image/*" style="display:none;" onchange="_handleEditDeptImageUpload(event)">
-                </label>
-            </div>
-        </div>
-
-        <!-- Fields -->
-        <div class="dm-form-row three" style="margin-bottom:10px;">
-            <div class="dm-form-group">
-                <label>Code</label>
-                <input id="editDeptCodeDisplay" class="form-control" value="${escapeHtml(code)}" ${isDefault ? 'disabled' : ''} style="${isDefault ? 'opacity:.5;' : ''}">
-                ${isDefault ? '<span style="font-size:0.67rem;color:var(--muted-foreground);">Default codes cannot be changed.</span>' : ''}
-            </div>
-            <div class="dm-form-group">
-                <label>Short Name</label>
-                <input id="editDeptShort" class="form-control" value="${escapeHtml(cfg.short || code)}">
-            </div>
-            <div class="dm-form-group">
-                <label>Full Name</label>
-                <input id="editDeptName" class="form-control" value="${escapeHtml(cfg.name)}">
-            </div>
-        </div>
-        <div class="dm-form-group" style="margin-bottom:10px;">
-            <label>Description</label>
-            <input id="editDeptDesc" class="form-control" value="${escapeHtml(cfg.desc || '')}">
-        </div>
-        <div class="dm-form-group" style="margin-bottom:14px;">
-            <label>Department Color</label>
-            <div class="dm-color-picker-row">
-                <input type="color" id="editDeptColor" value="${currentColor}" class="dm-color-input" onchange="_pickEditDeptColor(this.value);document.getElementById('editDeptColorValue').value=this.value;">
-                <div class="dm-color-swatches">
-                    ${['#2563eb','#7c3aed','#0891b2','#059669','#dc2626','#d97706','#db2777','#4f46e5','#0f766e','#b45309'].map(c => `<span class="dm-color-swatch${currentColor===c?' sel':''}" style="background:${c};" onclick="_pickEditDeptColor('${c}')" title="${c}"></span>`).join('')}
-                </div>
-            </div>
-        </div>
-
-        <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;">
-            <button type="button" onclick="deleteDeptSafe('${code}')" title="Delete this department"
-                style="background:#fee2e2;color:#dc2626;border:none;border-radius:8px;padding:9px 14px;font-weight:700;font-size:0.8rem;cursor:pointer;display:inline-flex;align-items:center;gap:5px;">
-                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-                Delete
-            </button>
-            <div style="display:flex;gap:8px;">
-                <button class="dm-cancel-btn" onclick="closeModal('deptEditModal')">Cancel</button>
-                <button class="dm-save-btn" onclick="saveEditDept()">
-                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>
-                    Save Changes
-                </button>
-            </div>
-        </div>`;
-
-    openModal('deptEditModal');
-};
+// REMOVED (dead code): openEditDeptModal
+// Replaced unconditionally by adminfeatures.js:766.
+// The 96 lines that were here never executed - the definition below in the
+// load order replaced this one before anything could call it.
 
 window._pickEditDeptColor = function(color) {
     document.getElementById('editDeptColorValue').value = color;
@@ -962,58 +881,10 @@ window._handleEditDeptImageUpload = function(e) {
     reader.readAsDataURL(file);
 };
 
-window.saveEditDept = function() {
-    const originalCode = document.getElementById('editDeptCode').value;
-    const name   = (document.getElementById('editDeptName')?.value  || '').trim();
-    const short  = (document.getElementById('editDeptShort')?.value || '').trim();
-    const desc   = (document.getElementById('editDeptDesc')?.value  || '').trim();
-    const icon   = (document.getElementById('editDeptIconValue')?.value || '').trim();
-    const color  = (document.getElementById('editDeptColorValue')?.value || '#2563eb').trim();
-
-    if (!name || !short) { showToast('Name and Short Name are required.', 'error'); return; }
-
-    const allDepts = getDepartments();
-    const cfg = allDepts[originalCode];
-    if (!cfg) { showToast('Department not found.', 'error'); return; }
-
-    const changes = [];
-    if (cfg.name  !== name)  changes.push(`name: "${cfg.name}" → "${name}"`);
-    if (cfg.short !== short) changes.push(`short: "${cfg.short}" → "${short}"`);
-    if (cfg.desc  !== desc)  changes.push(`desc updated`);
-    if (cfg.icon  !== icon)  changes.push(`icon updated`);
-    if (cfg.color !== color) changes.push(`color updated`);
-
-    // Build the updated department object.
-    // colorClass MUST be 'dept-custom' so the hex color is applied on reload
-    // instead of the old CSS class gradient (dept-COED, dept-CON, etc.)
-    const updatedCfg = {
-        ...cfg,
-        name, short, desc, icon, color,
-        colorClass: 'dept-custom'
-    };
-
-    allDepts[originalCode] = updatedCfg;
-
-    // 1. Save to localStorage
-    localStorage.setItem('departments', JSON.stringify(allDepts));
-
-    // 2. Write DIRECTLY to Firestore (same as addDepartment does)
-    //    This bypasses setData/syncCollectionToFirestore entirely
-    //    so there is no risk of the sync chain failing silently.
-    if (typeof db !== 'undefined') {
-        db.collection('departments').doc(originalCode).set({ code: originalCode, ...updatedCfg })
-          .then(function() { console.log('✅ Dept color saved to Firestore:', originalCode, color); })
-          .catch(function(e) { console.error('❌ Firestore dept save error:', e); });
-    }
-
-    refreshDeptConfig();
-    addAudit('Edit Department', `${originalCode}: ${changes.length ? changes.join('; ') : 'no changes'}`);
-    showToast(`Department "${short}" updated!`, 'success');
-    closeModal('deptEditModal');
-    _renderDeptMgmtBody();
-
-    if (currentDept === originalCode) renderDeptPage(originalCode);
-};
+// REMOVED (dead code): saveEditDept
+// Replaced unconditionally by adminfeatures.js:864.
+// The 52 lines that were here never executed - the definition below in the
+// load order replaced this one before anything could call it.
 // ===== MANAGE COURSES PANEL (inside deptMgmtModal, Courses tab) =====
 
 (function injectCoursesMgmtStyles() {

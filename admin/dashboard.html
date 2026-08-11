@@ -1347,12 +1347,47 @@ window.addEventListener('load', () => {
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="../shared/js/data.js"></script>
-    <script src="admin.js"></script>
-    <script src="admindept.js"></script>
-    <script src="adminrate.js"></script>
-    <script src="adminEval.js"></script>
-    <script src="adminfeatures.js"></script>
-    <script src="adminQuestions.js"></script>
+    <!-- ================================================================
+         LOAD ORDER IS LOAD-BEARING. Do not reorder these.
+         Later files deliberately redefine functions defined earlier and the
+         LAST definition wins. Folders group by purpose, not by load position -
+         this list is the only place the real order lives.
+
+         Which file actually owns an overridden function:
+           renderTeachers, renderSubjects, renderStudents, saveSubject,
+           populateTeacherSelect, syncCollectionToFirestore,
+           checkAndAutoFinalize .......................... modules/adminrate.js
+           renderDeptPage*, showPage*, pill,
+           openEditDeptModal, saveEditDept ........... modules/adminfeatures.js
+           exportEnhancedReport .......................... modules/adminEval.js
+           mcLoadDept* ................................... modules/admindept.js
+         (* wraps the earlier definition and calls it - do not delete that one.)
+
+         renderTeachers / renderSubjects / renderStudents in adminrate.js are
+         guarded by `if (typeof window.X === 'function')`, so the earlier
+         definitions in js/records/ must keep existing even though their bodies
+         never run. They are marked in those files.
+         ================================================================ -->
+    <script src="js/core/admin-core.js"></script>
+    <script src="js/core/admin-scoring.js"></script>
+    <script src="js/core/admin-nav.js"></script>
+
+    <script src="js/records/admin-students.js"></script>
+    <script src="js/records/admin-teachers.js"></script>
+    <script src="js/records/admin-subjects.js"></script>
+
+    <script src="js/reports/admin-reports.js"></script>
+    <script src="js/records/admin-bulk.js"></script>
+    <script src="js/reports/admin-annex.js"></script>
+    <script src="js/reports/admin-fer.js"></script>
+    <script src="js/reports/admin-sef.js"></script>
+    <script src="js/records/admin-courses.js"></script>
+
+    <script src="js/modules/admindept.js"></script>
+    <script src="js/modules/adminrate.js"></script>
+    <script src="js/modules/adminEval.js"></script>
+    <script src="js/modules/adminfeatures.js"></script>
+    <script src="js/modules/adminQuestions.js"></script>
 
     
     

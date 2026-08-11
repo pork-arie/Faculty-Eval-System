@@ -30,8 +30,12 @@ function _evalMatchesTerm(ev, selected) {
     if (!term) return true;
     // Untagged legacy records only appear when viewing the ACTIVE term.
     if (!ev.schoolYear && !ev.semester) return selected === null;
-    const yearOk = !term.year || ev.schoolYear === term.year;
-    const semOk  = !term.sem  || ev.semester   === term.sem;
+    // Compare only the fields the record actually carries. SEF records written
+    // before the fix in admin-sef.js have a semester and no schoolYear;
+    // demanding both made them match nothing at all, so every existing SEF
+    // vanished from Annex C. A half-tagged record matches on what it has.
+    const yearOk = !term.year || !ev.schoolYear || ev.schoolYear === term.year;
+    const semOk  = !term.sem  || !ev.semester   || ev.semester   === term.sem;
     return yearOk && semOk;
 }
 
@@ -286,9 +290,14 @@ window.getTeacherOverallRating = function(teacherId) {
         };
     });
 
-    const totalWeighted = classRatings.reduce((sum, cr) =>
-        parseFloat(cr.avgScore) > 0 ? sum + parseFloat(cr.avgScore) * cr.enrolledCount : sum, 0);
-    const totalStudents = classRatings.reduce((sum, cr) => sum + cr.enrolledCount, 0);
+    // Both sums must skip the same classes. totalWeighted already ignored a
+    // class with no evaluations, but totalStudents counted its enrolment - so a
+    // faculty with one evaluated class and one un-evaluated class had their
+    // rating divided by the combined head count and came out far too low. That
+    // is why Reports disagreed with Annex C, which guards both sums together.
+    const rated = classRatings.filter(cr => parseFloat(cr.avgScore) > 0);
+    const totalWeighted = rated.reduce((sum, cr) => sum + parseFloat(cr.avgScore) * cr.enrolledCount, 0);
+    const totalStudents = rated.reduce((sum, cr) => sum + cr.enrolledCount, 0);
     // Weighted SET — already a percentage (0-100)
     const overallSET = totalStudents > 0 ? Math.min(100, totalWeighted / totalStudents).toFixed(2) : '0';
 

@@ -88,7 +88,11 @@ window.generateFinalReports = function() {
 };
 
 // Run auto-finalize check every hour
-setInterval(checkAndAutoFinalize, 3600000);
+// Late-bound for the same reason as admin-scoring.js: a name resolved at load
+// time freezes whichever definition happened to exist then.
+setInterval(function () {
+    if (typeof window.checkAndAutoFinalize === 'function') window.checkAndAutoFinalize();
+}, 3600000);
 
 // Fix: Add missing getActiveSY function
 // REMOVED duplicate getActiveSY() — byte-identical to the copy in admin.js.
@@ -114,9 +118,10 @@ function _tpTeachers() {
 window.populateTeacherSelect = function(selectedId = '') {
     const hidden = document.getElementById('subTeacher');
     if (hidden) hidden.value = selectedId || '';
-    // Default the filter to the subject's own department: that is the common
-    // case, and one tap on "All" widens it when a part-timer is needed.
-    _tpDept   = (document.getElementById('subDept') || {}).value || '';
+    // Start on "All" so out-of-department faculty are visible without the admin
+    // having to know they are being hidden. The subject's own department is
+    // still sorted to the top, and the pills narrow it on demand.
+    _tpDept   = '';
     _tpSearch = '';
     renderTeacherPicker();
 };
@@ -159,12 +164,21 @@ window.renderTeacherPicker = function(keepFocus) {
     });
 
     const q = _tpSearch.trim().toLowerCase();
+    // Faculty from other departments are LISTED, not filtered out. Hiding them
+    // meant a part-timer teaching one class outside their college was simply
+    // absent from the picker and looked like a missing record - the admin had to
+    // know to tap "All" first. They now appear after the department's own staff
+    // with a "from <DEPT>" tag, so assigning one is a visible, deliberate choice.
+    // The department pills still narrow the list when you want them to.
+    const isHome = t => !subDept || (t.dept || '') === subDept;
     const list = all
         .filter(t => !_tpDept || (t.dept || 'No dept') === _tpDept)
         .filter(t => !q || (t.name + ' ' + t.tid + ' ' + (t.dept || '')).toLowerCase().includes(q))
         .sort((a, b) => {
+            const ha = isHome(a), hb = isHome(b);
+            if (ha !== hb) return ha ? -1 : 1;                   // this department first
             const la = loadOf[a.id] || 0, lb = loadOf[b.id] || 0;
-            if (la !== lb) return la - lb;                       // lightest load first
+            if (la !== lb) return la - lb;                       // then lightest load
             return String(a.name).localeCompare(String(b.name)); // then alphabetical
         });
 
@@ -214,7 +228,8 @@ window.renderTeacherPicker = function(keepFocus) {
                   onclick="tpSelect('${t.id}')">
             <span class="tp-avatar">${escapeHtml((t.name || '?').charAt(0).toUpperCase())}</span>
             <span class="tp-info">
-              <span class="tp-name">${escapeHtml(t.name)}</span>
+              <span class="tp-name">${escapeHtml(t.name)}${
+                isHome(t) ? '' : `<span class="tp-foreign">from ${escapeHtml(t.dept || 'no dept')}</span>`}</span>
               <span class="tp-meta">${escapeHtml(t.tid)}${t.dept ? ' \u00b7 ' + escapeHtml(t.dept) : ''}${
                 t.facultyType === 'supervisor' ? ' \u00b7 Supervisor' : ''}</span>
             </span>
