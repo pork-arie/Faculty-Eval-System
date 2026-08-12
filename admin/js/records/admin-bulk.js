@@ -74,7 +74,9 @@ window.importBulkStudents = function() {
     // records - re-importing a legacy roster is unaffected.
     if (!STUDENT_ID_RE.test(r.sid)) { skipped++; return; }
     const newId = 'stu' + Date.now() + Math.random().toString(36).slice(2,6);
-    students.push({ id: newId, sid: r.sid, name: r.name, course: r.course || '', year: r.year, section: String(r.section || '').trim().toUpperCase(), dept: r.dept, password: r.sid, status:'active', forceReset:false, deleted:false });
+    // forceReset TRUE - see admin-students.js. A bulk-imported roster is the
+    // most common way students are created, so this is the path that matters.
+    students.push({ id: newId, sid: r.sid, name: r.name, course: r.course || '', year: r.year, section: String(r.section || '').trim().toUpperCase(), dept: r.dept, password: r.sid, status:'active', forceReset:true, deleted:false });
     r.subjectCodes.forEach(code => {
       const sub = subjects.find(s => s.code.toLowerCase() === code.toLowerCase());
       if (sub) { if (!sub.enrolledIds) sub.enrolledIds = []; if (!sub.enrolledIds.includes(newId)) sub.enrolledIds.push(newId); }

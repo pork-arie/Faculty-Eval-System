@@ -55,6 +55,51 @@ window.deleteDocFromFirestore = async function(collection, docId) {
     }
 };
 
+// ============================================================================
+// SHARED SORT HELPERS
+// ----------------------------------------------------------------------------
+// Every list of people used to render in whatever order the records happened to
+// be stored in - insertion order, effectively random after a few edits. These
+// give one definition of "in order" so the Students page, the Faculty page and
+// the department roster cannot disagree with each other.
+// ============================================================================
+
+/**
+ * Year level as a number for sorting: "1st Year" -> 1 ... "5th Year" -> 5.
+ * Anything unrecognised sorts last rather than first, so a blank or malformed
+ * year does not quietly head the list and look like the top of the roster.
+ */
+window.yearRank = function(year) {
+    const m = String(year || '').match(/\d+/);
+    return m ? parseInt(m[0], 10) : 99;
+};
+
+/**
+ * Surname first where the record has split name fields, otherwise the whole
+ * name. localeCompare so accented characters sort where a reader expects
+ * (Peña next to Pena), and numeric:true so "Section 10" follows "Section 9".
+ */
+window.personSortKey = function(p) {
+    if (!p) return '';
+    if (p.lastName) {
+        return [p.lastName, p.firstName, p.middleName].filter(Boolean).join(' ');
+    }
+    return String(p.name || '');
+};
+
+window.byName = function(a, b) {
+    return personSortKey(a).localeCompare(personSortKey(b), undefined, { sensitivity: 'base', numeric: true });
+};
+
+/** Year level first, then section, then name - the order a registrar reads a roster in. */
+window.byYearThenName = function(a, b) {
+    const ya = yearRank(a && a.year), yb = yearRank(b && b.year);
+    if (ya !== yb) return ya - yb;
+    const sa = String((a && a.section) || ''), sb = String((b && b.section) || '');
+    if (sa !== sb) return sa.localeCompare(sb, undefined, { sensitivity: 'base', numeric: true });
+    return byName(a, b);
+};
+
 window.addAudit = function(action, detail) {
     const log = getData('auditLog', []);
     log.unshift({

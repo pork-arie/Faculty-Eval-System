@@ -238,7 +238,12 @@ function saveStudent() {
     showToast('Student updated!', 'success');
   } else {
     if (students.find(s => s.sid === sid && !s.deleted)) { showToast('ID already exists.', 'error'); return; }
-    students.push(Object.assign({ id: 'stu'+Date.now(), sid, name, course, year, section, dept, password: pass||sid, status:'active', forceReset:false, deleted:false }, nameFields));
+    // forceReset TRUE on every new student. The default password is their own
+    // student ID (password: pass||sid), which is printed on their ID card and
+    // used as the username - so until they change it, anyone who knows the ID
+    // can sign in as them and submit evaluations in their name. The portal and
+    // the app now refuse to go any further until the password is changed.
+    students.push(Object.assign({ id: 'stu'+Date.now(), sid, name, course, year, section, dept, password: pass||sid, status:'active', forceReset:true, deleted:false }, nameFields));
     addAudit('Add Student', `Added: ${name} (${sid})`);
     showToast('Student added!', 'success');
   }

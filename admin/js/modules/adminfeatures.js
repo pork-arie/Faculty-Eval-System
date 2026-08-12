@@ -196,6 +196,9 @@ window.renderStudents = function(search) {
         const matchDept = !deptFilter || s.dept === deptFilter;
         return matchSearch && matchDept;
     });
+    // 1st Year -> 5th Year, then section, then name. See byYearThenName in
+    // admin-core.js; the department roster uses the same comparator.
+    filtered.sort(byYearThenName);
 
     const tbody = document.getElementById('studentsTbody');
     if (!tbody) return;
@@ -1790,7 +1793,9 @@ window.showDeptFullList = function(deptCode, type) {
         });
       });
     });
-    rows = Object.keys(map).map(k => {
+    // Same order as the Students page - year level, section, then name.
+    const orderedKeys = Object.keys(map).sort((ka, kb) => byYearThenName(map[ka].st, map[kb].st));
+    rows = orderedKeys.map(k => {
       const st = map[k].st, subs = map[k].subs;
       const ys = (st.year || '') + (st.section ? ' - ' + st.section : '');
       // Columns are unchanged. The only visible addition is a chevron in the

@@ -536,6 +536,9 @@ if (typeof window.renderTeachers === 'function') {
             const matchesDept = !deptActive || t.dept === deptActive;
             return matchesSearch && matchesDept;
         });
+        // Alphabetical by surname where the split name fields exist, otherwise
+        // by full name - see byName in admin-core.js.
+        filtered.sort(byName);
         
         const tbody = document.getElementById('teachersTbody');
         if (!tbody) return;
