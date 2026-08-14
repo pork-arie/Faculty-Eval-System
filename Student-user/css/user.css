@@ -1,0 +1,903 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --forest:    #064e3b;
+  --emerald:   #059669;
+  --mint:      #6ee7b7;
+  --ink:       #0f172a;
+  --slate:     #1e293b;
+  --muted:     #64748b;
+  --border:    #e2e8f0;
+  --bg:        #f1f5f9;
+  --white:     #ffffff;
+  --danger:    #dc2626;
+  --warning:   #d97706;
+  --success:   #16a34a;
+  --radius:    12px;
+  --radius-lg: 18px;
+  --shadow:    0 1px 3px rgba(0,0,0,0.07), 0 4px 16px rgba(0,0,0,0.05);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.12);
+  --sidebar-w: 260px;
+  --transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+
+body {
+  font-family: 'Sora', sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  overflow-x: hidden;
+
+
+}
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+/* ============================================================================
+   LOGIN  /  PASSWORD GATE
+   ----------------------------------------------------------------------------
+   Rebuilt to match the Android app's LoginScreen so the two feel like one
+   product: a full-bleed Forest -> Emerald gradient, a mint-ringed logo badge,
+   and a translucent "glass" card. The previous version was a white card on a
+   near-black page, which matched nothing else in the system.
+   ============================================================================ */
+#pwGate,
+#loginPage {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 20px;
+  position: relative;
+  overflow: hidden;
+  /* The app uses Brush.verticalGradient(Forest -> Emerald). Same two stops. */
+  background: linear-gradient(180deg, var(--forest) 0%, var(--emerald) 100%);
+}
+
+/* A soft off-centre glow keeps the large flat gradient from looking like a
+   default page background, without introducing another colour. */
+#pwGate::before,
+#loginPage::before {
+  content: '';
+  position: fixed; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 70% 55% at 20% 0%,   rgba(110,231,183,0.20) 0%, transparent 62%),
+    radial-gradient(ellipse 60% 50% at 85% 100%, rgba(4,61,46,0.45)     0%, transparent 60%);
+}
+
+.login-shell {
+  position: relative; z-index: 2;
+  width: 100%; max-width: 400px;
+}
+
+.login-brand { text-align: center; margin-bottom: 22px; }
+
+/* Rounded square with a mint ring - the app's 84dp logo badge. */
+.login-logo {
+  width: 84px; height: 84px; margin: 0 auto 16px;
+  border-radius: 22px;
+  background: rgba(255,255,255,0.15);
+  border: 2px solid rgba(110,231,183,0.7);
+  display: flex; align-items: center; justify-content: center;
+  padding: 12px; box-sizing: border-box;
+}
+.login-logo img {
+  width: 100%; height: 100%; object-fit: contain; border-radius: 50%;
+}
+
+.login-title {
+  font-size: 1.6rem; font-weight: 800; color: #fff;
+  letter-spacing: -0.02em; margin: 0;
+}
+.login-subtitle {
+  font-size: 0.85rem; color: rgba(255,255,255,0.75);
+  margin: 6px 0 0;
+}
+
+/* Translucent glass card - app: white 10% fill, white 25% border, 20dp radius. */
+.login-card {
+  background: rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 20px;
+  padding: 24px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 18px 50px rgba(0,0,0,0.22);
+}
+
+/* Uppercase field labels, as in the app. */
+.field-label {
+  display: block;
+  font-size: 0.66rem; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.80);
+  margin: 0 0 7px;
+}
+.login-card .field-label + .input-wrap { margin-bottom: 18px; }
+
+.input-wrap { position: relative; }
+.input-icon {
+  position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
+  width: 17px; height: 17px;
+  color: rgba(255,255,255,0.55); pointer-events: none;
+}
+
+/* Fields sit ON the glass, so they are translucent white rather than solid. */
+.login-card .form-control {
+  width: 100%; box-sizing: border-box;
+  padding: 13px 14px 13px 40px;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 12px;
+  color: #fff;
+  font-family: 'Sora', sans-serif; font-size: 0.9rem;
+  transition: border-color 0.15s, background 0.15s;
+}
+.login-card .form-control::placeholder { color: rgba(255,255,255,0.55); }
+.login-card .form-control:focus {
+  outline: none;
+  border-color: var(--mint);
+  background: rgba(255,255,255,0.18);
+  box-shadow: 0 0 0 3px rgba(110,231,183,0.18);
+}
+
+.pw-peek {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer; padding: 6px;
+  color: rgba(255,255,255,0.6); line-height: 0;
+}
+.pw-peek svg { width: 17px; height: 17px; }
+.pw-peek:hover { color: #fff; }
+
+/* White button with Forest text - the app's ButtonDefaults(containerColor=White). */
+.btn-login {
+  width: 100%; padding: 14px;
+  background: #fff; color: var(--forest);
+  border: none; border-radius: 12px;
+  font-family: 'Sora', sans-serif; font-size: 0.9rem; font-weight: 700;
+  cursor: pointer; margin-top: 4px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+}
+.btn-login svg { width: 17px; height: 17px; }
+.btn-login:hover  { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(0,0,0,0.24); }
+.btn-login:active { transform: translateY(0); }
+.btn-login:disabled { opacity: 0.65; cursor: not-allowed; transform: none; }
+
+.error-msg {
+  background: rgba(220,38,38,0.16);
+  border: 1px solid rgba(252,165,165,0.35);
+  color: #fecaca; font-size: 0.78rem; padding: 10px 14px;
+  border-radius: 10px; margin-top: 14px; display: none; text-align: center;
+}
+
+.login-foot {
+  text-align: center; margin: 18px 0 0;
+  font-size: 0.72rem; color: rgba(255,255,255,0.55);
+}
+
+/* ===== MAIN APP LAYOUT ===== */
+#app { display: none; min-height: 100vh; }
+
+/* Sidebar */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--forest);
+  position: fixed; top: 0; left: 0; bottom: 0;
+  display: flex; flex-direction: column; z-index: 100;
+  transition: transform 0.3s ease;
+}
+
+.sidebar-brand {
+  padding: 20px 16px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  display: flex; align-items: center; gap: 11px;
+}
+
+.brand-icon {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05));
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+.brand-text h2 { font-size: 0.8rem; font-weight: 700; color: #fff; }
+.brand-text p  { font-size: 0.62rem; color: #6ee7b7; margin-top: 1px; }
+
+/* User info in sidebar */
+.sidebar-user {
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  display: flex; align-items: center; gap: 11px;
+}
+
+.user-avatar {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--emerald), var(--mint));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; font-weight: 700; color: var(--forest);
+  flex-shrink: 0;
+}
+
+.user-info { overflow: hidden; }
+.user-name  { font-size: 0.8rem; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-dept  { font-size: 0.65rem; color: #86efac; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Nav */
+.sidebar-nav { flex: 1; padding: 12px 10px; overflow-y: auto; scrollbar-width: none; }
+
+.nav-section-label {
+  font-size: 0.6rem; font-weight: 700; color: #6ee7b7;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 8px 10px 5px;
+}
+
+.nav-item {
+  display: flex; align-items: center; gap: 11px;
+  padding: 10px 12px; border-radius: 9px;
+  cursor: pointer; color: #94a3b8;
+  font-size: 0.82rem; font-weight: 500;
+  transition: var(--transition); margin-bottom: 2px;
+  user-select: none;
+}
+
+.nav-item:hover { background: rgba(255,255,255,0.06); color: #fff; }
+.nav-item.active { background: var(--emerald); color: #fff; }
+/* Icons are SVG now. The emoji they replaced rendered differently on every OS,
+   carried their own colours regardless of the sidebar theme, and read as
+   placeholder art - the single strongest "unfinished" signal on the page. */
+.nav-item .nav-icon {
+  width: 18px; height: 18px; flex-shrink: 0;
+  opacity: 0.72; transition: opacity 0.15s;
+}
+.nav-item:hover .nav-icon,
+.nav-item.active .nav-icon { opacity: 1; }
+.inline-icon { width: 15px; height: 15px; vertical-align: -2px; flex-shrink: 0; }
+.result-icon { width: 44px; height: 44px; }
+
+.sidebar-footer {
+  padding: 12px 10px; border-top: 1px solid rgba(255,255,255,0.07);
+}
+
+.logout-btn {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border-radius: 9px; cursor: pointer; color: #f87171;
+  font-size: 0.82rem; font-weight: 600; transition: var(--transition);
+  width: 100%; background: none; border: none;
+  font-family: 'Sora', sans-serif;
+}
+.logout-btn:hover { background: rgba(248,113,113,0.1); }
+
+/* Main */
+.main-content {
+  margin-left: var(--sidebar-w);
+  flex: 1; padding: 28px 32px; min-height: 100vh;
+
+  
+}
+
+/* Page */
+.page { display: none; }
+.page.active { display: block; animation: pageIn 0.2s ease; }
+
+
+
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.page-header {
+  display: flex; align-items: flex-start;
+  justify-content: space-between; margin-bottom: 24px;
+  flex-wrap: wrap; gap: 12px;
+}
+
+.page-title h1 {
+  font-size: 1.45rem; font-weight: 800;
+  color: var(--ink); letter-spacing: -0.02em;
+}
+
+.page-title p { color: var(--muted); font-size: 0.8rem; margin-top: 3px; }
+
+/* Cards */
+.card {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow); overflow: hidden;
+}
+
+.card-header {
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+.card-header h3 { font-size: 0.92rem; font-weight: 700; }
+.card-body { padding: 20px; }
+
+/* ===== STATS GRID ===== */
+.stats-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px; margin-bottom: 24px;
+}
+
+.stat-card {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 20px;
+  box-shadow: var(--shadow); position: relative; overflow: hidden;
+}
+
+/* Was a giant faded emoji in the corner. A coloured top rule reads as designed
+   rather than decorated, and gives each metric an identity you can scan for -
+   the number is what matters, so nothing should compete with it. */
+/* The coloured top rule that used to sit here is gone - four cards each with a
+   different accent bar read as decoration competing with the numbers, which are
+   the only thing on these cards worth looking at. The card is now a plain
+   surface and the value carries the weight. */
+.stat-card::after { content: none; }
+
+/* Lift on hover, so the cards feel like surfaces rather than printed boxes. */
+.stat-card { transition: transform 0.16s ease, box-shadow 0.16s ease; }
+.stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+
+/* Tabular figures so the numbers do not jitter as they change, and the tone
+   colour on the value ties it back to its accent rule. */
+.stat-val { font-variant-numeric: tabular-nums; color: var(--ink); }
+.stat-label {
+  text-transform: uppercase; letter-spacing: 0.06em;
+  font-size: 0.66rem; font-weight: 700;
+}
+
+.stat-val { font-size: 2rem; font-weight: 800; letter-spacing: -0.04em; line-height: 1; }
+.stat-label { font-size: 0.72rem; color: var(--muted); font-weight: 500; margin-top: 5px; }
+
+/* ===== SUBJECT SELECT CARD ===== */
+.subject-select-wrap {
+  display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end;
+  margin-bottom: 24px;
+}
+
+.app-select {
+  width: 100%; padding: 11px 14px;
+  background: var(--white); border: 1.5px solid var(--border);
+  border-radius: 10px; font-family: 'Sora', sans-serif;
+  font-size: 0.85rem; color: var(--ink); outline: none;
+  transition: var(--transition); cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+
+.app-select:focus { border-color: var(--emerald); box-shadow: 0 0 0 3px rgba(5,150,105,0.12); }
+
+/* ===== EVALUATION FORM ===== */
+.eval-progress-bar {
+  height: 5px; background: var(--border); border-radius: 99px;
+  margin-bottom: 24px; overflow: hidden;
+}
+
+.eval-progress-fill {
+  height: 100%; background: linear-gradient(90deg, var(--forest), var(--emerald));
+  border-radius: 99px; transition: width 0.4s ease;
+}
+
+.eval-section-title {
+  font-size: 0.72rem; font-weight: 700; color: var(--emerald);
+  letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 14px 0 10px; display: flex; align-items: center; gap: 8px;
+}
+
+.eval-section-title::after {
+  content: ''; flex: 1; height: 1px; background: var(--border);
+}
+
+.question-row {
+  padding: 14px 0; border-bottom: 1px solid #f1f5f9;
+  display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center;
+}
+
+.question-row:last-child { border-bottom: none; }
+
+.question-text {
+  font-size: 0.84rem; font-weight: 500; color: var(--slate); line-height: 1.5;
+}
+
+.question-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem; color: var(--muted); font-weight: 600;
+  margin-bottom: 3px;
+}
+
+/* Rating buttons */
+.rating-group { display: flex; gap: 5px; flex-shrink: 0; }
+
+.rating-group input[type=radio] { display: none; }
+
+.rating-btn {
+  width: 34px; height: 34px; border-radius: 8px;
+  border: 1.5px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.78rem; font-weight: 700; cursor: pointer;
+  transition: var(--transition); color: var(--muted);
+  background: var(--white); user-select: none;
+}
+
+.rating-btn:hover { border-color: var(--emerald); color: var(--emerald); }
+
+.rating-group input[type=radio]:checked + .rating-btn {
+  background: var(--emerald); border-color: var(--emerald); color: #fff;
+  box-shadow: 0 2px 8px rgba(5,150,105,0.35);
+}
+
+/* Legend */
+.rating-legend {
+  display: flex; gap: 16px; flex-wrap: wrap;
+  background: #f8fafc; border-radius: 10px;
+  padding: 12px 16px; margin-bottom: 20px; font-size: 0.72rem;
+}
+
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+
+.legend-dot {
+  width: 20px; height: 20px; border-radius: 6px;
+  background: var(--emerald); color: #fff;
+  font-size: 0.65rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.legend-dot.d5 { background: #064e3b; }
+.legend-dot.d4 { background: #059669; }
+.legend-dot.d3 { background: #10b981; }
+.legend-dot.d2 { background: #f59e0b; }
+.legend-dot.d1 { background: #ef4444; }
+
+/* Comment box */
+.textarea-field {
+  width: 100%; padding: 12px;
+  background: var(--white); border: 1.5px solid var(--border);
+  border-radius: 10px; font-family: 'Sora', sans-serif;
+  font-size: 0.84rem; color: var(--ink); resize: vertical;
+  min-height: 90px; outline: none; transition: var(--transition);
+}
+
+.textarea-field:focus { border-color: var(--emerald); box-shadow: 0 0 0 3px rgba(5,150,105,0.12); }
+
+/* ===== BUTTONS ===== */
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 10px 20px; border-radius: 10px; border: none;
+  font-family: 'Sora', sans-serif; font-size: 0.84rem; font-weight: 600;
+  cursor: pointer; transition: var(--transition);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--forest), var(--emerald));
+  color: #fff; box-shadow: 0 3px 12px rgba(6,78,59,0.35);
+}
+
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(5,150,105,0.4); }
+.btn-primary:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
+.btn-outline {
+  background: transparent; color: var(--ink);
+  border: 1.5px solid var(--border);
+}
+
+.btn-outline:hover { border-color: var(--emerald); color: var(--emerald); }
+
+.btn-danger { background: #fef2f2; color: var(--danger); border: 1px solid #fecaca; }
+.btn-danger:hover { background: #fee2e2; }
+
+/* ===== PROFILE PAGE ===== */
+.profile-hero {
+  background: linear-gradient(135deg, var(--forest), var(--emerald));
+  border-radius: var(--radius-lg); padding: 28px;
+  display: flex; align-items: center; gap: 22px;
+  margin-bottom: 24px; color: #fff; position: relative; overflow: hidden;
+}
+
+.profile-hero::before {
+  content: '';
+  position: absolute; right: -20px; top: -20px;
+  width: 160px; height: 160px; border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+}
+
+.profile-avatar-lg {
+  width: 70px; height: 70px; border-radius: 50%;
+  background: rgba(255,255,255,0.2); border: 3px solid rgba(255,255,255,0.3);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.8rem; font-weight: 800; flex-shrink: 0; z-index: 1;
+}
+
+.profile-hero-info { z-index: 1; }
+.profile-hero-info h2 { font-size: 1.3rem; font-weight: 800; margin-bottom: 4px; }
+.profile-hero-info p { font-size: 0.78rem; opacity: 0.8; }
+
+.profile-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(255,255,255,0.15); border-radius: 99px;
+  padding: 3px 10px; font-size: 0.68rem; font-weight: 600; margin-top: 6px;
+}
+
+.info-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;
+}
+
+.info-item { padding: 14px 16px; background: #f8fafc; border-radius: 10px; border: 1px solid var(--border); }
+.info-label { font-size: 0.68rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+.info-value { font-size: 0.88rem; font-weight: 600; color: var(--ink); }
+
+/* ===== HISTORY TIMELINE ===== */
+.history-list { display: flex; flex-direction: column; gap: 0; }
+
+.history-item {
+  display: flex; gap: 14px; padding: 16px 0;
+  border-bottom: 1px solid #f1f5f9; align-items: flex-start;
+}
+
+.history-item:last-child { border-bottom: none; }
+
+.history-dot {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: #f0fdf4; border: 2px solid var(--emerald);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.9rem; flex-shrink: 0; margin-top: 2px;
+}
+
+.history-subject { font-size: 0.88rem; font-weight: 700; color: var(--ink); }
+.history-teacher { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+.history-date    { font-size: 0.68rem; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-top: 4px; }
+
+.score-pill {
+  display: inline-flex; align-items: center;
+  background: #f0fdf4; color: var(--success);
+  border: 1px solid #bbf7d0; border-radius: 99px;
+  font-size: 0.72rem; font-weight: 700; padding: 3px 10px;
+  flex-shrink: 0; margin-top: 2px;
+}
+
+/* ===== SETTINGS ===== */
+.settings-section { margin-bottom: 24px; }
+.settings-section-title {
+  font-size: 0.7rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px;
+}
+
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 15px 18px; background: var(--white);
+  border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px;
+  gap: 12px;
+}
+
+.settings-row-info .row-label { font-size: 0.86rem; font-weight: 600; color: var(--ink); }
+.settings-row-info .row-desc  { font-size: 0.74rem; color: var(--muted); margin-top: 2px; }
+
+.settings-input {
+  width: 100%; padding: 10px 12px;
+  background: var(--bg); border: 1.5px solid var(--border);
+  border-radius: 8px; font-family: 'Sora', sans-serif;
+  font-size: 0.84rem; color: var(--ink); outline: none;
+  transition: var(--transition);
+}
+
+.settings-input:focus { border-color: var(--emerald); background: #fff; box-shadow: 0 0 0 3px rgba(5,150,105,0.1); }
+
+.settings-form-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.settings-form-label { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+
+/* ===== TOAST ===== */
+#toastContainer {
+  position: fixed; bottom: 24px; right: 24px;
+  z-index: 9999; display: flex; flex-direction: column; gap: 8px;
+}
+
+.toast {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 18px; border-radius: 10px;
+  font-size: 0.82rem; font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  animation: toastIn 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  max-width: 300px;
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(32px) scale(0.9); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+.toast-success { background: #064e3b; color: #6ee7b7; }
+.toast-error   { background: #450a0a; color: #fca5a5; }
+.toast-info    { background: #0c4a6e; color: #7dd3fc; }
+.toast-warning { background: #451a03; color: #fcd34d; }
+
+/* ===== BADGE ===== */
+.badge {
+  display: inline-flex; align-items: center;
+  padding: 2px 9px; border-radius: 99px;
+  font-size: 0.68rem; font-weight: 700;
+}
+
+.badge-success { background: #f0fdf4; color: var(--success); border: 1px solid #bbf7d0; }
+.badge-danger  { background: #fef2f2; color: var(--danger); border: 1px solid #fecaca; }
+.badge-warning { background: #fffbeb; color: var(--warning); border: 1px solid #fde68a; }
+.badge-primary { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+.badge-neutral { background: #f8fafc; color: var(--muted); border: 1px solid var(--border); }
+
+/* ===== NO DATA ===== */
+.empty-state {
+  text-align: center; padding: 40px 20px;
+}
+
+.empty-icon { font-size: 2.5rem; margin-bottom: 12px; opacity: 0.4; }
+.empty-text { font-size: 0.84rem; color: var(--muted); font-weight: 500; }
+
+/* ===== MOBILE ===== */
+.overlay-bg {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  z-index: 99; display: none;
+}
+
+.overlay-bg.open { display: block; }
+
+.mobile-header {
+  display: none; align-items: center; justify-content: space-between;
+  padding: 14px 16px; background: var(--white);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 50;
+}
+
+.mobile-menu-btn {
+  width: 36px; height: 36px; border-radius: 8px;
+  background: none; border: none; cursor: pointer; color: var(--ink);
+  display: flex; align-items: center; justify-content: center;
+}
+
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); }
+  .sidebar.open { transform: translateX(0); }
+  .main-content { margin-left: 0; padding: 16px; }
+  .mobile-header { display: flex; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .subject-select-wrap { grid-template-columns: 1fr; }
+  .question-row { grid-template-columns: 1fr; }
+  .rating-group { justify-content: flex-start; }
+}
+
+/* ===== RESULT CARD ===== */
+.result-overlay {
+  position: fixed; inset: 0; background: rgba(2,6,23,0.8);
+  z-index: 200; display: none; align-items: center; justify-content: center;
+  padding: 20px;
+}
+
+.result-overlay.open { display: flex; }
+
+.result-card {
+  background: var(--white); border-radius: 24px; padding: 36px;
+  max-width: 420px; width: 100%; text-align: center;
+  animation: riseUp 0.4s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+
+.result-icon-wrap {
+  width: 72px; height: 72px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--forest), var(--emerald));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 2rem; margin: 0 auto 18px;
+  box-shadow: 0 4px 24px rgba(5,150,105,0.4);
+}
+
+.result-score {
+  font-size: 3.5rem; font-weight: 800; color: var(--forest);
+  letter-spacing: -0.04em; line-height: 1;
+}
+
+.result-out-of { font-size: 0.88rem; color: var(--muted); margin-top: 4px; }
+
+.result-remarks {
+  display: inline-block; margin-top: 12px;
+  padding: 6px 20px; border-radius: 99px;
+  font-size: 0.82rem; font-weight: 700;
+  background: linear-gradient(135deg, var(--forest), var(--emerald));
+  color: #fff;
+}
+
+.result-subject { font-size: 0.82rem; color: var(--muted); margin-top: 10px; }
+
+/* ===== EVAL STATUS BANNER ===== */
+.status-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-radius: 10px;
+  font-size: 0.8rem; font-weight: 600; margin-bottom: 20px;
+}
+
+.status-banner.open  { background: #f0fdf4; color: var(--success); border: 1px solid #bbf7d0; }
+.status-banner.warn  { background: #fffbeb; color: var(--warning); border: 1px solid #fde68a; }
+.status-banner.closed { background: #fef2f2; color: var(--danger); border: 1px solid #fecaca; }
+
+/* ===== ALREADY EVALUATED ===== */
+.already-badge {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; background: #f0fdf4;
+  border: 1px solid #bbf7d0; border-radius: 8px;
+  font-size: 0.78rem; color: var(--success); font-weight: 600; margin-top: 6px;
+}
+
+/* Completed checkmark animation */
+@keyframes checkPop {
+  0%  { transform: scale(0); opacity: 0; }
+  70% { transform: scale(1.2); }
+  100%{ transform: scale(1); opacity: 1; }
+}
+
+.check-anim { animation: checkPop 0.4s ease 0.1s both; display: inline-block; }
+
+
+/* ============================================================================
+   UI REFINEMENTS
+   ----------------------------------------------------------------------------
+   Small, specific changes rather than a restyle. Each one targets something
+   that reads as a default: flat surfaces, a placeholder empty state, an
+   unbranded sidebar, and headings that all carry the same weight.
+   ============================================================================ */
+
+/* The sidebar was a flat block of one green. A subtle vertical gradient plus a
+   hairline edge gives it depth without adding a colour to the palette. */
+.sidebar {
+  background: linear-gradient(180deg, var(--forest) 0%, #043d2e 100%);
+  border-right: 1px solid rgba(255,255,255,0.06);
+}
+
+/* The active item was a solid emerald slab. A left marker plus a tinted fill is
+   quieter and keeps the label legible. */
+.nav-item.active {
+  background: rgba(16,185,129,0.16);
+  color: #fff;
+  position: relative;
+}
+.nav-item.active::before {
+  content: '';
+  position: absolute; left: 0; top: 20%; bottom: 20%;
+  width: 3px; border-radius: 0 3px 3px 0;
+  background: var(--mint);
+}
+
+/* Section labels in the sidebar were the same size as the items themselves. */
+.nav-section-label {
+  font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase;
+  opacity: 0.45; font-weight: 700;
+}
+
+/* Page headings: one clear level, tightened tracking at large sizes. Default
+   browser tracking looks loose on a bold 2rem heading. */
+.page-title, #dashGreeting {
+  letter-spacing: -0.025em;
+}
+
+/* Cards: hairline border doing the work instead of a heavy shadow. */
+.card {
+  border-color: #e8edf3;
+  box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+}
+.card-header {
+  background: linear-gradient(180deg, #fbfcfe 0%, var(--white) 100%);
+}
+
+/* Empty states were a faded icon and one grey line - the same treatment whether
+   nothing exists yet or something failed. Give them room and a clear voice. */
+.empty-state {
+  padding: 48px 24px; text-align: center;
+}
+.empty-state svg, .empty-state .inline-icon {
+  width: 40px; height: 40px; opacity: 0.25; margin-bottom: 12px;
+}
+.empty-state-title {
+  font-size: 0.92rem; font-weight: 700; color: var(--ink); margin-bottom: 4px;
+}
+.empty-state-hint {
+  font-size: 0.8rem; color: var(--muted); max-width: 340px; margin: 0 auto;
+}
+
+/* A skeleton shimmer instead of the literal text "Loading period info…", which
+   looked like a bug when a request hung - as it did. */
+.skeleton {
+  background: linear-gradient(90deg, #eef2f7 25%, #f6f8fb 37%, #eef2f7 63%);
+  background-size: 400% 100%;
+  animation: skeletonPulse 1.4s ease infinite;
+  border-radius: 6px; color: transparent !important;
+}
+@keyframes skeletonPulse { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+
+/* Focus rings. Keyboard users had nothing to follow, and it is an accessibility
+   requirement, not a nicety. */
+.nav-item:focus-visible, .btn:focus-visible, .app-select:focus-visible,
+button:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--emerald);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stat-card, .nav-item .nav-icon { transition: none; }
+  .skeleton { animation: none; }
+}
+
+
+/* ============================================================================
+   SUBJECT PICKER (Evaluate page)
+   ----------------------------------------------------------------------------
+   Replaces the <select>. A dropdown showed one subject at a time and hid the
+   status of the rest, so a student could not see what was still pending without
+   opening it. This mirrors the Android app: one card per subject, teacher named,
+   state on the face of it.
+   ============================================================================ */
+.subject-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.subject-card {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 13px 14px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit; text-align: left; cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.subject-card:hover {
+  border-color: var(--emerald);
+  box-shadow: 0 2px 10px rgba(5,150,105,0.10);
+  transform: translateY(-1px);
+}
+.subject-card.is-selected {
+  border-color: var(--emerald);
+  box-shadow: 0 0 0 2px rgba(5,150,105,0.18);
+  background: #f4fdf9;
+}
+/* Already-evaluated subjects stay visible and clickable - a student may want to
+   look at what they submitted - but recede so the pending ones read first. */
+.subject-card.is-done { opacity: 0.62; }
+.subject-card.is-done:hover { opacity: 1; }
+
+.subject-card-avatar {
+  width: 38px; height: 38px; flex-shrink: 0;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--forest), var(--emerald));
+  color: #fff; font-weight: 700; font-size: 0.8rem;
+  display: flex; align-items: center; justify-content: center;
+}
+.subject-card-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.subject-card-code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.7rem; font-weight: 700; color: var(--emerald);
+  letter-spacing: 0.02em;
+}
+.subject-card-name {
+  font-size: 0.85rem; font-weight: 600; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.subject-card-teacher {
+  font-size: 0.73rem; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.subject-card-status { flex-shrink: 0; }
+
+.pill {
+  display: inline-block; padding: 3px 9px; border-radius: 999px;
+  font-size: 0.64rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.pill-done    { background: #dcfce7; color: #15803d; }
+.pill-pending { background: #fef3c7; color: #92400e; }
+
+@media (max-width: 520px) {
+  .subject-picker { grid-template-columns: 1fr; }
+}

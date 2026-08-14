@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>NwSSU — Student Evaluation Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<!-- Firebase Auth was never loaded here, so every Firestore call from this
+     page ran unauthenticated. See the AUTHENTICATION block in user.js. -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<link rel="stylesheet" href="css/user.css">
+
+
+</head>
+<body>
+
+
+<!-- ============================================================
+     FORCED PASSWORD CHANGE
+     Shown between login and the app when the account still has its default
+     password (the person's own ID). Reuses the login page's own classes so it
+     needs no new CSS. See needsPasswordChange() in user.js.
+     ============================================================ -->
+<!-- Shares the login page's shell so the two full-page states look identical. -->
+<div id="pwGate" style="display:none;">
+  <div class="login-shell">
+    <div class="login-brand">
+      <div class="login-logo"><img src="../nwssu_logo.jpg" alt="NwSSU"/></div>
+      <h1 class="login-title">Choose a password</h1>
+      <p class="login-subtitle">Your account still uses your ID number as its password.</p>
+    </div>
+
+    <div class="login-card">
+      <label class="field-label" for="pwGateNew">NEW PASSWORD</label>
+      <div class="input-wrap">
+        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
+        <input class="form-control" type="password" id="pwGateNew" placeholder="At least 6 characters" autocomplete="new-password"/>
+      </div>
+
+      <label class="field-label" for="pwGateConfirm">CONFIRM PASSWORD</label>
+      <div class="input-wrap">
+        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
+        <input class="form-control" type="password" id="pwGateConfirm" placeholder="Type it again" autocomplete="new-password"
+               onkeydown="if(event.key==='Enter')submitNewPassword()"/>
+      </div>
+
+      <button class="btn-login" id="pwGateBtn" onclick="submitNewPassword()">Set new password</button>
+      <div class="error-msg" id="pwGateError" style="display:none;"></div>
+    </div>
+
+    <p class="login-foot">A private password keeps someone else from submitting in your name.</p>
+  </div>
+</div>
+
+<div id="loginPage">
+  <div class="login-shell">
+
+    <div class="login-brand">
+      <div class="login-logo"><img src="../nwssu_logo.jpg" alt="NwSSU"/></div>
+      <h1 class="login-title">Faculty Evaluation</h1>
+      <p class="login-subtitle">Sign in with your registered ID</p>
+    </div>
+
+    <div class="login-card">
+      <label class="field-label" for="loginSid">ID NUMBER</label>
+      <div class="input-wrap">
+        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>
+        <input class="form-control" type="text" id="loginSid" placeholder="Enter your ID" autocomplete="username"/>
+      </div>
+
+      <label class="field-label" for="loginPass">PASSWORD</label>
+      <div class="input-wrap">
+        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
+        <input class="form-control" type="password" id="loginPass" placeholder="Enter password"
+               autocomplete="current-password" onkeydown="if(event.key==='Enter') doLogin()"/>
+        <button type="button" class="pw-peek" id="loginPwPeek" onclick="toggleLoginPw()" aria-label="Show password">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+
+      <button class="btn-login" id="loginBtn" onclick="doLogin()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        Sign In
+      </button>
+
+      <div class="error-msg" id="loginError">Invalid ID or password. Please try again.</div>
+    </div>
+
+    <p class="login-foot">Northwest Samar State University</p>
+  </div>
+</div>
+
+<!-- ===== MAIN APP ===== -->
+<div id="app">
+
+  <!-- Mobile header -->
+  <div class="mobile-header">
+    <button class="mobile-menu-btn" onclick="toggleSidebar()">
+      <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <span style="font-size:0.82rem; font-weight:700; color:var(--forest);">NwSSU Evaluation</span>
+    <div style="width:36px;"></div>
+  </div>
+
+  <div class="overlay-bg" id="overlayBg" onclick="closeSidebar()"></div>
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon">
+        <svg width="20" height="20" fill="none" stroke="#6ee7b7" stroke-width="2" viewBox="0 0 24 24"><path d="M12 14l9-5-9-5-9 5 9 5z"/><path d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/></svg>
+      </div>
+      <div class="brand-text">
+        <h2>NwSSU</h2>
+        <p>Faculty Evaluation System</p>
+      </div>
+    </div>
+
+    <div class="sidebar-user">
+      <div class="user-avatar" id="sidebarAvatar">S</div>
+      <div class="user-info">
+        <div class="user-name" id="sidebarName">Student</div>
+        <div class="user-dept" id="sidebarDept">—</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Menu</div>
+      <div class="nav-item active" id="nav-dashboard" onclick="showPage('dashboard')">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9.5 21v-6h5v6"/></svg> Dashboard
+      </div>
+      <div class="nav-item" id="nav-evaluate" onclick="showPage('evaluate')">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg> Evaluate Teacher
+      </div>
+      <div class="nav-section-label" style="margin-top:8px;">Account</div>
+      <div class="nav-item" id="nav-history" onclick="showPage('history')">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6v3H9z"/><path d="M15 5.5h2.5A1.5 1.5 0 0 1 19 7v12.5A1.5 1.5 0 0 1 17.5 21h-11A1.5 1.5 0 0 1 5 19.5V7a1.5 1.5 0 0 1 1.5-1.5H9"/><path d="M8.5 12h7"/><path d="M8.5 16h4.5"/></svg> My Evaluations
+      </div>
+      <div class="nav-item" id="nav-feedback" onclick="showPage('feedback')">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5a2.5 2.5 0 0 1-2.5 2.5H8l-4 3.5V6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5Z"/></svg> My Feedback
+      </div>
+      <div class="nav-item" id="nav-profile" onclick="showPage('profile')">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg> My Profile
+      </div>
+      <div class="nav-item" id="nav-settings" onclick="showPage('settings')">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-1 1.47V21a2 2 0 1 1-4 0v-.11a1.6 1.6 0 0 0-1-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.6 1.6 0 0 0 4.6 15a1.6 1.6 0 0 0-1.47-1H3a2 2 0 1 1 0-4h.11a1.6 1.6 0 0 0 1.47-1 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.6 1.6 0 0 0 9 4.6 1.6 1.6 0 0 0 10 3.13V3a2 2 0 1 1 4 0v.11a1.6 1.6 0 0 0 1 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.6 1.6 0 0 0 19.4 9v0a1.6 1.6 0 0 0 1.47 1H21a2 2 0 1 1 0 4h-.11a1.6 1.6 0 0 0-1.47 1Z"/></svg> Settings
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="logout-btn" onclick="doLogout()">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign Out
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main-content">
+
+    <!-- ===== DASHBOARD ===== -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-header">
+        <div class="page-title">
+          <h1 id="dashGreeting">Good morning!</h1>
+          <p id="dashSubtitle">Here's your evaluation overview.</p>
+        </div>
+        <button class="btn btn-primary" onclick="showPage('evaluate')">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Start Evaluation
+        </button>
+      </div>
+
+      <div class="stats-grid" id="dashStats">
+        <div class="stat-card is-total">
+          <div class="stat-val" id="dashTotalSubjects">—</div>
+          <div class="stat-label">Enrolled Subjects</div>
+        </div>
+        <div class="stat-card is-done">
+          <div class="stat-val" id="dashDone">—</div>
+          <div class="stat-label">Completed</div>
+        </div>
+        <div class="stat-card is-pending">
+          <div class="stat-val" id="dashPending">—</div>
+          <div class="stat-label">Remaining</div>
+        </div>
+      </div>
+
+      <!-- Period info -->
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-header">
+          <h3><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17"/><path d="M8 3v4M16 3v4"/></svg> Current Evaluation Period</h3>
+        </div>
+        <div class="card-body" id="dashPeriodInfo">
+          <div style="font-size:0.84rem; color:var(--muted);">Loading period info...</div>
+        </div>
+      </div>
+
+      <!-- Subject progress -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Subject Evaluation Status</h3>
+          <span class="badge badge-neutral" id="dashSubjectCountBadge">0 subjects</span>
+        </div>
+        <div class="card-body" id="dashSubjectList">
+          <div class="empty-state"><div class="empty-icon"><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10a2 2 0 0 1 2 2v13a1.75 1.75 0 0 0-1.75-1.75H5.5A1.5 1.5 0 0 1 4 15.75Z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H14a2 2 0 0 0-2 2v13a1.75 1.75 0 0 1 1.75-1.75h4.75A1.5 1.5 0 0 0 20 15.75Z"/></svg></div><div class="empty-text">No subjects enrolled yet.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== EVALUATE ===== -->
+    <div class="page" id="page-evaluate">
+      <div class="page-header">
+        <div class="page-title">
+          <h1>Evaluate Teacher</h1>
+          <p>Rate your teacher based on 15 CMO-prescribed criteria.</p>
+        </div>
+      </div>
+
+      <div id="evalBanner"></div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-body">
+          <!-- Was a <select>. The Android app lists each subject as a tappable
+               card showing the teacher and whether it is still pending, and a
+               dropdown hid all of that behind one line of text - you could not
+               see what was left to do without opening it. Cards match the app
+               and make the remaining work visible at a glance. -->
+          <div class="subject-picker" id="subjectPicker"></div>
+
+          <div id="teacherInfoCard" style="display:none; margin-top:12px; padding:12px 16px; background:#f8fafc; border-radius:10px; border:1px solid var(--border); display:flex; gap:12px; align-items:center;">
+            <div style="width:40px; height:40px; border-radius:50%; background:linear-gradient(135deg,var(--forest),var(--emerald)); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:1rem;" id="teacherInitials">T</div>
+            <div>
+              <div style="font-weight:700; font-size:0.86rem;" id="teacherName">Teacher Name</div>
+              <div style="font-size:0.75rem; color:var(--muted);" id="teacherDept">Department</div>
+            </div>
+          </div>
+          <div id="alreadyEvaluatedMsg" style="display:none;" class="already-badge">
+            <span class="check-anim"><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg></span>
+            You have already submitted an evaluation for this subject this semester.
+          </div>
+        </div>
+      </div>
+
+      <!-- Eval form (shown when subject selected and not yet evaluated) -->
+      <div id="evalFormWrap" style="display:none;">
+        <!-- Rating Legend -->
+        <div class="rating-legend">
+          <div class="legend-item"><div class="legend-dot d5">5</div> Always manifested (91–100%)</div>
+          <div class="legend-item"><div class="legend-dot d4">4</div> Often manifested (61–90%)</div>
+          <div class="legend-item"><div class="legend-dot d3">3</div> Sometimes manifested (31–60%)</div>
+          <div class="legend-item"><div class="legend-dot d2">2</div> Seldom manifested (11–30%)</div>
+          <div class="legend-item"><div class="legend-dot d1">1</div> Never/Rarely manifested (0–10%)</div>
+        </div>
+
+        <div class="eval-progress-bar">
+          <div class="eval-progress-fill" id="evalProgressFill" style="width:0%"></div>
+        </div>
+        <div style="font-size:0.72rem; color:var(--muted); margin-bottom:20px;" id="evalProgressLabel">0 of 15 answered</div>
+
+        <div class="card">
+          <div class="card-body" id="questionsContainer"></div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-header"><h3><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5a2.5 2.5 0 0 1-2.5 2.5H8l-4 3.5V6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5Z"/></svg> Additional Comments</h3></div>
+          <div class="card-body">
+            <textarea class="textarea-field" id="evalComment" placeholder="Optional anonymous feedback for the teacher..."></textarea>
+            <div style="font-size:0.72rem; color:var(--muted); margin-top:6px;"><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg> Your identity is kept anonymous. Only scores are visible to faculty.</div>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+          <button class="btn btn-outline" onclick="clearEvalForm()">Clear Form</button>
+          <button class="btn btn-primary" id="submitEvalBtn" onclick="submitEvaluation()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            Submit Evaluation
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== HISTORY ===== -->
+    <div class="page" id="page-history">
+      <div class="page-header">
+        <div class="page-title">
+          <h1>My Evaluations</h1>
+          <p>All evaluations you have submitted.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6v3H9z"/><path d="M15 5.5h2.5A1.5 1.5 0 0 1 19 7v12.5A1.5 1.5 0 0 1 17.5 21h-11A1.5 1.5 0 0 1 5 19.5V7a1.5 1.5 0 0 1 1.5-1.5H9"/><path d="M8.5 12h7"/><path d="M8.5 16h4.5"/></svg> Evaluation History</h3>
+          <span class="badge badge-neutral" id="historyCount">0 records</span>
+        </div>
+        <div class="card-body" id="historyList">
+          <div class="empty-state"><div class="empty-icon"><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6v3H9z"/><path d="M15 5.5h2.5A1.5 1.5 0 0 1 19 7v12.5A1.5 1.5 0 0 1 17.5 21h-11A1.5 1.5 0 0 1 5 19.5V7a1.5 1.5 0 0 1 1.5-1.5H9"/><path d="M8.5 12h7"/><path d="M8.5 16h4.5"/></svg></div><div class="empty-text">No evaluations submitted yet.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== FEEDBACK ===== -->
+    <div class="page" id="page-feedback">
+      <div class="page-header">
+        <div class="page-title">
+          <h1>My Feedback</h1>
+          <p>Comments you submitted — visible only to you.</p>
+        </div>
+      </div>
+
+      <!-- Notice banner -->
+      <div id="feedbackNoticeBanner" style="display:none;"></div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5a2.5 2.5 0 0 1-2.5 2.5H8l-4 3.5V6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5Z"/></svg> Your Submitted Comments</h3>
+          <span class="badge badge-neutral" id="feedbackCount">0 records</span>
+        </div>
+        <div class="card-body" id="feedbackList">
+          <div class="empty-state"><div class="empty-icon"><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5a2.5 2.5 0 0 1-2.5 2.5H8l-4 3.5V6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5Z"/></svg></div><div class="empty-text">Loading...</div></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div class="card-body" style="display:flex; align-items:flex-start; gap:12px; padding:14px 16px;">
+          <span style="font-size:1.1rem; flex-shrink:0;"><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></span>
+          <div style="font-size:0.78rem; color:var(--muted); line-height:1.6;">
+            Your comments are <strong>completely anonymous</strong> to faculty. Only administrators can see submission counts — your name is never linked to any feedback. This page is for your own reference only.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PROFILE ===== -->
+    <div class="page" id="page-profile">
+      <div class="page-header">
+        <div class="page-title">
+          <h1>My Profile</h1>
+          <p>Your account information.</p>
+        </div>
+      </div>
+
+      <div class="profile-hero">
+        <div class="profile-avatar-lg" id="profileAvatarLg">S</div>
+        <div class="profile-hero-info">
+          <h2 id="profileName">—</h2>
+          <p id="profileSid">ID: —</p>
+          <div class="profile-badge" id="profileStatusBadge">● Active</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6v3H9z"/><path d="M15 5.5h2.5A1.5 1.5 0 0 1 19 7v12.5A1.5 1.5 0 0 1 17.5 21h-11A1.5 1.5 0 0 1 5 19.5V7a1.5 1.5 0 0 1 1.5-1.5H9"/><path d="M8.5 12h7"/><path d="M8.5 16h4.5"/></svg> Account Details</h3></div>
+        <div class="card-body">
+          <div class="info-grid" id="profileInfoGrid">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:20px;">
+        <div class="card-header"><h3><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg> Evaluation Summary</h3></div>
+        <div class="card-body" id="profileEvalSummary">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== SETTINGS ===== -->
+    <div class="page" id="page-settings">
+      <div class="page-header">
+        <div class="page-title">
+          <h1>Settings</h1>
+          <p>Manage your account preferences.</p>
+        </div>
+      </div>
+
+      <!-- Change Password -->
+      <div class="settings-section">
+        <div class="settings-section-title"><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg> Security</div>
+        <div class="card">
+          <div class="card-header"><h3>Change Password</h3></div>
+          <div class="card-body">
+            <div style="max-width:400px;">
+              <div class="settings-form-row">
+                <label class="settings-form-label">Current Password</label>
+                <input class="settings-input" type="password" id="pwCurrent" placeholder="••••••••"/>
+              </div>
+              <div class="settings-form-row">
+                <label class="settings-form-label">New Password</label>
+                <input class="settings-input" type="password" id="pwNew" placeholder="Minimum 6 characters"/>
+              </div>
+              <div class="settings-form-row">
+                <label class="settings-form-label">Confirm New Password</label>
+                <input class="settings-input" type="password" id="pwConfirm" placeholder="Repeat new password"/>
+              </div>
+              <div id="pwFeedback" style="font-size:0.78rem; margin-bottom:12px; display:none;"></div>
+              <button class="btn btn-primary" onclick="changePassword()">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                Update Password
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Info -->
+      <div class="settings-section">
+        <div class="settings-section-title">ℹ️ About</div>
+        <div class="card">
+          <div class="card-body" style="display:flex; flex-direction:column; gap:10px;">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="row-label">System Version</div>
+                <div class="row-desc">NwSSU Teacher Evaluation System</div>
+              </div>
+              <span class="badge badge-success">v2.0</span>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="row-label">Rating Standard</div>
+                <div class="row-desc">CMO-Prescribed 5-point scale (15 criteria)</div>
+              </div>
+              <span class="badge badge-primary">CMO</span>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="row-label">Data Storage</div>
+                <div class="row-desc">Firebase Firestore (Cloud)</div>
+              </div>
+              <span class="badge badge-neutral">Cloud</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Danger zone -->
+      <div class="settings-section">
+        <div class="settings-section-title" style="color:var(--danger);"><svg class="inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5 21 19.5H3Z"/><path d="M12 10v4"/><path d="M12 17h.01"/></svg> Session</div>
+        <div class="card">
+          <div class="card-body">
+            <div class="settings-row" style="flex-wrap:wrap; gap:12px;">
+              <div class="settings-row-info">
+                <div class="row-label">Sign Out</div>
+                <div class="row-desc">End your current session and return to login.</div>
+              </div>
+              <button class="btn btn-danger" onclick="doLogout()">Sign Out</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ===== RESULT OVERLAY ===== -->
+<div class="result-overlay" id="resultOverlay">
+  <div class="result-card">
+    <div class="result-icon-wrap"><svg class="result-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg></div>
+    <div style="font-size:0.82rem; color:var(--muted); margin-bottom:8px;">Evaluation Submitted!</div>
+    <div class="result-score" id="resultScore">—</div>
+    <div class="result-out-of">out of 100</div>
+    <div class="result-remarks" id="resultRemarks">—</div>
+    <div class="result-subject" id="resultSubject"></div>
+    <button class="btn btn-primary" style="margin-top:24px; width:100%;" onclick="closeResult()">
+      Done
+    </button>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toastContainer"></div>
+
+<!-- ===== FIREBASE & APP SCRIPT ===== -->
+<!-- Load order matters: core.js declares the Firebase clients and the shared
+     state, auth.js owns sign-in and the password gate, app.js is everything
+     that happens once you are in. Reordering these breaks the later files. -->
+<script src="js/core.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
