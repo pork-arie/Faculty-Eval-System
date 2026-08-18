@@ -39,43 +39,87 @@ window.getActiveSY = function() {
     return null;
 };
 
-// ===== CMO COMPLIANT: Calculate Weighted SET Rating =====
-window.calculateWeightedSETRating = function(facultyId) {
+// ===== CMO §8.3 — THE ONE weighted-SET computation =====
+// Annex C, Annex D, the FER, Reports and the CSV export all go through here, so
+// the same faculty cannot show a different rating on two sheets printed from the
+// same screen. Three separate copies of this maths used to exist and they
+// disagreed on two points, both settled here:
+//
+//   - a class with NO evaluations is skipped entirely. It has no average to
+//     weight, and counting its enrolment in the divisor only drags the rating
+//     down for a class that was never rated. (Annex C used to count it, which is
+//     why Annex C and Annex D could print different scores for one faculty.)
+//   - exempted students (§8.2) are removed from the class head count. They are
+//     not permitted to evaluate, so they were never expected to.
+//
+// annexEvalInTerm and isStudentExempted are resolved at CALL time, not load time:
+// this file loads before adminEval.js defines them, but nothing calls this until
+// the dashboard is running, by which point both exist.
+window.computeWeightedSET = function(facultyId, termFilter) {
+    const inTerm = (typeof termFilter === 'function') ? termFilter
+                 : ((typeof annexEvalInTerm === 'function') ? annexEvalInTerm : () => true);
+
+    const students = getData('students', []).filter(s => !s.deleted);
     const subjects = getData('subjects', []).filter(s =>
         s.teacherId === facultyId &&
-        s.loadType !== 'Overload' &&
-        !s.isLabSchool
+        s.loadType !== 'Overload' &&        // §4.3 — overload excluded
+        !s.isLabSchool                      // §8.5 — lab school excluded
     );
 
-    // Term filter, matching Annex C exactly. Without it this function counted
-    // EVERY evaluation ever submitted while Annex C counted only the selected
-    // term, so a faculty could show a rating in Reports and a blank section B
-    // in Annex C - same faculty, same screen, two different answers.
-    //
-    // It bites hardest on evaluations with no schoolYear/semester stamped:
-    // _evalMatchesTerm counts those only while viewing the ACTIVE term, so
-    // picking any specific term emptied Annex C and left the table unchanged.
-    const inTerm = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : (() => true);
-    const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor' && inTerm(e));
-    const students = getData('students', []).filter(s => !s.deleted);
+    // e.teacherId is checked as well as e.subjectId. Narrowing by subject alone
+    // means that when a subject is reassigned mid-term, the PREVIOUS teacher's
+    // ratings follow the subject to the new teacher. Records written before
+    // teacherId existed carry no such field and are let through on subject alone.
+    const evals = getData('evaluations', []).filter(e =>
+        e.evaluatorType !== 'supervisor' &&
+        (!e.teacherId || e.teacherId === facultyId) &&
+        inTerm(e)
+    );
 
-    let totalStudentsAcrossClasses = 0;
-    let totalWeightedScore = 0;
-
-    subjects.forEach(sub => {
+    const classes = subjects.map((sub, idx) => {
         const classEvals = evals.filter(e => e.subjectId === sub.id);
-        const enrolledCount = (sub.enrolledIds || []).filter(id => students.find(s => s.id === id)).length;
-
-        if (classEvals.length > 0) {
-            const classAvg = classEvals.reduce((a, b) => a + b.totalScore, 0) / classEvals.length;
-            totalWeightedScore += (enrolledCount * classAvg);
-            totalStudentsAcrossClasses += enrolledCount;
-        }
+        const enrolledCount = (sub.enrolledIds || [])
+            .filter(id => students.some(s => s.id === id))
+            .filter(id => (typeof isStudentExempted === 'function')
+                            ? !isStudentExempted(id, sub.id) : true)
+            .length;
+        const avgScore = classEvals.length
+            ? classEvals.reduce((a, b) => a + (parseFloat(b.totalScore) || 0), 0) / classEvals.length
+            : 0;
+        return {
+            seq:           idx + 1,
+            sub,
+            subjectId:     sub.id,
+            subjectCode:   sub.code,
+            subjectName:   sub.name,
+            enrolledCount,
+            evalCount:     classEvals.length,
+            rated:         classEvals.length > 0,
+            avgScore:      avgScore.toFixed(2),
+            percentage:    Math.min(100, avgScore).toFixed(2),
+            weightedScore: (avgScore * enrolledCount).toFixed(2)
+        };
     });
 
-    return totalStudentsAcrossClasses > 0
-        ? Math.min(100, (totalWeightedScore / totalStudentsAcrossClasses)).toFixed(2)
-        : 0;
+    const rated         = classes.filter(c => c.rated);
+    const totalStudents = rated.reduce((n, c) => n + c.enrolledCount, 0);
+    const totalWeighted = rated.reduce((n, c) => n + parseFloat(c.weightedScore), 0);
+
+    return {
+        classes, rated, totalStudents, totalWeighted,
+        overallSET: totalStudents > 0
+            ? Math.min(100, totalWeighted / totalStudents).toFixed(2)
+            : '0.00'
+    };
+};
+
+// ===== CMO COMPLIANT: Calculate Weighted SET Rating =====
+// Thin wrapper kept because many call sites use this name. All of the maths now
+// lives in computeWeightedSET above, so every screen agrees.
+window.calculateWeightedSETRating = function(facultyId, termFilter) {
+    const r = computeWeightedSET(facultyId, termFilter);
+    // 0 (not '0.00') when there is nothing to report — callers test truthiness.
+    return r.totalStudents > 0 ? r.overallSET : 0;
 };
 
 // Editable cell for a printed form. Values typed here apply to this print run
@@ -203,10 +247,24 @@ window.getSEFForTeacher = function(teacherId, termFilter) {
     return { count: list.length, average: sum / list.length, list };
 };
 
-// ===== CMO COMPLIANT: Calculate Final Rating (60% Student + 40% Supervisor) =====
-window.calculateFinalRating = function(teacherId) {
-    const studentPercentage = parseFloat(calculateWeightedSETRating(teacherId));
-    const sefAgg = getSEFForTeacher(teacherId);
+// ===== INSTITUTIONAL COMPOSITE: 60% SET + 40% SEF =====
+// IMPORTANT: this 60/40 weighting is NOT in CMO 19. The CMO reports SET and SEF
+// SEPARATELY - Annex C lists them side by side and Annex D does the same, with no
+// combined figure anywhere in the memorandum. If NwSSU wants a single number, it
+// is an institutional decision (or comes from DBM-CHED JC3), and it must not be
+// presented as a CMO requirement.
+//
+// The printed CMO forms (Annex C, Annex D, FEDAF) do NOT use this function - they
+// show SET and SEF as two separate figures, exactly as the annexes require. This
+// composite appears only on the internal FER modal, which is labelled accordingly.
+window.calculateFinalRating = function(teacherId, termFilter) {
+    // Both halves must be scoped to the SAME rating period. getSEFForTeacher used
+    // to be called with no filter at all, so this figure mixed the selected term's
+    // SET with every SEF ever submitted, for every term.
+    const inTerm = (typeof termFilter === 'function') ? termFilter
+                 : ((typeof annexEvalInTerm === 'function') ? annexEvalInTerm : () => true);
+    const studentPercentage = parseFloat(calculateWeightedSETRating(teacherId, inTerm));
+    const sefAgg = getSEFForTeacher(teacherId, inTerm);
     const sefData = sefAgg.list;
 
     // A real SET is never 0 (the lowest possible rating is 20%), so 0 means
@@ -216,8 +274,8 @@ window.calculateFinalRating = function(teacherId) {
     const hasSEF = sefData.length > 0;
     const supervisorScore = hasSEF ? sefAgg.average : null;   // mean of ALL supervisors
 
-    // CMO 19 reports SET and SEF separately. Only compute a combined 60/40 figure
-    // when BOTH exist; otherwise there is no final score to show.
+    // Only compute the composite when BOTH halves exist; otherwise there is no
+    // combined score to show and the SET is reported on its own.
     const finalPercentage = (hasSET && hasSEF)
         ? Math.min(100, (studentPercentage * 0.60) + (supervisorScore * 0.40))
         : null;

@@ -367,20 +367,18 @@ window.toggleTeacherDetails = function(teacherId) {
 window.renderTeacherDetailsContent = function(teacherId) {
   const t = getData('teachers', []).find(t => t.id === teacherId);
   const subjects = getData('subjects', []).filter(s => s.teacherId === teacherId && s.loadType !== 'Overload' && !s.isLabSchool);
-  const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor');
-  const students = getData('students', []).filter(s => !s.deleted);
   const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor');
 
-  const classBreakdown = subjects.map(sub => {
-    const classEvals = evals.filter(e => e.subjectId === sub.id);
-    const enrolledCount = (sub.enrolledIds || []).filter(id => students.find(s => s.id === id)).length;
-    const avgScore = classEvals.length > 0 ? classEvals.reduce((a,b) => a + b.totalScore, 0) / classEvals.length : 0;
-    return { sub, enrolledCount, evalCount: classEvals.length, avgScore };
-  });
-
-  const totalWeighted = classBreakdown.reduce((sum, cr) => cr.avgScore > 0 ? sum + (cr.avgScore * cr.enrolledCount) : sum, 0);
-  const totalStudents = classBreakdown.reduce((sum, cr) => sum + cr.enrolledCount, 0);
-  const weightedSET = totalStudents > 0 ? (totalWeighted / totalStudents).toFixed(2) : '—';
+  // Same §8.3 computation as every other screen (admin-scoring.js). This block
+  // used to do its own, with NO term filter at all and no exemption subtraction,
+  // so the figure in this expander could differ from the one in Reports and from
+  // the one printed on Annex C for the same faculty member.
+  const agg = computeWeightedSET(teacherId, evalInActiveTerm);
+  const classBreakdown = agg.classes.map(c => ({
+    sub: c.sub, enrolledCount: c.enrolledCount,
+    evalCount: c.evalCount, avgScore: parseFloat(c.avgScore)
+  }));
+  const weightedSET = agg.totalStudents > 0 ? agg.overallSET : '—';
   const latestSEF = sefEvals.length > 0 ? (sefEvals.reduce((a, b) => a + b.totalScore, 0) / sefEvals.length).toFixed(2) : '—';
 
   const container = document.getElementById(`teacher-details-content-${teacherId}`);

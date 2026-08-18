@@ -2,8 +2,9 @@
 // admin-courses.js
 // ----------------------------------------------------------------------------
 // Supervisor data migration, course-by-department map, page bootstrap.
-// NOTE: the customCourses branch of syncCollectionToFirestore in here never runs
-// - adminrate.js redefines that function and its MAP has no customCourses key.
+// NOTE: syncCollectionToFirestore is NOT defined here - adminrate.js redefines it
+// and its MAP does include a customCourses key, so custom courses DO reach
+// Firestore (one doc per department in the top-level `courses` collection).
 //
 // Split out of the original 4,441-line admin.js. Load order is load-bearing:
 // keep these in the order listed in dashboard.html - later files redefine
@@ -41,7 +42,8 @@ migrateSupervisorRecords();
 renderDashboard();
 
 // REMOVED (dead code): syncCollectionToFirestore
-// Replaced unconditionally by adminrate.js:316. NOTE: the customCourses branch that lived here is why custom courses never reach Firestore - the replacement MAP has no customCourses key.
+// Replaced unconditionally by adminrate.js:316, whose MAP handles customCourses
+// by writing one document per department into the top-level `courses` collection.
 // The 71 lines that were here never executed - the definition below in the
 // load order replaced this one before anything could call it.
 // ===== COURSE-BY-DEPARTMENT MAP =====
@@ -297,15 +299,21 @@ window.mcDownloadTemplate = function() {
     const facultyOk = !!faculty && !faculty.deleted;
     let source, supName = '\u2014', orphan = false;
 
-    if (rec.supervisorId) {
-      const sup = byId[rec.supervisorId];
+    // A SEF submitted from the Android app carries the supervisor's document id in
+    // `studentId` (the generic evaluator field) and no supervisorId at all — the
+    // same fallback Annex C already uses. Without it every app submission was
+    // labelled "Admin-entered" with the supervisor shown as "—".
+    const recSupId = rec.supervisorId
+      || (rec.evaluatorType === 'supervisor' ? rec.studentId : '');
+    if (recSupId) {
+      const sup = byId[recSupId];
       if (sup && !sup.deleted && (sup.facultyType === 'supervisor')) {
         source = 'App supervisor';
-        supName = sup.name || sup.tid || rec.supervisorId;
+        supName = sup.name || sup.tid || recSupId;
       } else {
         source = 'Orphaned \u2014 supervisor removed';
         orphan = true;
-        supName = (sup && sup.name) ? (sup.name + ' (removed)') : (rec.supervisorTid || rec.supervisorId);
+        supName = (sup && sup.name) ? (sup.name + ' (removed)') : (rec.supervisorTid || recSupId);
       }
     } else {
       source = 'Admin-entered';   // created via the admin SEF modal (saveSEFRating); no supervisor link

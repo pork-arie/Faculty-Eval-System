@@ -260,46 +260,15 @@ window.canStudentEvaluate = function(studentId, subjectId) {
 
 // Get teacher's SET and SEF ratings separately (CMO 19 — no combined score)
 window.getTeacherOverallRating = function(teacherId) {
-    const subjects = getData('subjects', []).filter(s =>
-        s.teacherId === teacherId && s.loadType !== 'Overload' && !s.isLabSchool
-    );
-    const evals = getData('evaluations', []).filter(e =>
-        subjects.some(s => s.id === e.subjectId) && e.evaluatorType !== 'supervisor'
-        && evalInActiveTerm(e)                       // CMO §4.3 — current rating period only
-    );
-    const students = getData('students', []).filter(s => !s.deleted);
-
-    const classRatings = subjects.map(sub => {
-        const classEvals = evals.filter(e => e.subjectId === sub.id);
-        // Expected evaluators = enrolled (active students) minus exempted (CMO §8.2)
-        const enrolledCount = (sub.enrolledIds || [])
-            .filter(id => students.find(s => s.id === id))
-            .filter(id => !isStudentExempted(id, sub.id)).length;
-        // totalScore already 0-100 percentage
-        const avgScore = classEvals.length > 0
-            ? classEvals.reduce((a, b) => a + b.totalScore, 0) / classEvals.length
-            : 0;
-        return {
-            subjectId: sub.id,
-            subjectCode: sub.code,
-            subjectName: sub.name,
-            enrolledCount,
-            evalCount: classEvals.length,
-            avgScore: avgScore.toFixed(2),
-            percentage: Math.min(100, avgScore).toFixed(2)
-        };
-    });
-
-    // Both sums must skip the same classes. totalWeighted already ignored a
-    // class with no evaluations, but totalStudents counted its enrolment - so a
-    // faculty with one evaluated class and one un-evaluated class had their
-    // rating divided by the combined head count and came out far too low. That
-    // is why Reports disagreed with Annex C, which guards both sums together.
-    const rated = classRatings.filter(cr => parseFloat(cr.avgScore) > 0);
-    const totalWeighted = rated.reduce((sum, cr) => sum + parseFloat(cr.avgScore) * cr.enrolledCount, 0);
-    const totalStudents = rated.reduce((sum, cr) => sum + cr.enrolledCount, 0);
-    // Weighted SET — already a percentage (0-100)
-    const overallSET = totalStudents > 0 ? Math.min(100, totalWeighted / totalStudents).toFixed(2) : '0';
+    // All of the §8.3 maths lives in computeWeightedSET (admin-scoring.js) so that
+    // Reports, the FER, Annex C and Annex D cannot disagree about one faculty.
+    // It skips classes with no evaluations and subtracts exempted students (§8.2).
+    const agg          = computeWeightedSET(teacherId, evalInActiveTerm);
+    const classRatings = agg.classes;          // same field names the CSV export reads
+    const overallSET   = agg.overallSET;
+    const subjects     = getData('subjects', []).filter(s =>
+        s.teacherId === teacherId && s.loadType !== 'Overload' && !s.isLabSchool);
+    const evalCount    = agg.classes.reduce((n, c) => n + c.evalCount, 0);
 
     // SEF rating (already 0-100 from saveSEFRating formula).
     // CMO §9.3 — a faculty teaching across programs is rated by each program
@@ -322,7 +291,7 @@ window.getTeacherOverallRating = function(teacherId) {
         sefCount: supervisorEvals.length,   // how many chairs rated this faculty
         remarks: getRemarks(parseFloat(overallSET)),
         totalClasses: subjects.length,
-        totalEvaluations: evals.length
+        totalEvaluations: evalCount
     };
 };
 

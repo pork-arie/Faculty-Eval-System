@@ -84,18 +84,18 @@ function viewTeacherReport(teacherId) {
     
     <div class="total-score-display" style="margin-top:20px;">
       <div class="big-score">${rating.hasSEF ? rating.finalPercentage + '%' : (rating.hasSET ? rating.studentPercentage + '%' : '—')}</div>
-      <div class="out-of">${rating.hasSEF ? 'CMO 60/40: 60% SET + 40% SEF' : 'SET only — no SEF submitted yet'}</div>
+      <div class="out-of">${rating.hasSEF ? 'Institutional composite: 60% SET + 40% SEF (NOT prescribed by CMO 19 — the CMO reports SET and SEF separately)' : 'SET only — no SEF submitted yet'}</div>
       <div class="remarks-badge" style="background:${rating.remarksColor};">${rating.remarks}</div>
     </div>
     
     <div style="margin-top:16px; display:grid; grid-template-columns:1fr 1fr; gap:16px;">
       <div style="background:#f0fdf4; padding:12px; border-radius:8px; text-align:center;">
-        <div style="font-size:0.7rem; color:var(--muted);">Student SET (60%)</div>
+        <div style="font-size:0.7rem; color:var(--muted);">Student SET (CMO 19 §8.3)</div>
         <div style="font-size:1.4rem; font-weight:700;">${rating.hasSET ? rating.studentPercentage + '%' : '—'}</div>
         <div style="font-size:0.7rem;">(weighted avg across ${tSubs.length} class${tSubs.length !== 1 ? 'es' : ''})</div>
       </div>
       <div style="background:#eff6ff; padding:12px; border-radius:8px; text-align:center;">
-        <div style="font-size:0.7rem; color:var(--muted);">Supervisor SEF (40%)</div>
+        <div style="font-size:0.7rem; color:var(--muted);">Supervisor SEF (CMO 19 §9.3)</div>
         <div style="font-size:1.4rem; font-weight:700;">${rating.hasSEF ? rating.supervisorPercentage + '%' : '—'}</div>
       </div>
     </div>

@@ -87,31 +87,19 @@ function _buildTeacherEvalData() {
         const teacherSubjects = subjects.filter(s =>
             s.teacherId === teacher.id && s.loadType !== 'Overload' && !s.isLabSchool
         );
-        const classRatings = teacherSubjects.map(sub => {
-            const classEvals    = evals.filter(e => e.subjectId === sub.id && e.evaluatorType !== 'supervisor'
-                && (typeof evalInActiveTerm !== 'function' || evalInActiveTerm(e)));
-            const enrolledCount = (sub.enrolledIds || [])
-                .filter(id => students.find(s => s.id === id))
-                .filter(id => typeof isStudentExempted !== 'function' || !isStudentExempted(id, sub.id)).length;
-            const avgScore      = classEvals.length > 0
-                ? classEvals.reduce((a, b) => a + b.totalScore, 0) / classEvals.length : 0;
-            return {
-                subjectCode: sub.code, subjectName: sub.name,
-                enrolledCount, evalCount: classEvals.length,
-                avgScore: avgScore.toFixed(2),
-                avgPercentage: Math.min(100, avgScore).toFixed(2)
-            };
-        });
-
-        let totalWeightedScore = 0, totalStudents = 0;
-        classRatings.forEach(cr => {
-            if (parseFloat(cr.avgScore) > 0) {
-                totalWeightedScore += parseFloat(cr.avgScore) * cr.enrolledCount;
-                totalStudents += cr.enrolledCount;
-            }
-        });
-        const overallSET = totalStudents > 0
-            ? Math.min(100, totalWeightedScore / totalStudents).toFixed(2) : '—';
+        // §8.3 maths comes from computeWeightedSET (admin-scoring.js) — the same
+        // function Annex C, Annex D and the FER use. This block used to repeat it
+        // here, which is how the Reports table could disagree with the printed
+        // forms; it also had no teacherId filter, so a reassigned subject brought
+        // the previous teacher's ratings along with it.
+        const agg = computeWeightedSET(teacher.id, evalInActiveTerm);
+        const classRatings = agg.classes.map(c => ({
+            subjectCode: c.subjectCode, subjectName: c.subjectName,
+            enrolledCount: c.enrolledCount, evalCount: c.evalCount,
+            avgScore: c.avgScore,
+            avgPercentage: c.percentage
+        }));
+        const overallSET = agg.totalStudents > 0 ? agg.overallSET : '—';
 
         const supervisorEvals = evals.filter(e =>
             e.teacherId === teacher.id && e.evaluatorType === 'supervisor'

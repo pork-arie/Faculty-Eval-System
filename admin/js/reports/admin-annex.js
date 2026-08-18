@@ -353,24 +353,23 @@ window.buildAnnexCContent = function(teacherId) {
     });
 
 
-    let totalStudents = 0;
-    let totalWeightedScore = 0;
+    // Section B now comes from computeWeightedSET (admin-scoring.js) — the SAME
+    // function Reports, the FER and Annex D use. This block used to do its own
+    // maths and differed on two points: it counted a class nobody evaluated in
+    // the divisor (dragging the rating down) and it did not subtract exempted
+    // students. That is why Annex C and Annex D, printed from the same button
+    // for the same faculty, could carry different overall SET ratings.
+    const setAgg = computeWeightedSET(teacherId, inTerm);
+    const totalStudents = setAgg.totalStudents;
+    const totalWeightedScore = setAgg.totalWeighted;
 
-    const classBreakdown = subjects.map((sub, idx) => {
-        const classEvals = evals.filter(e => e.subjectId === sub.id);
-        const enrolledIds = (sub.enrolledIds || []).filter(id => students.find(s => s.id === id));
-        const enrolledCount = enrolledIds.length;
-        const avgScore = classEvals.length > 0 ? classEvals.reduce((a, b) => a + b.totalScore, 0) / classEvals.length : 0;
-        const weightedScore = avgScore * enrolledCount;
-        totalStudents += enrolledCount;
-        totalWeightedScore += weightedScore;
-        // 2 decimals, not 0: the printed form carries 3304.00, and rounding the
-        // weighted score to a whole number loses precision the TOTAL and the
-        // overall SET rating are then computed from.
-        return { seq: idx + 1, sub, yearSection: annexYearSection(sub, students),
-                 enrolledCount, evalCount: classEvals.length,
-                 avgScore: avgScore.toFixed(2), weightedScore: weightedScore.toFixed(2) };
-    });
+    // 2 decimals, not 0: the printed form carries 3304.00, and rounding the
+    // weighted score to a whole number loses precision the TOTAL and the
+    // overall SET rating are then computed from.
+    const classBreakdown = setAgg.classes.map(c =>
+        ({ seq: c.seq, sub: c.sub, yearSection: annexYearSection(c.sub, students),
+           enrolledCount: c.enrolledCount, evalCount: c.evalCount,
+           avgScore: c.avgScore, weightedScore: c.weightedScore }));
 
     // Year/Section is built from each enrolled student's course + year + section,
     // so a course value that is not one of your registered courses prints straight

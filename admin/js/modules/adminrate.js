@@ -45,7 +45,8 @@ window.SUPERVISOR_CATEGORIES = [
 
 // REMOVED duplicate getRemarksColor() — byte-identical to the copy in admin.js.
 
-// Calculate final rating: 60% Student + 40% Supervisor
+// Calculate final rating: institutional 60/40 composite (NOT a CMO 19 formula —
+// the CMO reports SET and SEF separately). Owned by admin-scoring.js.
 
 
 // Check and auto-finalize evaluation period
