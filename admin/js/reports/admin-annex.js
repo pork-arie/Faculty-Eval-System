@@ -363,13 +363,37 @@ window.buildAnnexCContent = function(teacherId) {
     const totalStudents = setAgg.totalStudents;
     const totalWeightedScore = setAgg.totalWeighted;
 
+    // ONE ROW PER YEAR/SECTION, as on the signed form: CE 422 / BSCE 4A and
+    // CE 422 / BSCE 4B are two rows, not one row reading "BSCE 4A, BSCE 4B".
+    // Rows are built from who RESPONDED, so the section figures always add back
+    // up to the class total and the TOTAL row is unchanged by the split. A class
+    // nobody evaluated still gets one row (count 0) rather than disappearing.
+    //
     // 2 decimals, not 0: the printed form carries 3304.00, and rounding the
     // weighted score to a whole number loses precision the TOTAL and the
     // overall SET rating are then computed from.
-    const classBreakdown = setAgg.classes.map(c =>
-        ({ seq: c.seq, sub: c.sub, yearSection: annexYearSection(c.sub, students),
-           enrolledCount: c.enrolledCount, evalCount: c.evalCount,
-           avgScore: c.avgScore, weightedScore: c.weightedScore }));
+    let _seq = 0;
+    const classBreakdown = [];
+    setAgg.classes.forEach(c => {
+        (c.sections || []).forEach(sec => {
+            classBreakdown.push({
+                seq: ++_seq,
+                sub: c.sub,
+                yearSection: sec.yearSection,
+                count: sec.count,
+                enrolledCount: c.enrolledCount,
+                evalCount: c.evalCount,
+                avgScore: sec.rated ? sec.avgScore : '\u2014',
+                weightedScore: sec.rated ? sec.weightedScore : '0.00'
+            });
+        });
+    });
+
+    // Response rate, printed under the table. Column (3) counts respondents, so
+    // without this the form gives no way to see that 8 of 39 answered - and a
+    // reader comparing it against the class roll would think the roll was wrong.
+    const _rollTotal = setAgg.classes.reduce((n, c) => n + c.enrolledCount, 0);
+    const _respTotal = setAgg.classes.reduce((n, c) => n + c.evalCount, 0);
 
     // Year/Section is built from each enrolled student's course + year + section,
     // so a course value that is not one of your registered courses prints straight
@@ -491,7 +515,7 @@ window.buildAnnexCContent = function(teacherId) {
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.seq}</td>
                     <td style="padding:5px;border:1px solid #ccc;font-style:italic;font-size:0.78rem;word-break:break-word;">${escapeHtml(cr.sub.code)}</td>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;word-break:break-word;">${escapeHtml(cr.yearSection)}</td>
-                    <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.enrolledCount}</td>
+                    <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.count}</td>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.avgScore}</td>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-weight:600;font-size:0.78rem;">${cr.weightedScore}</td>
                 </tr>`).join('') : `<tr><td colspan="6" style="padding:10px;text-align:center;color:#888;font-size:0.8rem;">No regular-load subjects.</td></tr>`}
@@ -533,6 +557,7 @@ window.buildAnnexCContent = function(teacherId) {
         <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">D. SET and SEF Ratings</h4>
         <p style="font-size:0.75rem;color:#555;margin:0 0 8px;padding:0 4px;">
             <strong>Computation:</strong> Calculate the Overall SET Rating by dividing the total Weighted SET Score by the total number of students (${totalWeightedScore.toFixed(2)} ÷ ${totalStudents} = ${overallSET}).
+            <br/><span style="font-size:0.72rem;">Column (3) counts the students who submitted an evaluation: ${_respTotal} of ${_rollTotal} enrolled${_rollTotal ? ' (' + Math.round(_respTotal / _rollTotal * 100) + '%)' : ''}.</span>
         </p>
         <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #ccc;table-layout:fixed;">
             <colgroup><col style="width:50%"/><col style="width:50%"/></colgroup>

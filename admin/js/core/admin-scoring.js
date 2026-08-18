@@ -55,6 +55,92 @@ window.getActiveSY = function() {
 // annexEvalInTerm and isStudentExempted are resolved at CALL time, not load time:
 // this file loads before adminEval.js defines them, but nothing calls this until
 // the dashboard is running, by which point both exist.
+// Column (3) of Annex C, "No. of Students" - what the class average is weighted by.
+//
+//   'respondents' (default) - how many students actually evaluated that class.
+//   'enrolled'              - the class roll, minus §8.2 exemptions.
+//
+// The CMO's worked example assumes full participation (§8.1 makes evaluation
+// mandatory), so the two agree there and it does not say which to use when they
+// diverge. They diverge badly in practice: weighting an average built from 8
+// responses by a roll of 39 asserts 31 ratings that were never given, and the
+// TOTAL column then stops being the sum of the ratings actually collected.
+// 'respondents' keeps every printed figure reproducible from the responses in
+// hand, which is the version to defend. Switch this one word if your office
+// rules otherwise.
+const SET_WEIGHT_BY = 'respondents';
+
+// Year/Section label for one student, e.g. "BSIT 3A". Mirrors annexYearSection
+// in admin-annex.js; courseShorthand lives there and that file loads later, so
+// it is resolved at call time, not at load time.
+function _sectionLabel(st) {
+    if (!st) return '\u2014';
+    const course = (typeof courseShorthand === 'function')
+        ? courseShorthand(st.course) : String(st.course || '');
+    const yr  = String(st.year || '').match(/\d+/);
+    const sec = String(st.section || '').trim().toUpperCase();
+    return (course + ' ' + (yr ? yr[0] : '') + sec).trim() || '\u2014';
+}
+
+// Splits one class into its year/sections so Annex C can print a row each, the
+// way the signed form does. The per-section figures ALWAYS add back up to the
+// class total under either SET_WEIGHT_BY setting - which is the whole point of
+// splitting here rather than in the report:
+//
+//   'respondents' - a section's count is how many of its students answered.
+//   'enrolled'    - a section's count is how many it enrols, so a section that
+//                   answered nothing still occupies its share of the divisor.
+//
+// A class nobody evaluated gets one row (count 0) rather than disappearing.
+function _setSectionRows(sub, classEvals, students) {
+    const byId = {};
+    students.forEach(s => { byId[s.id] = s; });
+    const byEnrolled = (SET_WEIGHT_BY === 'enrolled');
+
+    // Scores actually given, grouped by the responder's year/section.
+    const scores = {};
+    classEvals.forEach(e => {
+        const label = _sectionLabel(byId[e.studentId]);
+        (scores[label] = scores[label] || []).push(parseFloat(e.totalScore) || 0);
+    });
+
+    // Roll size per year/section, needed for the 'enrolled' setting and for the
+    // label of a class with no responses at all.
+    const roll = {};
+    (sub.enrolledIds || []).forEach(id => {
+        const st = byId[id];
+        if (!st) return;
+        if (typeof isStudentExempted === 'function' && isStudentExempted(id, sub.id)) return;  // §8.2
+        const label = _sectionLabel(st);
+        roll[label] = (roll[label] || 0) + 1;
+    });
+
+    if (!classEvals.length) {
+        const labels = Object.keys(roll).sort();
+        return [{
+            yearSection: labels.length ? labels.join(', ') : '\u2014',
+            count: 0, avgScore: '0.00', weightedScore: '0.00', rated: false
+        }];
+    }
+
+    const labels = byEnrolled
+        ? Object.keys(roll).sort()          // every section on the roll
+        : Object.keys(scores).sort();       // only sections that answered
+
+    return labels.map(label => {
+        const given = scores[label] || [];
+        const avg   = given.length ? given.reduce((a, b) => a + b, 0) / given.length : 0;
+        const count = byEnrolled ? (roll[label] || 0) : given.length;
+        return {
+            yearSection:   label,
+            count:         count,
+            avgScore:      avg.toFixed(2),
+            weightedScore: (avg * count).toFixed(2),
+            rated:         given.length > 0
+        };
+    });
+}
+
 window.computeWeightedSET = function(facultyId, termFilter) {
     const inTerm = (typeof termFilter === 'function') ? termFilter
                  : ((typeof annexEvalInTerm === 'function') ? annexEvalInTerm : () => true);
@@ -86,23 +172,37 @@ window.computeWeightedSET = function(facultyId, termFilter) {
         const avgScore = classEvals.length
             ? classEvals.reduce((a, b) => a + (parseFloat(b.totalScore) || 0), 0) / classEvals.length
             : 0;
+
+        // One entry per year/section - Annex C prints a row each.
+        const sections = _setSectionRows(sub, classEvals, students);
+
+        // The class figures are the SUM OF ITS OWN ROWS, exactly as the printed
+        // form adds column (3) and column (3x4) down the page. Computing the
+        // class total independently (pooled average x head count) disagrees with
+        // the rows whenever two sections rate differently and the weight is the
+        // roll rather than the responses - the table would then not add up.
+        const weight = sections.reduce((n, r) => n + r.count, 0);
+        const weighted = sections.reduce((n, r) => n + parseFloat(r.weightedScore), 0);
+
         return {
             seq:           idx + 1,
             sub,
             subjectId:     sub.id,
             subjectCode:   sub.code,
             subjectName:   sub.name,
-            enrolledCount,
-            evalCount:     classEvals.length,
+            enrolledCount,                      // roll size, for the response rate
+            evalCount:     classEvals.length,   // how many actually responded
+            weight,                             // what column (3) prints
             rated:         classEvals.length > 0,
             avgScore:      avgScore.toFixed(2),
             percentage:    Math.min(100, avgScore).toFixed(2),
-            weightedScore: (avgScore * enrolledCount).toFixed(2)
+            weightedScore: weighted.toFixed(2),
+            sections:      sections
         };
     });
 
     const rated         = classes.filter(c => c.rated);
-    const totalStudents = rated.reduce((n, c) => n + c.enrolledCount, 0);
+    const totalStudents = rated.reduce((n, c) => n + c.weight, 0);
     const totalWeighted = rated.reduce((n, c) => n + parseFloat(c.weightedScore), 0);
 
     return {
