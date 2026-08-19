@@ -202,17 +202,15 @@ window.renderSupervisorList = function(search = '') {
   tbody.innerHTML = html;
 };
 
-window.resetSupervisorPassword = function(supervisorId) {
+// See saveResetPass in admin-students.js - this had the same bug. Writing
+// t.password stopped changing anything the moment login moved to Firebase Auth.
+window.resetSupervisorPassword = async function(supervisorId) {
   const teachers = getData('teachers', []);
   const t = teachers.find(t => t.id === supervisorId);
   if (!t) return;
-  const newPass = prompt(`Reset password for ${t.name}.\nLeave blank to reset to default (their ID: ${t.tid}):`);
+  const newPass = prompt(`Reset password for ${t.name}.\nLeave blank to reset to their Teacher ID (${t.tid}):`);
   if (newPass === null) return;
-  const finalPass = newPass.trim() || t.tid;
-  t.password = finalPass;
-  setData('teachers', teachers);
-  addAudit('Reset Supervisor Password', `Reset password for: ${t.name} (${t.tid})`);
-  showToast(`Password reset to: ${finalPass}`, 'success');
+  await resetLoginPassword('supervisor', t, newPass);
   renderSupervisorList();
 };
 

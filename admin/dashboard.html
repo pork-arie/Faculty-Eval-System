@@ -985,10 +985,15 @@ window.addEventListener('load', () => {
         <div class="modal-header"><h3>Reset Password</h3><button class="modal-close" onclick="closeModal('resetPassModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
         <div class="modal-body">
           <p style="font-size:0.82rem;color:var(--muted);margin-bottom:16px;">Resetting for: <strong id="resetPassName"></strong></p>
-          <div class="form-group"><label class="form-label">New Password</label><input class="form-control" id="resetPassInput" placeholder="Enter new password"/></div>
-          <div class="form-group" style="margin-bottom:0"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.82rem;font-weight:500;"><input type="checkbox" id="forceResetCheck" style="accent-color:var(--primary)"/>Force student to change password on next login</label></div>
+          <div class="form-group"><label class="form-label">New Password</label><input class="form-control" id="resetPassInput" placeholder="Leave blank to reset to their Student ID"/></div>
+          <p style="font-size:0.76rem;color:var(--muted);line-height:1.5;margin:0;">
+            Logins are held by Firebase Authentication, not in the student record. This
+            always flags the account so a new password must be set at next login; whether
+            the credential itself changes here depends on the Cloud Function being deployed
+            &mdash; you will be told either way.
+          </p>
         </div>
-        <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('resetPassModal')">Cancel</button><button class="btn btn-primary" onclick="saveResetPass()">Reset</button></div>
+        <div class="modal-footer"><input type="checkbox" id="forceResetCheck" checked style="display:none;"/><button class="btn btn-ghost" onclick="closeModal('resetPassModal')">Cancel</button><button class="btn btn-primary" onclick="saveResetPass()">Reset</button></div>
       </div>
     </div>
 
@@ -1082,7 +1087,7 @@ window.addEventListener('load', () => {
           </div>
           <!-- Password field — only visible when facultyType is supervisor -->
           <div class="form-group" id="tchPasswordGroup" style="display:none;">
-            <label class="form-label">Supervisor Login Password</label>
+            <label class="form-label">Supervisor Login Password <span style="font-weight:400;color:var(--muted);font-size:0.75rem;">&mdash; starts a reset; Firebase Auth holds the real credential</span></label>
             <div style="display:flex;gap:8px;align-items:center;">
               <input class="form-control" id="tchPassword" type="text" placeholder="Leave blank to keep current password" style="flex:1;"/>
               <button type="button" class="btn btn-ghost btn-sm" style="white-space:nowrap;font-size:0.75rem;" onclick="resetPasswordToId()">🔑 Reset to ID</button>

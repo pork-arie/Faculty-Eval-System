@@ -712,10 +712,17 @@ async function saveTeacher() {
 
     if (facultyType === 'supervisor') {
       if (pwFieldVal) {
-        // Admin explicitly set a new password
-        teachers[idx].password = pwFieldVal;
-        addAudit('Edit Supervisor', `Updated: ${name} (${tid}) — password changed`);
-        showToast(`Supervisor updated! New password: ${pwFieldVal}`, 'success');
+        // The password box cannot change the credential - Firebase Auth holds it
+        // (see resetLoginPassword in admin-core.js). Saving the other edits here
+        // and routing the password through the proper path stops the modal from
+        // reporting a change the supervisor will never see.
+        teachers[idx].password = '';
+        setData('teachers', teachers);
+        addAudit('Edit Supervisor', `Updated: ${name} (${tid}) — password reset requested`);
+        resetLoginPassword('supervisor', teachers[idx], pwFieldVal);
+        closeModal('addTeacherModal');
+        renderTeachers();
+        return;
       } else {
         // Keep existing password; if none exists (e.g. promoted from regular), default to TID
         if (!existing.password) teachers[idx].password = tid;

@@ -233,8 +233,20 @@ function saveStudent() {
     }
     const idx = students.findIndex(s => s.id === editStudentId);
     Object.assign(students[idx], { sid, name, course, year, section, dept }, nameFields);
-    if (pass) students[idx].password = pass;
     addAudit('Edit Student', `Updated: ${name} (${sid})`);
+    // The password box on the EDIT form used to write students[idx].password and
+    // say "Student updated!". For an existing account that field is not the
+    // credential - Firebase Auth is - so the change did nothing and the student
+    // carried on with their old password. Typing one here now starts a real
+    // reset through the same path as the Reset Password button.
+    if (pass) {
+      setData('students', students);
+      showToast('Student updated. Starting password reset\u2026', 'info');
+      closeModal('addStudentModal');
+      resetLoginPassword('student', students[idx], pass);
+      if (typeof renderStudents === 'function') renderStudents();
+      return;
+    }
     showToast('Student updated!', 'success');
   } else {
     if (students.find(s => s.sid === sid && !s.deleted)) { showToast('ID already exists.', 'error'); return; }
@@ -283,15 +295,21 @@ function openResetPass(id) {
   openModal('resetPassModal');
 }
 
-function saveResetPass() {
+// The old body wrote students[idx].password and announced "Password reset!".
+// That field has not been the credential since both clients moved to Firebase
+// Auth, so the student kept logging in with their old password while the
+// dashboard showed the new one. resetLoginPassword (admin-core.js) either does
+// a real reset through the Cloud Function or tells the admin what is still
+// needed - it never claims a reset that did not happen.
+async function saveResetPass() {
   const pass = document.getElementById('resetPassInput').value;
-  if (!pass) { showToast('Enter a new password.', 'error'); return; }
   const students = getData('students', []);
   const idx = students.findIndex(s => s.id === resetPassStudentId);
-  students[idx].password = pass;
-  students[idx].forceReset = document.getElementById('forceResetCheck').checked;
-  setData('students', students);
-  addAudit('Reset Password', `Reset for: ${students[idx].name}`);
+  if (idx === -1) { showToast('Student not found.', 'error'); return; }
+
   closeModal('resetPassModal');
-  showToast('Password reset!', 'success');
+  // Blank means "back to their Student ID", which is what the account was
+  // issued with in the first place.
+  await resetLoginPassword('student', students[idx], pass);
+  if (typeof renderStudents === 'function') renderStudents();
 }

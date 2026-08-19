@@ -151,3 +151,34 @@ if (!document.querySelector('#toastStyles')) {
     `;
     document.head.appendChild(style);
 }
+// ============================================================================
+// PASSWORD RESET
+// ============================================================================
+// The admin types a new password, saves, and the person signs in with it. No
+// Cloud Function, no Firebase Console, no forced change.
+//
+// This works because the roster `password` field IS the credential the portal
+// and the app check on every sign-in (rosterPasswordFor in the portal core.js,
+// AuthRepository.kt in the app). Firebase Auth is still used, but only to hand
+// out a stable uid for the security rules and evaluatorUid - its password is a
+// value the client derives and nobody ever types.
+window.resetLoginPassword = async function (kind, record, newPass) {
+    const loginId = String(kind === 'student' ? record.sid : record.tid || '').trim();
+    const wanted  = String(newPass || '').trim() || loginId;
+
+    const col  = kind === 'student' ? 'students' : 'teachers';
+    const rows = getData(col, []);
+    const idx  = rows.findIndex(r => r.id === record.id);
+    if (idx === -1) { showToast('Record not found.', 'error'); return false; }
+
+    rows[idx].password = wanted;
+    // No gate afterwards: the admin chose this password and is handing it over.
+    // Forcing another change the moment they get in only creates support calls;
+    // they can change it themselves from Settings whenever they like.
+    rows[idx].forceReset = false;
+    setData(col, rows);
+
+    addAudit('Reset Password', record.name + ' (' + loginId + ')');
+    showToast(record.name + ' can now sign in with: ' + wanted, 'success');
+    return true;
+};

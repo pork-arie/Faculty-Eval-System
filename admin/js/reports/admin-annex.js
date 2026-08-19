@@ -258,14 +258,34 @@ window.courseShorthand = function(name) {
     const n = String(name || '').trim();
     if (!n) return '';
 
+    // 1. CODE FIRST, description in brackets - the format Manage Courses
+    //    produces: "BPED (Bachelor of Physical Education)",
+    //    "BSED SOCIAL STUDIES (Bachelor of Secondary Education - Social
+    //    Studies)". Whatever sits before the bracket IS the code, so use it.
+    //
+    //    This case used to fall through to the initials branch, which walked
+    //    every word INCLUDING the ones inside the brackets and produced
+    //    "BPEDPE" and "BSEDSSSESS" - the garbled labels on Annex C.
+    const beforeParen = n.split('(')[0].trim();
+    if (n.indexOf('(') > 0 && beforeParen.length >= 2 && beforeParen.length <= 22) {
+        return beforeParen.replace(/\s+/g, ' ').toUpperCase();
+    }
+
+    // 2. CODE IN BRACKETS - "Bachelor of Elementary Education (BEEd)" -> BEED.
+    //    Needed wherever the initials would be wrong or ambiguous, e.g.
+    //    Criminology (BSCrim), which otherwise gives BSC.
     const paren = n.match(/\(([^)]{2,12})\)/);
     if (paren) return paren[1].trim().toUpperCase();
 
+    // 3. Something already short with no spaces is left alone - "BSCE" -> BSCE.
     if (n.indexOf(' ') === -1 && n.length <= 8) return n.toUpperCase();
 
+    // 4. Otherwise take initials, skipping of/in/and/the, and keeping words that
+    //    are ALREADY abbreviations whole, so "BS Nursing" gives BSN, not BN.
     const STOP = ['of', 'in', 'and', 'the', 'for', 'a'];
     let out = '';
-    n.split(/[\s\-\/]+/).filter(Boolean).forEach(function(w) {
+    n.replace(/\([^)]*\)/g, ' ')          // never take initials from a description
+     .split(/[\s\-\/]+/).filter(Boolean).forEach(function(w) {
         if (STOP.indexOf(w.toLowerCase()) > -1) return;
         if (!/[A-Za-z]/.test(w[0])) return;
         out += (w === w.toUpperCase() && w.length <= 4) ? w : w[0];
@@ -767,13 +787,15 @@ window.buildAnnexDContent = function(teacherId) {
     </div>`;
 };
 
-// Reset password to Teacher ID — called from edit teacher modal
+// Fills the password box with the Teacher ID — called from the edit teacher
+// modal. Saving then routes through resetLoginPassword (admin-core.js), which
+// is the only path that can actually change a Firebase Auth credential.
 window.resetPasswordToId = function() {
     const tid = document.getElementById('tchId') ? document.getElementById('tchId').value : '';
     const pwInput = document.getElementById('tchPassword');
     if (pwInput && tid) {
         pwInput.value = tid;
-        showToast('Password field set to Teacher ID. Save to apply.', 'info');
+        showToast('Set to Teacher ID. Save to start the reset.', 'info');
     }
 };
 // REMOVED (dead code): exportEnhancedReport
