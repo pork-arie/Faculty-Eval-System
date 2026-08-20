@@ -1,0 +1,225 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+
+.text {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 700;  
+    font-size: 32px;
+}
+
+.button {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    font-size: 14px;
+}
+
+body{
+ box-sizing: border-box;
+ margin: 0;
+ padding: 0;
+ background-image: url('../nwssu_logo.jpg');
+ background-size: contain;
+ background-position: center;
+ background-repeat: no-repeat;
+ min-height: 100vh;
+ 
+}
+
+.Line{
+    margin-top: 5rem;
+    text-align:center;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 700;  
+    font-size: 32px;
+}
+
+.consanduwa{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    
+    max-width: 1300px;
+    gap: 30px;
+    margin: 0 auto;
+    min-height: 50vh;
+}
+
+.app{
+   background-image: linear-gradient(135deg,#2c4f31,#add908);
+    border-radius: 50px;
+  
+}
+.text{
+    text-align: center;
+    color: white;
+}
+.p{
+    color: white;
+    padding: 0 20px;
+    text-align: center;
+    font-size: 20px;
+        font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 400;  
+    font-size: 20px;
+}
+.link{
+    background-image: linear-gradient(180deg,#2c4f31,#add908);
+    border-radius: 50px;
+    transition: all 0.5s;
+    display: inline;
+    text-align: center;
+    justify-content: center;
+    align-items: center;
+    
+}
+.link:hover{
+    transform: scale(1.01);
+    box-shadow: 0 6px 17px rgba(0, 0, 0, 0.2);
+}
+
+.l-con{
+   text-align: center;
+}
+.global{
+    padding-top: 80px;
+    width: 200px;
+    height: 200px;
+    color: white;  
+}
+
+
+.button{
+    
+    text-align: center;
+    background-color: white;
+    border-radius: 25px;
+    width: 150px;
+    padding: 20px 25px;
+    margin: 0 auto;
+    margin-bottom: 6px;
+    transition: all 0.5s;
+    cursor: pointer;
+}
+.pb{
+    text-align: center;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+.button:hover{
+    transform: scale(1.05);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.about{
+    background-color: #2c4f31;
+    height: 200px;
+    margin: 20px 100px;
+    margin-top: 4rem;
+    border-radius: 30px;
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 80px;
+    align-items: center;
+    
+}
+
+.p1{
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 400;  
+    font-size: 20px;
+    color: white;
+    
+}
+
+
+
+.n1{
+    text-align:center;
+    color: white;  
+    background-color: transparent;
+    display: flex;
+    border: 3px solid;
+    border-radius: 100px;
+    width: 100px;
+    height: 100px;
+    justify-content: center;
+    margin-top: 15px;
+
+}
+
+.ah2{
+   padding: 15px;
+}
+.c1, .c2, .c3{
+    margin: 0 50px;
+    
+}
+
+/*qr */
+.app{
+    justify-content: center;
+    align-items: center;
+    transition: all 0.5s;
+}
+.l-app{
+    
+    text-align: center;
+
+}
+
+.app:hover{
+    transform: scale(1.03);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+.QR{
+    width: 250px;
+    height: 250px;
+    padding: 20px;
+    color: white;
+}
+
+.lbutton{
+    
+    text-align: center;
+    margin: 0 auto;
+    background-color: white;
+    padding: 15px 25px;
+    display: flex;
+    width: 200px;
+    justify-content: center;
+
+    border-radius: 35px;
+    margin-bottom: 15px;
+    transition: all 0.5s;
+    gap: 5px;
+
+   
+}
+.lbutton:hover{
+    transform: scale(1.05);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.lpb{
+ text-decoration: none;
+ color: black;
+ align-items: center;
+ margin-bottom: 10px;
+ display: inline-flex;
+ font-family: 'JetBrains Mono', monospace;
+ width: fit-content;
+
+
+
+
+}
+
+.download{
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    display: block;
+}
+
+
+

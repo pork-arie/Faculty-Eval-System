@@ -772,7 +772,7 @@ window.addEventListener('load', () => {
         <div class="dept-table-section">
           <div class="dept-table-header">
             <div style="display:flex;align-items:center;gap:8px;">
-              <h4>👨‍🏫 Faculty</h4>
+              <h4>Faculty</h4>
               <span class="count-badge" id="deptTeacherCount">0</span>
             </div>
             <button class="btn btn-ghost btn-sm" onclick="showDeptFullList(window.currentDept, 'teachers')" title="Open the full faculty list">View all</button>
@@ -789,7 +789,7 @@ window.addEventListener('load', () => {
         <div class="dept-table-section">
           <div class="dept-table-header">
             <div style="display:flex;align-items:center;gap:8px;">
-              <h4>📚 Subjects</h4>
+              <h4>Subjects</h4>
               <span class="count-badge" id="deptSubjectCount">0</span>
             </div>
             <button class="btn btn-ghost btn-sm" onclick="showDeptFullList(window.currentDept, 'subjects')" title="Open the full subjects list">View all</button>
@@ -916,7 +916,12 @@ window.addEventListener('load', () => {
     <div class="page" id="page-feedback">
       <div class="page-header">
         <div class="page-title"><h1>Student Feedback</h1><p>Student comments submitted during instructor evaluations</p></div>
-        <div id="feedbackStats"></div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <div id="feedbackStats"></div>
+          <!-- Only appears when there is something to clean up; see
+               renderFeedbackPage in adminfeatures.js -->
+          <button class="btn btn-ghost btn-sm" id="feedbackPurgeBtn" onclick="purgeOrphanFeedback()" style="display:none;color:var(--danger,#dc2626);border-color:#fecaca;"></button>
+        </div>
       </div>
 
       <!-- Dept filter pills -->

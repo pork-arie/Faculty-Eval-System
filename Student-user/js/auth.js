@@ -1,102 +1,131 @@
 // ============================================================================
-// auth.js
-// ----------------------------------------------------------------------------
-// Everything to do with who you are: sign-in, first-login provisioning,
-// the forced password change, changing your password later, and sign-out.
-//
-// Load order in index.html is core.js -> auth.js -> app.js and must stay that
-// way: auth.js and app.js both read the shared state and the Firebase clients
-// that core.js declares.
+// auth.js — kun hin-o ka: pag-login, paghimo han account ha syahan nga login,
+// pinugos nga pagbag-o han password, pagbag-o liwat, ngan pag-logout.
+// Sunod han pagkarga: core.js -> auth.js -> app.js.
 // ============================================================================
 
 // ============================================================
 // AUTHENTICATION
 // ------------------------------------------------------------
-// This portal used to talk to Firestore with no signed-in user at all: it only
-// loaded firebase-app and firebase-firestore, and checked passwords in
-// JavaScript with `data.password !== pass`. Two consequences:
-//   * every Firestore rule guarded by request.auth != null had to be left open,
-//     which meant the whole students collection - including that plaintext
-//     password field - was readable by anyone with the project ID;
-//   * a student's own records could not be scoped in the rules, because there
-//     was no uid to compare against.
+// Hadto, waray gud naka-login nga user hini nga portal — ginkukumpara la an
+// password ha JavaScript (`data.password !== pass`). Salit kinahanglan abrido
+// an mga rule, ngan mababasa han bisan hin-o an bug-os nga students collection
+// upod na an plaintext nga password.
 //
-// It now signs in through Firebase Auth using exactly the scheme the Android
-// app uses - "<id>@nwssu.app" - so one person has ONE credential across both,
-// and Firebase (not this file) stores it salted and hashed.
+// Yana, Firebase Auth na an ginagamit, pareho gud han Android app —
+// "<id>@nwssu.app" — usa la nga password ha duha, ngan an Firebase na (diri
+// ini nga file) an nagtitipig hito, hashed ngan salted.
 const fbAuth = firebase.auth();
 fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function () {});
 
 const APP_DOMAIN = '@nwssu.app';
 
-/** Mirrors AuthRepository.kt: id.lowercase() + APP_DOMAIN. Must not drift. */
+/** Pareho han AuthRepository.kt: id.lowercase() + APP_DOMAIN. Ayaw pagbag-oha. */
 function authEmailFor(id) {
   return String(id || '').trim().toLowerCase() + APP_DOMAIN;
 }
 
 /**
- * Signs in, provisioning the Firebase Auth account on first use.
+ * Pag-login, ngan himoon an Firebase Auth account kun syahan pa ini.
  *
- * Returns { ok, created, error }. `created` matters: on a first-ever login the
- * account is made with whatever password was typed, so the caller MUST then
- * check that password against the roster before letting the person in - see
- * doLogin. Without that check anyone who knows a student ID could claim an
- * unprovisioned account with a password of their choosing. (The Android app
- * does not do this check; it should.)
+ * `created` importante: kun bag-o pa an account, kun ano an gin-type nga
+ * password amo an nahimo. Salit kinahanglan i-check ito kontra han roster
+ * antes pasudlon — kitaa an doLogin. Kun waray ito, bisan hin-o nga maaram
+ * han ID makaangkon han account.
  */
-async function ensureAuth(email, password) {
-  // ---- 1. Try to sign in -------------------------------------------------
+async function ensureAuth(email, typedPassword) {
+  const secret = authSecretFor(email.split('@')[0]);
+
+  // 1. Normal path: sign in with the derived secret. Every account provisioned
+  //    under this build uses it, so this is the case that almost always runs.
   try {
-    await fbAuth.signInWithEmailAndPassword(email, password);
-    return { ok: true, created: false };
+    await fbAuth.signInWithEmailAndPassword(email, secret);
+    return { ok: true, created: false, legacy: false };
   } catch (e) {
     const code = (e && e.code) || '';
-
-    // Errors that are definitely NOT "the account does not exist".
     if (code === 'auth/too-many-requests')
       return { ok: false, error: 'Too many attempts. Please wait a moment and try again.' };
     if (code === 'auth/network-request-failed')
       return { ok: false, error: 'Network error. Check your internet connection.' };
     if (code === 'auth/user-disabled')
       return { ok: false, error: 'This account has been disabled. Contact your administrator.' };
+  }
 
-    // ---- 2. Anything else might mean the account has never been created ----
-    //
-    // This is the part that was wrong. The code only provisioned on
-    // auth/user-not-found, but Firebase's email-enumeration protection - which
-    // is ON BY DEFAULT for projects created recently - deliberately refuses to
-    // reveal whether an address exists. Signing in to an account that does not
-    // exist returns auth/invalid-credential, exactly the same code as a wrong
-    // password. So a student who had never logged in on the web was told
-    // "Incorrect password" no matter what they typed, and was never provisioned.
-    //
-    // The Android app never hit this because it CREATES first and falls back to
-    // sign-in on "email already in use" - it never has to interpret the code.
-    // We cannot distinguish the two cases here, so let createUser decide: if the
-    // account already exists it fails with auth/email-already-in-use, and only
-    // then do we know the password really was wrong.
-    try {
-      await fbAuth.createUserWithEmailAndPassword(email, password);
-      return { ok: true, created: true };
-    } catch (e2) {
-      const c2 = (e2 && e2.code) || '';
-      if (c2 === 'auth/email-already-in-use')
-        return { ok: false, error: 'Incorrect password. Please try again.' };
-      if (c2 === 'auth/weak-password')
-        return { ok: false, error: 'Your ID is too short to be used as a first-time password (Firebase requires 6 characters). Ask your administrator to set one for you.' };
-      if (c2 === 'auth/invalid-email')
-        return { ok: false, error: "That ID can't be used for login. Contact your administrator." };
-      if (c2 === 'auth/network-request-failed')
-        return { ok: false, error: 'Network error. Check your internet connection.' };
-      return { ok: false, error: 'Sign-in failed. Please try again.' };
+  // 2. LEGACY ACCOUNT. Created before this change, so Auth still holds whatever
+  //    password the person chose back then. If what they typed opens it, sign
+  //    in and quietly move the account onto the derived secret - after this
+  //    once, an admin password change works for them like everyone else.
+  try {
+    await fbAuth.signInWithEmailAndPassword(email, typedPassword);
+    try { await fbAuth.currentUser.updatePassword(secret); }
+    catch (e) { /* migrate next time; they are signed in either way */ }
+    return { ok: true, created: false, legacy: true };
+  } catch (e) { /* not a legacy password either - fall through */ }
+
+  // 3. No account yet: create it on the derived secret. Whether the person is
+  //    ALLOWED in is decided by doLogin against the roster password, not here.
+  try {
+    await fbAuth.createUserWithEmailAndPassword(email, secret);
+    return { ok: true, created: true, legacy: false };
+  } catch (e2) {
+    const c2 = (e2 && e2.code) || '';
+    if (c2 === 'auth/email-already-in-use') {
+      // LOCKED LEGACY ACCOUNT. It exists, the derived secret does not open it,
+      // and neither does what they typed - so it still holds a password nobody
+      // remembers, which is exactly why the admin is resetting them. A browser
+      // cannot reset another account's password, so rather than leave this
+      // person permanently unable to log in, move them onto a SECOND Auth
+      // account at a suffixed address that is on the derived secret. The old
+      // account is abandoned.
+      //
+      // COST: the new account has a new uid, so evaluations this person
+      // submitted earlier stop appearing in their own history. The admin
+      // dashboard and Annex C read by studentId and are unaffected.
+      const alt = fallbackEmailFor(email.split('@')[0]);
+      try {
+        await fbAuth.signInWithEmailAndPassword(alt, secret);
+        return { ok: true, created: false, legacy: false };
+      } catch (e3) { /* not provisioned yet - make it below */ }
+      try {
+        await fbAuth.createUserWithEmailAndPassword(alt, secret);
+        return { ok: true, created: true, legacy: false };
+      } catch (e4) {
+        return { ok: false, error: 'Sign-in failed. Please contact your administrator.' };
+      }
     }
+    if (c2 === 'auth/invalid-email')
+      return { ok: false, error: "That ID can't be used for login. Contact your administrator." };
+    if (c2 === 'auth/network-request-failed')
+      return { ok: false, error: 'Network error. Check your internet connection.' };
+    return { ok: false, error: 'Sign-in failed. Please try again.' };
   }
 }
 
-/** Undoes a just-provisioned account when the roster password did not match. */
+/** Tanggalon an bag-o la nga account kun diri tugma an password ha roster. */
 async function discardProvisionedUser() {
   try { if (fbAuth.currentUser) await fbAuth.currentUser.delete(); }
   catch (e) { try { await fbAuth.signOut(); } catch (_) {} }
+}
+
+// Records the signed-in account's uid on the person's roster document.
+//
+// The Android app has always done this (claimUid in AuthRepository); the portal
+// never did, so anyone who only uses the web had no uid on file. That matters
+// because evaluations are keyed by evaluatorUid: if an account is ever replaced
+// - which the .r2 fallback does for a locked legacy login - the admin needs the
+// current uid to repoint their old submissions, and for portal-only users there
+// was nothing to repoint from.
+//
+// Deliberately silent on failure. It is bookkeeping, not something worth
+// blocking a login over.
+async function claimUid(collection, docId) {
+  try {
+    const uid = fbAuth.currentUser && fbAuth.currentUser.uid;
+    if (!uid || !docId) return;
+    await db.collection(collection).doc(docId).update({ uid: uid });
+  } catch (e) {
+    console.warn('Could not record uid (non-fatal):', e && e.message);
+  }
 }
 
 async function logLogin(username, success, loginType) {
@@ -158,18 +187,15 @@ async function doLogin() {
         return;
       }
 
-      // Already authenticated at Step 0. The roster password is consulted only
-      // on a FIRST-EVER login, to authorise provisioning.
-      if (auth.created) {
-        // Supervisors promoted before the password field existed default to
-        // their Teacher ID, matching the previous behaviour.
-        const storedPassword = data.password || data.tid;
-        if (storedPassword && storedPassword !== pass) {
-          await discardProvisionedUser();
-          await logLogin(sid, false, 'supervisor');
-          showLoginError('Incorrect password. Default password is your Teacher ID unless changed by admin.');
-          return;
-        }
+      // THE password check. The roster field is the credential now, so it is
+      // verified on EVERY sign-in, not just the first - which is what makes an
+      // admin's change take effect immediately. A blank field means the account
+      // still uses the Teacher ID it was issued with.
+      if (rosterPasswordFor(data) !== pass) {
+        if (auth.created) await discardProvisionedUser(); else await fbAuth.signOut();
+        await logLogin(sid, false, 'supervisor');
+        showLoginError('Incorrect password. Default password is your Teacher ID unless changed by admin.');
+        return;
       }
 
       currentStudent = {
@@ -184,6 +210,7 @@ async function doLogin() {
       sessionStorage.setItem('studentSession', JSON.stringify({
         sid: data.tid, docId: supDoc.id, name: data.name, userType: 'supervisor'
       }));
+      await claimUid('teachers', supDoc.id);
       await logLogin(sid, true, 'supervisor');
       initApp();
       return;
@@ -205,11 +232,11 @@ async function doLogin() {
     // FIX: inactive ≠ deleted. Let the student in; show a warning banner instead of blocking.
     const isInactive = data.status !== 'active';
 
-    // Only on first provisioning: the typed password must match the roster, or
-    // anyone knowing this ID could claim the account with a password of their
-    // own. After this the roster password is never read again and can be dropped.
-    if (auth.created && data.password && data.password !== pass) {
-      await discardProvisionedUser();
+    // THE password check - every sign-in, not just the first. The roster field
+    // is the credential, so whatever the admin sets works on the next attempt.
+    // Blank means the account still uses the Student ID it was issued with.
+    if (rosterPasswordFor(data) !== pass) {
+      if (auth.created) await discardProvisionedUser(); else await fbAuth.signOut();
       await logLogin(sid, false, 'student');
       showLoginError('Incorrect password. Please try again.');
       return;
@@ -217,6 +244,7 @@ async function doLogin() {
 
     currentStudent = { ...data, docId: doc.id, userType: 'student' };
     sessionStorage.setItem('studentSession', JSON.stringify({ sid: data.sid, docId: doc.id, name: data.name, userType: 'student' }));
+    await claimUid('students', doc.id);
     await logLogin(sid, true, 'student');
 
     initApp(isInactive);
@@ -267,18 +295,17 @@ function showLoginError(msg) {
 // INIT APP
 // ============================================================
 // ============================================================
-// FORCED PASSWORD CHANGE
+// PINUGOS NGA PAGBAG-O HAN PASSWORD
 // ------------------------------------------------------------
-// Every account is created with the person's own ID as the password - it is
-// printed on their ID card and it is also their username, so until they change
-// it anyone who knows the ID can sign in as them and submit evaluations in
-// their name. That is the single biggest hole in the system, and it is why the
-// admin has always had a "Force student to change password on next login"
-// checkbox... which nothing ever read. This is that checkbox, wired up.
+// An password han kada account amo la an ira ID — nakasurat ha ira ID card
+// ngan amo liwat an username. Salit samtang diri pa ito ginbabag-o, bisan
+// hin-o nga maaram han ID makakasulod ngan makaka-evaluate ha ira ngaran.
+// Amo ini an checkbox han admin nga "Force student to change password" nga
+// waray gud ginagamit hadto.
 //
-// The gate sits between authentication and the app: the person IS signed in
-// (so they can write their own new password), but no evaluation screen is
-// reachable until the change is done.
+// Naka-butang ini butnga han login ngan han app: nakasulod na hiya (salit
+// puydi na hiya magbutang hin bag-o nga password), pero waray hiya maabot ha
+// bisan ano nga evaluation screen tubtob diri pa ito nahuman.
 function needsPasswordChange(person) {
   if (!person) return false;
   if (person.forceReset === true) return true;
@@ -287,7 +314,9 @@ function needsPasswordChange(person) {
   // feature existed, and anyone the admin reset by hand.
   const id = String(person.sid || person.tid || '').trim().toLowerCase();
   const pw = String(person.password || '').trim().toLowerCase();
-  return !!id && id === pw;
+  // A blank field means the account was issued with the ID as its password and
+  // has not been changed - same situation, so it gates too.
+  return !!id && (pw === '' || pw === id);
 }
 
 function showPasswordGate() {
@@ -319,16 +348,15 @@ async function submitNewPassword() {
 
   btn.disabled = true; btn.textContent = 'Saving…';
 
+  // The roster field IS the credential, so this write is the change that
+  // counts. The Auth password is a derived value nobody types (authSecretFor)
+  // and is deliberately left alone.
+  const col0 = currentStudent.userType === 'supervisor' ? 'teachers' : 'students';
   try {
-    // Firebase Auth holds the credential, so this is the change that counts.
-    await fbAuth.currentUser.updatePassword(pw1);
+    await db.collection(col0).doc(currentStudent.docId)
+            .update({ password: pw1, forceReset: false });
   } catch (e) {
-    const code = (e && e.code) || '';
-    if (code === 'auth/requires-recent-login')
-      return fail('Your session expired. Please sign in again and retry.');
-    if (code === 'auth/weak-password')
-      return fail('That password is too weak. Try a longer one.');
-    return fail('Could not update your password. Please try again.');
+    return fail('Could not save your new password. Please try again.');
   }
 
   // Clear the flag so the gate does not reappear. The roster password field is
@@ -336,16 +364,8 @@ async function submitNewPassword() {
   // now, and leaving a stale plaintext copy behind is the problem we are here
   // to remove. If this write is denied by rules the person is still through -
   // their Auth password did change - so do not block on it.
-  const col = currentStudent.userType === 'supervisor' ? 'teachers' : 'students';
-  try {
-    await db.collection(col).doc(currentStudent.docId).update({ forceReset: false, password: '' });
-    currentStudent.forceReset = false;
-    currentStudent.password = '';
-  } catch (e) {
-    console.warn('Could not clear forceReset:', e.message);
-    currentStudent.forceReset = false;
-    currentStudent.password = '';
-  }
+  currentStudent.forceReset = false;
+  currentStudent.password = pw1;
 
   document.getElementById('pwGate').style.display = 'none';
   showToast('Password updated. Welcome!', 'success');
@@ -371,7 +391,10 @@ async function changePassword() {
     return;
   }
 
-  if (current !== currentStudent.password) {
+  // Compare against the roster credential, allowing for the issued default
+  // (blank field = the ID). Supervisors were previously written to the wrong
+  // collection by this form.
+  if (current !== rosterPasswordFor(currentStudent)) {
     feedback.textContent = 'Current password is incorrect.';
     feedback.style.cssText = 'display:block; color:var(--danger); font-size:0.78rem; margin-bottom:12px;';
     return;
@@ -390,8 +413,11 @@ async function changePassword() {
   }
 
   try {
-    await db.collection('students').doc(currentStudent.docId).update({ password: newPw });
+    const col = currentStudent.userType === 'supervisor' ? 'teachers' : 'students';
+    await db.collection(col).doc(currentStudent.docId)
+            .update({ password: newPw, forceReset: false });
     currentStudent.password = newPw;
+    currentStudent.forceReset = false;
     sessionStorage.setItem('studentSession', JSON.stringify({ sid: currentStudent.sid, docId: currentStudent.docId, name: currentStudent.name }));
 
     feedback.textContent = '✓ Password updated successfully!';

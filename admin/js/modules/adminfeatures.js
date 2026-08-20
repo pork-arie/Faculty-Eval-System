@@ -944,10 +944,74 @@ window.showFeedbackPage = function(deptFilter) {
 let _feedbackDeptFilter = '';
 let _feedbackSearchQuery = '';
 
+// Student evaluations still on the books.
+//
+// Deleting a faculty member or a student is a SOFT delete - the record stays
+// with deleted:true so old reports do not lose their labels - but their
+// evaluations were never filtered here, so a removed teacher kept appearing on
+// this page with their comments. Hidden now, not deleted: the underlying
+// documents are left alone so Annex C for a past term still adds up. Use
+// "Clean up removed faculty" below to delete them for good.
+window._liveFeedbackEvals = function() {
+    const teachers = getData('teachers', []);
+    const subjects = getData('subjects', []);
+    return getData('evaluations', []).filter(function (e) {
+        if (e.evaluatorType === 'supervisor') return false;
+        const sub = subjects.find(function (x) { return x.id === e.subjectId; });
+        const tid = (sub ? sub.teacherId : null) || e.teacherId;
+        const t = teachers.find(function (x) { return x.id === tid; });
+        return !!t && !t.deleted;
+    });
+};
+
+// Evaluations whose faculty no longer exists, or was deleted. These are the
+// ones the page hides.
+window._orphanFeedbackEvals = function() {
+    const live = new Set(_liveFeedbackEvals().map(function (e) { return e.id; }));
+    return getData('evaluations', []).filter(function (e) {
+        return e.evaluatorType !== 'supervisor' && !live.has(e.id);
+    });
+};
+
+// Removes ONE evaluation, from localStorage and from Firestore. The sync helper
+// has no delete path, so without the second call the document comes straight
+// back on the next full sync.
+window.deleteFeedbackEntry = async function(evalId) {
+    if (!confirm('Delete this evaluation permanently?\n\nThe rating and comment are removed and the faculty average is recomputed without them. This cannot be undone.')) return;
+    const evals = getData('evaluations', []);
+    const idx = evals.findIndex(function (e) { return e.id === evalId; });
+    if (idx === -1) { showToast('Already removed.', 'info'); return; }
+    evals.splice(idx, 1);
+    setData('evaluations', evals);
+    try { await deleteDocFromFirestore('evaluations', evalId); }
+    catch (e) { console.warn('Firestore delete failed:', e && e.message); }
+    addAudit('Delete Evaluation', 'Evaluation ' + evalId + ' removed');
+    showToast('Evaluation deleted.', 'success');
+    renderFeedbackPage();
+};
+
+// Deletes every evaluation left behind by a removed faculty member.
+window.purgeOrphanFeedback = async function() {
+    const orphans = _orphanFeedbackEvals();
+    if (!orphans.length) { showToast('Nothing to clean up.', 'info'); return; }
+    if (!confirm('Delete ' + orphans.length + ' evaluation' + (orphans.length !== 1 ? 's' : '')
+        + ' belonging to removed faculty?\n\nThis cannot be undone. Print any Annex C you still need first.')) return;
+
+    const ids = new Set(orphans.map(function (e) { return e.id; }));
+    setData('evaluations', getData('evaluations', []).filter(function (e) { return !ids.has(e.id); }));
+    for (const id of ids) {
+        try { await deleteDocFromFirestore('evaluations', id); }
+        catch (e) { console.warn('Firestore delete failed for', id, e && e.message); }
+    }
+    addAudit('Purge Evaluations', orphans.length + ' evaluation(s) of removed faculty deleted');
+    showToast(orphans.length + ' evaluation(s) deleted.', 'success');
+    renderFeedbackPage();
+};
+
 window.renderFeedbackPage = function() {
     // Include every student evaluation — even ones with no written comment —
     // so faculty who were rated still show up.
-    const allEvals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor');
+    const allEvals = _liveFeedbackEvals();
     const allTeachers = getData('teachers', []);
     const allStudents = getData('students', []);
     const allSubjects = getData('subjects', []);
@@ -976,13 +1040,23 @@ window.renderFeedbackPage = function() {
         feedbackDeptBar.innerHTML = pillHtml;
     }
 
+    // Surface the hidden ones rather than letting them sit invisible forever.
+    const purgeBtn = document.getElementById('feedbackPurgeBtn');
+    if (purgeBtn) {
+        const n = _orphanFeedbackEvals().length;
+        purgeBtn.style.display = n ? '' : 'none';
+        purgeBtn.textContent = 'Clean up ' + n + ' from removed faculty';
+        purgeBtn.title = n + ' evaluation(s) belong to faculty who have been deleted. '
+            + 'They are hidden from this page. Click to delete them permanently.';
+    }
+
     _renderFeedbackList();
 };
 
 window._renderFeedbackList = function() {
     // Include every student evaluation — even ones with no written comment —
     // so a faculty member who was rated still appears here.
-    const allEvals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor');
+    const allEvals = _liveFeedbackEvals();
     const allTeachers = getData('teachers', []);
     const allStudents = getData('students', []);
     const allSubjects = getData('subjects', []);
@@ -1091,6 +1165,10 @@ window._renderFeedbackList = function() {
                         <button class="feedback-printone-btn" onclick="printOneEvaluation('${ev.id}')" title="Print this comment & rating">
                             <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
                             Print
+                        </button>
+                        <button class="feedback-printone-btn" onclick="deleteFeedbackEntry('${ev.id}')" title="Delete this evaluation permanently" style="color:var(--danger,#dc2626);border-color:#fecaca;">
+                            <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+                            Delete
                         </button>
                     </div>
                     ${scoreVal !== null ? `
@@ -1765,7 +1843,7 @@ window.showDeptFullList = function(deptCode, type) {
       };
     });
   } else { // enrolled
-    columns = ['Student ID', 'Name', 'Year & Section', 'Subjects'];
+    columns = ['Student ID', 'Name', 'Course', 'Year & Section', 'Subjects'];
     // Row set is getDeptEnrolledStudentIds(); the loop below only attaches which
     // subjects each one takes, so this page cannot drift from the card again.
     const deptIds = getDeptEnrolledStudentIds(deptCode);
@@ -1793,11 +1871,19 @@ window.showDeptFullList = function(deptCode, type) {
         });
       });
     });
-    // Same order as the Students page - year level, section, then name.
-    const orderedKeys = Object.keys(map).sort((ka, kb) => byYearThenName(map[ka].st, map[kb].st));
+    // Course first, then year, section and name - so a department that runs
+    // several programmes reads one programme at a time instead of interleaving
+    // them by year. See byCourseThenYear in admin-core.js.
+    const orderedKeys = Object.keys(map).sort((ka, kb) => byCourseThenYear(map[ka].st, map[kb].st));
     rows = orderedKeys.map(k => {
       const st = map[k].st, subs = map[k].subs;
       const ys = (st.year || '') + (st.section ? ' - ' + st.section : '');
+      // Short form on screen ("BSIT"), full registered name in the CSV and in
+      // the search text, so a search for either still finds the student.
+      const courseFull  = String(st.course || '');
+      const courseShort = courseFull
+        ? ((typeof courseShorthand === 'function') ? courseShorthand(courseFull) : courseFull)
+        : '\u2014';
       // Columns are unchanged. The only visible addition is a chevron in the
       // Subjects cell, so the row reads as expandable without altering the table.
       // The codes live in the dropdown now, not here. The cell keeps a plain
@@ -1820,9 +1906,10 @@ window.showDeptFullList = function(deptCode, type) {
         + '</div>').join('');
       return {
         id: st.id,
-        s: ((st.sid || '') + ' ' + (st.name || '') + ' ' + subs.map(x => x.code).join(' ')).toLowerCase(),
-        cells: [mono(st.sid), strong(st.name), esc(ys), summary],
-        plain: [st.sid || '', st.name || '', ys, subs.map(x => x.code).join(', ')],
+        s: ((st.sid || '') + ' ' + (st.name || '') + ' ' + courseFull + ' ' + courseShort
+            + ' ' + subs.map(x => x.code).join(' ')).toLowerCase(),
+        cells: [mono(st.sid), strong(st.name), esc(courseShort), esc(ys), summary],
+        plain: [st.sid || '', st.name || '', courseFull, ys, subs.map(x => x.code).join(', ')],
         detail: detail || '<div style="font-size:0.8rem;color:var(--muted);">No subjects.</div>'
       };
     });

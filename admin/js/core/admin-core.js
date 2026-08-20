@@ -100,6 +100,23 @@ window.byYearThenName = function(a, b) {
     return byName(a, b);
 };
 
+// Course first, then the usual year -> section -> name. Used where a list mixes
+// programmes, so BSIT 1A sits with the rest of BSIT rather than beside BSCS 1A.
+// courseShorthand lives in admin-annex.js, which loads later, so it is resolved
+// at call time and falls back to the raw value if it is not there yet.
+window.byCourseThenYear = function(a, b) {
+    const label = function(x) {
+        const raw = String((x && x.course) || '');
+        return (typeof courseShorthand === 'function') ? courseShorthand(raw) : raw.toUpperCase();
+    };
+    const ca = label(a), cb = label(b);
+    // Students with no course recorded sort last rather than first, where an
+    // empty string would otherwise put them.
+    if (!ca !== !cb) return ca ? -1 : 1;
+    if (ca !== cb) return ca.localeCompare(cb, undefined, { sensitivity: 'base', numeric: true });
+    return byYearThenName(a, b);
+};
+
 window.addAudit = function(action, detail) {
     const log = getData('auditLog', []);
     log.unshift({

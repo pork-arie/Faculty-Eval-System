@@ -26,10 +26,7 @@ function renderEvalControl() {
         <div class="form-row">
           <div class="form-group"><label class="form-label">Evaluation Deadline</label><input class="form-control" type="date" id="deadlineInput" value="${period.deadline}" onchange="updatePeriodSettings()"/></div>
         </div>
-        <div class="info-row" style="margin-top:12px; padding:10px; background:#f0fdf4; border-radius:8px;">
-          <span class="info-label">📌 Note:</span>
-          <span class="info-value">All officially enrolled students can rate. No submission limits per CMO guidelines.</span>
-        </div>
+
       </div>
     </div>
     <div class="card">

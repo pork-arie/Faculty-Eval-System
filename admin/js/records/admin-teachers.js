@@ -658,7 +658,13 @@ async function saveTeacher() {
   const nameParts = tchNameParts();
   const name = buildName(nameParts);
   const dept = document.getElementById('tchDept').value;
-  const category = (document.getElementById('tchCategory') || {}).value || '';
+  // #tchCategory does not exist in dashboard.html - the field was removed from
+  // the modal but these reads were left behind, so `category` was always ''.
+  // Harmless on ADD; on EDIT it silently WIPED whatever category the record
+  // already had, every single save. Read it only if the element is really
+  // there, and leave the stored value alone otherwise (see saveTeacher below).
+  const catEl_    = document.getElementById('tchCategory');
+  const category  = catEl_ ? (catEl_.value || '') : null;
   const rank = (document.getElementById('tchRank') || {}).value || '';
   const facultyType = _pendingFacultyType || 'regular';
 
@@ -701,7 +707,8 @@ async function saveTeacher() {
     teachers[idx].name = name;
     Object.assign(teachers[idx], nameFields);
     teachers[idx].dept = dept;
-    teachers[idx].category = category;
+    // null means "no such field on the form" - keep what is already stored.
+    if (category !== null) teachers[idx].category = category;
     teachers[idx].rank = rank;
     teachers[idx].facultyType = facultyType;
     teachers[idx].deptRole = deptRole;
@@ -748,7 +755,7 @@ async function saveTeacher() {
       ...nameFields,
       // Home department follows the first supervisory assignment for supervisors.
       dept: supervisedDepts.length ? supervisedDepts[0].dept : dept,
-      category,
+      category: category || '',
       rank,
       facultyType,
       deptRole,

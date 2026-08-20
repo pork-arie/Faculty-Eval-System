@@ -1,17 +1,12 @@
 // ============================================================================
-// app.js
-// ----------------------------------------------------------------------------
-// The application itself once you are signed in - dashboard, evaluate,
-// history, feedback, profile and the supervisor SEF screens.
-//
-// Load order in index.html is core.js -> auth.js -> app.js and must stay that
-// way: auth.js and app.js both read the shared state and the Firebase clients
-// that core.js declares.
+// dashboard, evaluate, history,
+// feedback, profile, ngan an SEF screens sa supervisor.
+// core.js -> auth.js -> app.js.
 // ============================================================================
 
 async function initApp(isInactive = false) {
-  // Gate first: signed in, but nothing else is reachable until the default
-  // password is replaced.
+  // Gate anay: nakasulod na, pero waray maaabot tubtob diri pa nababag-o an
+  // default nga password.
   if (needsPasswordChange(currentStudent)) {
     window._pendingInactive = isInactive;
     showPasswordGate();
@@ -20,6 +15,11 @@ async function initApp(isInactive = false) {
 
   document.getElementById('loginPage').style.display  = 'none';
   document.getElementById('app').style.display = 'flex';
+
+  // Pull the admin's published Annex A / Annex B before ANY form is rendered, so
+  // the portal always asks the same questions the dashboard published and the
+  // app uses. Falls back to the built-in verbatim copies if the query fails.
+  await loadPublishedQuestions();
 
   const isSupervisor = currentStudent.userType === 'supervisor';
 
@@ -52,15 +52,14 @@ async function initApp(isInactive = false) {
     return;
   }
 
-  // Load data.
-  //
-  // Guarded: a single rejected query used to throw straight out of initApp, so
-  // nothing after this line ran - the stat cards stayed on "—", the evaluation
-  // period stayed on "Loading period info…" and the subject list stayed empty,
-  // with no clue anywhere on screen that a request had been refused. The
-  // dashboard now renders whatever did load and says plainly when it could not.
+
   try {
     await loadStudentData();
+    // Ipakita kun may query nga napakyas — diri la blangko nga pahina.
+    if (window._loadErrors && window._loadErrors.length) {
+      showLoadBanner('Diri nakuha an iba nga datos: ' + window._loadErrors.join(', ')
+        + '. Kitaa an Console (F12) para ha detalye.');
+    }
   } catch (e) {
     console.error('Could not load your subjects/evaluations:', e);
     const msg = (e && e.code === 'permission-denied')
@@ -81,19 +80,18 @@ async function initApp(isInactive = false) {
 }
 
 // ============================================================
-// SUPERVISOR (SEF) — evaluate the faculty in your department
+// SUPERVISOR (SEF) — i-evaluate an faculty ha imo departamento
 // ============================================================
 
-// Load the regular faculty that belong to this supervisor's department,
-// plus the SEF evaluations this supervisor has already submitted.
-// Every department this supervisor oversees: their home department plus each
-// entry the admin recorded in supervisedDepts: [{dept, role}].
+// Kuha-on an regular nga faculty ha departamento hini nga supervisor, ngan an
+// mga SEF nga naipasa na niya.
+// Ngatanan nga departamento nga ginmamangnoan hini nga supervisor: an iya mismo
+// nga departamento ngan an kada nakasurat ha supervisedDepts: [{dept, role}].
 //
-// A supervisor can chair a programme in a college other than their own (CMO 9.2,
-// 9.3). This portal only ever compared against the home department, so a chair
-// of a second college saw none of that college's faculty and could not file the
-// SEF that 9.1 makes mandatory. The Android app was fixed for this; the web was
-// not, so the same person saw different faculty depending on which they opened.
+// Puydi magin chair an usa nga supervisor ha lain nga kolehiyo (CMO 9.2, 9.3).
+// An home department la an gin-check hadto, salit waray niya makita an faculty
+// han ikaduha nga kolehiyo ngan diri hiya nakaka-SEF nga pinugos han 9.1.
+// Naayos na ini ha app; an web waray — magkaiba an nakikita han pareho nga tawo.
 function supervisedDeptsOf(person) {
   const home = (person && person.dept || '').trim();
   const extra = Array.isArray(person && person.supervisedDepts) ? person.supervisedDepts : [];
@@ -113,8 +111,8 @@ async function loadSupervisorData() {
     if (myDepts.indexOf((t.dept || '').trim()) === -1) return;   // any department they oversee
     deptFaculty.push({ ...t, docId: doc.id });
   });
-  // Group by department in the order supervised (home first), then by name, so a
-  // supervisor of two colleges gets a predictable, readable list.
+  // Igrupo per departamento (an iya mismo an syahan), tapos per ngaran, basi
+  // masayon basahon kun duha an iya kolehiyo.
   deptFaculty.sort((a, b) => {
     const da = myDepts.indexOf((a.dept || '').trim());
     const db_ = myDepts.indexOf((b.dept || '').trim());
@@ -122,11 +120,10 @@ async function loadSupervisorData() {
     return (a.name || '').localeCompare(b.name || '');
   });
 
-  // Scoped in the QUERY, not after the fact. This used to fetch every SEF record
-  // in the system and discard the ones belonging to other supervisors - so each
-  // supervisor downloaded all of their colleagues' ratings, and those records
-  // were sitting in the browser whether or not the UI showed them. Filtering
-  // server-side means they are never sent.
+  // Naka-scope na ha mismo nga QUERY, diri katapos. Hadto, ngatanan nga SEF an
+  // ginkukuha tapos gin-tatanggal la an diri iya — salit an rating han iba nga
+  // supervisor aada gihapon ha browser bisan diri ginpapakita. Yana, diri na gud
+  // ito ginpapadara.
   // Same reasoning as loadStudentData: filter on the field the rules check, or
   // Firestore rejects the query outright. evaluatorUid alone is enough - a
   // supervisor's own records are the only ones it can return.
@@ -270,29 +267,40 @@ async function submitSef() {
   const fac = deptFaculty.find(f => f.docId === teacherId);
   if (!teacherId || !fac) { showToast('No faculty selected.', 'warning'); return; }
 
+  // Annex B, not Annex A. The portal used to score the SEF against the student
+  // instrument, so supervisors were rating the wrong fifteen statements.
+  const QS = Instrument.sef;
   const ratings = {}; let rawTotal = 0; let answered = 0;
-  QUESTIONS.forEach(q => {
+  QS.forEach(q => {
     const val = document.querySelector(`input[name="${q.id}"]:checked`)?.value;
     if (val) { ratings[q.id] = parseInt(val); rawTotal += parseInt(val); answered++; }
   });
-  if (answered < QUESTIONS.length) {
-    showToast(`Please answer all ${QUESTIONS.length} questions before submitting.`, 'warning');
+  if (answered < QS.length) {
+    showToast(`Please answer all ${QS.length} questions before submitting.`, 'warning');
     return;
   }
+
+  // §8.4 - refuse if the office has closed the period, the deadline has passed,
+  // or no term is set. Checked here, at the moment of writing.
+  const gate = await checkCanSubmit();
+  if (!gate.ok) { showToast(gate.reason, 'warning'); return; }
 
   const btn = document.getElementById('submitEvalBtn');
   btn.disabled = true;
   btn.innerHTML = `<svg width="14" height="14" class="spin-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-dasharray="30" stroke-dashoffset="10"/></svg> Submitting…`;
 
-  const finalScore = Math.round((rawTotal / (QUESTIONS.length * 5)) * 100);
-  // This SEF carried no schoolYear or semester at all, so Annex C treated it as
-  // an untagged legacy record: visible only while the ACTIVE term is selected,
-  // and silently absent from any specific term. Stamp both, exactly as the
-  // student path below already does.
-  const _sefTerm = await getActiveTermForEval();
+  // Two decimals, matching Annex C's worked example (90.04) and the Android app.
+  // Math.round stored a whole number, so the same rating came out differently
+  // depending on which client submitted it.
+  const finalScore = Number(((rawTotal / (QS.length * 5)) * 100).toFixed(2));
+  const _sefTerm = gate.term;
 
   const rec = {
-    id:            `sef_${currentStudent.docId}_${teacherId}`,  // deterministic -> re-eval overwrites
+    // The term is part of the key. Without it, a supervisor rating the same
+    // faculty next semester OVERWROTE this semester's record permanently, and
+    // the key differed from the app's - so app and web submissions for one term
+    // became two documents and were counted twice in the §9.3 average.
+    id:            `sef_${currentStudent.docId}_${teacherId}_${_sefTerm.year}_${_sefTerm.sem}`.replace(/\s+/g, '-'),
     teacherId:     teacherId,
     supervisorId:  currentStudent.docId,
     supervisorTid: currentStudent.sid || currentStudent.tid || '',
@@ -304,7 +312,10 @@ async function submitSef() {
     ratings:       ratings,
     totalScore:    finalScore,
     rawScore:      rawTotal,
-    maxRaw:        QUESTIONS.length * 5,
+    maxRaw:        QS.length * 5,
+    // Which published version of Annex B these answers were given against, so a
+    // later wording change cannot silently re-label them.
+    questionSetId: Instrument.sefId || '',
     comment:       document.getElementById('evalComment').value || '',
     schoolYear:    _sefTerm.year,
     semester:      _sefTerm.sem,
@@ -331,48 +342,72 @@ async function submitSef() {
   }
 }
 
-async function loadStudentData() {
-  // Enrolled subjects
-  const snapS = await db.collection('subjects').get();
-  mySubjects = [];
-  snapS.forEach(doc => {
-    const s = doc.data();
-    if (s.enrolledIds && s.enrolledIds.includes(currentStudent.docId)) {
-      mySubjects.push({ ...s, docId: doc.id });
-    }
-  });
+/** Usa nga banner ha igbaw han dashboard kun may datos nga diri nakuha. */
+function showLoadBanner(msg) {
+  const host = document.getElementById('page-dashboard');
+  if (!host || host.querySelector('.load-banner')) return;
+  const b = document.createElement('div');
+  b.className = 'load-banner';
+  b.style.cssText = 'margin-bottom:16px;padding:12px 16px;border-radius:10px;'
+    + 'background:#fef2f2;color:#991b1b;font-size:0.84rem;border:1px solid #fecaca;';
+  b.textContent = msg;
+  host.prepend(b);
+}
 
-  // My evaluations.
+async function loadStudentData() {
+  // Pareho na han app: array-contains query, diri kuha-an ngatanan nga subject
+  // tapos salaon ha browser. Usa la nga paagi, usa la nga resulta.
+  // Kada query may kalugaringon nga try/catch. Kun matambid ini nga function,
+  // waray na na-render an Profile, History ngan Feedback kay diri hira naka-guard
+  // — usa nga na-deny nga query, tulo nga blangko nga pahina. Yana, an masayop
+  // la an magigin blangko, ngan nasusumat kun ano an sayop.
+  window._loadErrors = [];
+  mySubjects = [];
+  try {
+    const snapS = await db.collection('subjects')
+      .where('enrolledIds', 'array-contains', currentStudent.docId)
+      .get();
+    mySubjects = snapS.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
+    console.info('[load] subjects:', mySubjects.length, 'for docId', currentStudent.docId);
+  } catch (err) {
+    console.error('[load] subjects query failed:', err.code || '', err.message);
+    window._loadErrors.push('subjects: ' + (err.code || err.message));
+  }
+
+  // An akon mga evaluation.
   //
-  // Filtered on evaluatorUid, NOT studentId. This matters as soon as the
-  // Firestore rules are tightened: the rule is
+  // Salaon pinaagi han evaluatorUid, diri han studentId. An rule amo:
   //     allow read: if resource.data.evaluatorUid == request.auth.uid
-  // and Firestore refuses any query it cannot prove will only return permitted
-  // documents. A filter on studentId gives it no such proof, so the ENTIRE
-  // query was rejected with PERMISSION_DENIED - which threw here, aborted the
-  // whole dashboard load, and left the stat cards on "—" and the evaluation
-  // period stuck on "Loading period info…".
+  // Diri gintutugotan han Firestore an query nga diri niya masisiguro nga puro
+  // tugot nga dokumento an mababalik. Salit kun studentId an gamiton, bug-os
+  // nga query an gin-deny — amo ito nga naging "—" an mga numero ngan naipit
+  // ha "Loading period info…" an dashboard.
   //
-  // Filtering on the same field the rule checks makes the query provably safe.
+  // Kun pareho an field han query ngan han rule, ligtas na an query.
   const myUid = (fbAuth.currentUser && fbAuth.currentUser.uid) || '';
   myEvals = [];
   const seen = new Set();
 
   if (myUid) {
-    const snapE = await db.collection('evaluations')
-      .where('evaluatorUid', '==', myUid)
-      .get();
-    snapE.forEach(doc => { seen.add(doc.id); myEvals.push({ ...doc.data(), docId: doc.id }); });
+    try {
+      const snapE = await db.collection('evaluations')
+        .where('evaluatorUid', '==', myUid)
+        .get();
+      snapE.forEach(doc => { seen.add(doc.id); myEvals.push({ ...doc.data(), docId: doc.id }); });
+      console.info('[load] evaluations:', myEvals.length);
+    } catch (err) {
+      console.error('[load] evaluations query failed:', err.code || '', err.message);
+      window._loadErrors.push('evaluations: ' + (err.code || err.message));
+    }
   }
 
-  // Evaluations submitted before evaluatorUid existed carry no such field, so
-  // the query above skips them and the student's history and feedback look
-  // empty even though they clearly submitted. Fall back to the original
-  // studentId lookup and merge, exactly as the Android app does.
+  // An mga evaluation nga naipasa antes pa mag-exist an evaluatorUid waray
+  // hito nga field, salit nalalaktawan hira ha query ha igbaw ngan nagigin
+  // waray sulod an history ngan feedback. Sarihi liwat pinaagi han studentId
+  // ngan i-merge — pareho gud han ginbubuhat han Android app.
   //
-  // Wrapped: under the tightened rules this query is refused (it cannot be
-  // proven to return only the caller's records), and an incomplete history is a
-  // far better outcome than a thrown error that blanks the whole page.
+  // Naka-try/catch kay bangin i-deny ini han rules. Mas maupay an kulang nga
+  // history kay ha error nga magpapa-blangko han bug-os nga pahina.
   try {
     const legacy = await db.collection('evaluations')
       .where('studentId', '==', currentStudent.docId)
@@ -455,7 +490,19 @@ async function renderDashboard() {
     });
 
     if (activeSY && activeSem) {
-      const deadlineDate = activeSem.evalDeadline ? new Date(activeSem.evalDeadline) : null;
+      // The deadline lives in settings/evalPeriod (that is the only place the
+      // admin writes it). This used to read activeSem.evalDeadline, a field the
+      // dashboard never writes anywhere, so the banner permanently said
+      // "No deadline set" - and it claimed "Evaluation Open" even when the
+      // office had closed the period.
+      let _period = {};
+      try {
+        const pSnap = await db.collection('settings').doc('evalPeriod').get();
+        if (pSnap.exists) _period = pSnap.data() || {};
+      } catch (e) { /* banner falls back to showing no deadline */ }
+
+      const _isOpen = _period.open === true;
+      const deadlineDate = _period.deadline ? new Date(_period.deadline) : null;
       const now = new Date();
       const daysLeft = deadlineDate ? Math.ceil((deadlineDate - now) / (1000 * 60 * 60 * 24)) : null;
       const bannerClass = daysLeft !== null ? (daysLeft <= 3 ? 'warn' : 'open') : 'open';
@@ -477,7 +524,7 @@ async function renderDashboard() {
             <div style="font-size:0.9rem; font-weight:700; color:${daysLeft <= 3 ? 'var(--warning)' : 'var(--success)'};">${deadlineStr}${daysLeft > 0 ? ` (${daysLeft}d left)` : ' <span style="color:var(--danger);">Expired</span>'}</div>
           </div>
           ` : ''}
-          <span class="badge badge-success" style="margin-left:auto;">● Evaluation Open</span>
+          <span class="badge ${_isOpen ? 'badge-success' : 'badge-danger'}" style="margin-left:auto;">● Evaluation ${_isOpen ? 'Open' : 'Closed'}</span>
         </div>`;
     }
   } catch(e) {}
@@ -487,7 +534,21 @@ async function renderDashboard() {
   document.getElementById('dashSubjectCountBadge').textContent = `${totalSubjects} subject${totalSubjects !== 1 ? 's' : ''}`;
 
   if (!totalSubjects) {
-    document.getElementById('dashSubjectList').innerHTML = `<div class="empty-state"><div class="empty-icon">📚</div><div class="empty-text">No subjects enrolled yet. Contact your admin.</div></div>`;
+    // Sabihon kun kay ano waray - diri la "waray subject", kay diri mahibaroan
+    // han estudyante kun sala ba an sistema o waray gud hiya na-enroll.
+    document.getElementById('dashSubjectList').innerHTML =
+      `<div class="empty-state">
+         <div class="empty-state-title">Waray pa subject nga naka-enroll</div>
+         <div class="empty-state-hint">
+           Diri pa kaw na-enroll ha bisan ano nga klase para hini nga semester,
+           o waray pa naibutang han admin an imo enrolment.
+           Kadto ha designated office kun sala ini.
+           <div style="margin-top:8px;font-size:0.72rem;opacity:0.7;">
+             ID: ${escapeHtml(currentStudent.sid || '')} &middot;
+             Dept: ${escapeHtml(currentStudent.dept || '—')}
+           </div>
+         </div>
+       </div>`;
     return;
   }
 
@@ -516,9 +577,9 @@ async function renderDashboard() {
 // ============================================================
 
 /**
- * Fills in sub.teacherName for every enrolled subject, once per session.
- * Cached on the subject object so switching pages does not re-query, and each
- * distinct teacher is fetched only once even when they teach several subjects.
+ * Bubutangan hin sub.teacherName an kada subject, usa la ka beses kada session.
+ * Naka-cache basi diri na mag-query utro kun magbalhin hin pahina, ngan usa la
+ * an pagkuha kada maestro bisan damo an iya klase.
  */
 async function ensureSubjectTeacherNames() {
   const missing = [...new Set(mySubjects
@@ -536,14 +597,12 @@ async function ensureSubjectTeacherNames() {
 }
 async function renderEvaluate() {
   if (currentStudent && currentStudent.userType === 'supervisor') return;
-  // Resolve teacher names once. The subject documents store only teacherId, and
-  // the card is far more useful with a name on it - that is the thing a student
-  // actually recognises, not a course code.
+  // Kuha-on anay an ngaran han mga maestro. teacherId la an nakatipig ha
+  // subject, pero an ngaran an nakikilala han estudyante, diri an course code.
   await ensureSubjectTeacherNames();
 
-  // One card per subject, mirroring the app. Each shows the teacher and whether
-  // it is already done, so a student can see what is left without opening
-  // anything - which a dropdown could never do.
+  // Usa nga card kada subject, pareho han app: makikita an maestro ngan kun
+  // human na ba — diri na kinahanglan buksan pa, sugad han dropdown hadto.
   const picker = document.getElementById('subjectPicker');
   const doneIds = new Set(myEvals.map(e => e.subjectId));
 
@@ -587,9 +646,8 @@ async function renderEvaluate() {
 }
 
 /**
- * Card click handler. Keeps the selected id in a module variable because there
- * is no <select> to read it back from any more; everything downstream that used
- * to query subjectSelect.value now reads _selectedSubjectId.
+ * Handler han pag-klik han card. Gintitipigan an pinili nga id ha variable kay
+ * waray na <select> nga bab-ason; _selectedSubjectId na an ginbabasa.
  */
 window._selectedSubjectId = '';
 
@@ -638,12 +696,20 @@ async function onSubjectChange() {
   }
 }
 
+// The list currently on screen: Annex B for a supervisor, Annex A for a student.
+// Everything that counts answers or scores must use THIS, never a fixed array,
+// or the two instruments get mixed up the way they were before.
+function activeQuestions() {
+  return window._sefTeacherId ? Instrument.sef : Instrument.set;
+}
+
 function renderQuestions() {
   const container = document.getElementById('questionsContainer');
+  const QS = activeQuestions();
   let html = '';
   let currentSec = null;
 
-  QUESTIONS.forEach((q, i) => {
+  QS.forEach((q, i) => {
     if (q.sec !== currentSec) {
       currentSec = q.sec;
       html += `<div class="eval-section-title">Section ${q.sec} — ${SECTIONS[q.sec]}</div>`;
@@ -656,7 +722,7 @@ function renderQuestions() {
           <div class="question-text">${q.text}</div>
         </div>
         <div class="rating-group" id="rg_${q.id}">
-          ${[5,4,3,2,1].map(n => `
+          ${[1,2,3,4,5].map(n => `
             <label>
               <input type="radio" name="${q.id}" value="${n}" onchange="updateProgress()"/>
               <div class="rating-btn">${n}</div>
@@ -671,17 +737,18 @@ function renderQuestions() {
 }
 
 function updateProgress() {
+  const QS = activeQuestions();
   let answered = 0;
-  QUESTIONS.forEach(q => {
+  QS.forEach(q => {
     if (document.querySelector(`input[name="${q.id}"]:checked`)) answered++;
   });
-  const pct = (answered / QUESTIONS.length) * 100;
+  const pct = QS.length ? (answered / QS.length) * 100 : 0;
   document.getElementById('evalProgressFill').style.width  = pct + '%';
-  document.getElementById('evalProgressLabel').textContent = `${answered} of ${QUESTIONS.length} answered`;
+  document.getElementById('evalProgressLabel').textContent = `${answered} of ${QS.length} answered`;
 }
 
 function clearEvalForm() {
-  QUESTIONS.forEach(q => {
+  activeQuestions().forEach(q => {
     document.querySelectorAll(`input[name="${q.id}"]`).forEach(r => r.checked = false);
   });
   document.getElementById('evalComment').value = '';
@@ -701,28 +768,39 @@ async function submitEvaluation() {
   let rawTotal  = 0;
   let answered  = 0;
 
-  QUESTIONS.forEach(q => {
+  const QS = Instrument.set;
+  QS.forEach(q => {
     const val = document.querySelector(`input[name="${q.id}"]:checked`)?.value;
     if (val) { ratings[q.id] = parseInt(val); rawTotal += parseInt(val); answered++; }
   });
 
-  if (answered < QUESTIONS.length) {
-    showToast(`Please answer all ${QUESTIONS.length} questions before submitting.`, 'warning');
+  if (answered < QS.length) {
+    showToast(`Please answer all ${QS.length} questions before submitting.`, 'warning');
     return;
   }
+
+  // §8.4 - see checkCanSubmit in core.js.
+  const gate = await checkCanSubmit();
+  if (!gate.ok) { showToast(gate.reason, 'warning'); return; }
 
   const btn = document.getElementById('submitEvalBtn');
   btn.disabled = true;
   btn.innerHTML = `<svg width="14" height="14" class="spin-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-dasharray="30" stroke-dashoffset="10"/></svg> Submitting…`;
 
-  const finalScore = Math.round((rawTotal / (QUESTIONS.length * 5)) * 100);
+  // Two decimals, as in Annex C's worked example and the Android app.
+  const finalScore = Number(((rawTotal / (QS.length * 5)) * 100).toFixed(2));
 
   // CMO §4.3 — tag the evaluation with the CURRENT school year & semester so
   // the admin dashboard can scope ratings to the correct rating period.
-  const _term = await getActiveTermForEval();
+  const _term = gate.term;
 
   const evalRecord = {
-    id:            'set_' + Date.now(),
+    // Deterministic, matching the Android app's evalDocId(). 'set_' + Date.now()
+    // produced a NEW document every time, so a double-tap or a second visit
+    // wrote a second evaluation for the same subject and term and silently
+    // inflated that class's average. With this key a resubmission is an UPDATE,
+    // which the rules refuse - one student, one subject, one term, one record.
+    id:            `set_${currentStudent.docId}_${subId}_${_term.year}_${_term.sem}`.replace(/\s+/g, '-'),
     studentId:     currentStudent.docId,
     subjectId:     subId,
     teacherId:     subObj.teacherId,
@@ -733,7 +811,8 @@ async function submitEvaluation() {
     ratings:       ratings,
     totalScore:    finalScore,
     rawScore:      rawTotal,
-    maxRaw:        QUESTIONS.length * 5,
+    maxRaw:        QS.length * 5,
+    questionSetId: Instrument.setId || '',
     comment:       document.getElementById('evalComment').value || '',
     schoolYear:    _term.year,
     semester:      _term.sem,
@@ -837,20 +916,31 @@ async function renderFeedback() {
   const subMap = {};
   mySubjects.forEach(s => subMap[s.docId] = s);
 
-  // Also fetch all subjects to catch evals on subjects no longer enrolled
-  try {
-    const snapS = await db.collection('subjects').get();
-    snapS.forEach(doc => {
-      if (!subMap[doc.id]) subMap[doc.id] = { ...doc.data(), docId: doc.id };
-    });
-  } catch(e) {}
+  // Evaluations on subjects the student is no longer enrolled in still need a
+  // name. This used to pull the ENTIRE subjects collection - every subject in
+  // the university, to fill in a handful of labels - which the tightened rules
+  // refuse anyway. Fetch only the specific documents actually referenced.
+  const missingIds = [...new Set(
+    myEvals.map(e => e.subjectId).filter(id => id && !subMap[id])
+  )];
+  await Promise.all(missingIds.map(async id => {
+    try {
+      const d = await db.collection('subjects').doc(id).get();
+      if (d.exists) subMap[id] = { ...d.data(), docId: d.id };
+    } catch (e) { /* label falls back to "Unknown Subject" */ }
+  }));
 
-  // Fetch teacher names map
+  // Teacher names, again only for the subjects actually on this page.
   const teacherMap = {};
-  try {
-    const snapT = await db.collection('teachers').get();
-    snapT.forEach(doc => { teacherMap[doc.id] = doc.data().name || '—'; });
-  } catch(e) {}
+  const teacherIds = [...new Set(
+    Object.values(subMap).map(sub => sub && sub.teacherId).filter(Boolean)
+  )];
+  await Promise.all(teacherIds.map(async id => {
+    try {
+      const d = await db.collection('teachers').doc(id).get();
+      if (d.exists) teacherMap[id] = (d.data().name) || '—';
+    } catch (e) { /* falls back to a dash */ }
+  }));
 
   // Filter evals that have a non-empty comment
   const withComments = myEvals.filter(e => e.comment && e.comment.trim() !== '');
