@@ -1,6 +1,6 @@
-// ============================================================
-// FIREBASE CONFIG (same project as admin)
-// ============================================================
+// core.js - Firebase setup, shared state, instruments, helpers.
+
+// Firebase project config. Same project as the admin dashboard and the app.
 const firebaseConfig = {
   apiKey: "AIzaSyCUD1waV1kPYFKj1zRA7ANVjQkhdP7NJic",
   authDomain: "studenteval-937f6.firebaseapp.com",
@@ -14,51 +14,19 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// ============================================================
-// LOGIN MODEL — the roster password is the real password
-// ============================================================
-// The password a person types is the `password` field on their students /
-// teachers record, which is what the admin panel edits. Change it there and it
-// works on the next sign-in, with nothing else to do. That is the whole point
-// of this design.
-//
-// Firebase Auth is still used, but ONLY to obtain a stable uid: the security
-// rules, `evaluatorUid` on every evaluation, and "show me my own submissions"
-// all key off request.auth.uid. So each person still has an Auth account, and
-// its password is a value the CLIENT derives - never something a human types,
-// never something an admin has to reset.
-//
-// KNOWN TRADE-OFF, stated plainly: because the client can derive that value,
-// the Auth account no longer proves who someone is. Anyone who can read this
-// file and knows an ID can sign in as that person and submit an evaluation.
-// The typed-password check below is the only thing standing in the way, and it
-// is a client-side check. This was chosen deliberately so that a forgotten
-// password is a 5-second fix for the office instead of a Firebase Console
-// procedure; it is a real reduction in the confidentiality guarantee of
-// CMO 19 6.10 and belongs in the paper's limitations.
-// A legacy account whose password nobody remembers cannot be reset from a
-// browser - Firebase does not allow it. Rather than leaving that person stuck,
-// the client provisions a SECOND Auth account for them on a suffixed address
-// and uses that from then on. Nobody ever sees or types this; it is the login
-// email only.
-//
-// COST, so it is not a surprise: the new account has a new uid, so evaluations
-// that person submitted earlier (which carry the old uid) stop appearing in
-// their own history. The admin dashboard and Annex C read by studentId and are
-// unaffected. Avoid it for anyone who can still sign in normally - they migrate
-// automatically without changing uid.
+// Login address used when the normal account is locked.
+// New account = new uid, so past evaluations need re-pointing.
 function fallbackEmailFor(id) {
   return String(id || '').trim().toLowerCase() + '.r2@nwssu.app';
 }
 
+// Firebase Auth password. Derived, never typed by a person.
+// Must match authSecretFor() in AuthRepository.kt.
 function authSecretFor(id) {
-  // Long enough for Firebase's 6-character minimum even for short IDs, and
-  // stable for a given ID so the same account is reached every time.
   return 'nwssu:' + String(id || '').trim().toLowerCase() + ':v1';
 }
 
-// What the person must type. Blank means the account was issued with the ID as
-// its password and has not been changed since.
+// The password the person types. Blank field = their own ID.
 function rosterPasswordFor(rec) {
   if (!rec) return '';
   const id = String(rec.sid || rec.tid || '').trim();
@@ -66,10 +34,6 @@ function rosterPasswordFor(rec) {
   return pw || id;
 }
 
-
-// ============================================================
-// STATE
-// ============================================================
 let currentStudent = null;   // { ...firestoreData, docId }
 let mySubjects     = [];     // subjects the student is enrolled in
 let myEvals        = [];     // evaluations the student has submitted
@@ -77,8 +41,7 @@ let deptFaculty    = [];     // (supervisor) regular faculty in the supervisor's
 let mySef          = [];     // (supervisor) SEF evaluations this supervisor has submitted
 window._sefTeacherId = null; // (supervisor) faculty currently being evaluated
 
-// active schoolyr /sem
-// for sa eval
+// Active school year + semester. Blank when none is set.
 async function getActiveTermForEval() {
   try {
     const snap = await db.collection('schoolYears').get();
@@ -91,27 +54,13 @@ async function getActiveTermForEval() {
   return { year: '', sem: '' };
 }
 
-// ============================================================
-// EVALUATION PERIOD GATE
-// ============================================================
-// The admin's Open/Close switch and deadline live in settings/evalPeriod. The
-// portal used to read them ONLY to decide whether the feedback page was visible,
-// so a student could still submit after the office had closed the period or
-// after the deadline had passed - the Android app has always refused this at the
-// moment of writing (CMO §8.4 sets the schedule). Checked again at submit time,
-// never trusted from a cached page.
-//
-// A blank school year or semester is also a refusal: getActiveTermForEval()
-// returns empty strings when no semester is flagged active, and anything stamped
-// that way behaves as an untagged legacy record, invisible in Annex C for any
-// specific term.
+// Submission gate: period open, deadline not passed, term set (CMO 8.4).
 async function checkCanSubmit() {
   let period = {};
   try {
     const snap = await db.collection('settings').doc('evalPeriod').get();
     if (snap.exists) period = snap.data() || {};
   } catch (e) {
-    // Cannot prove the period is open, so do not let the submission through.
     return { ok: false, reason: 'Could not check the evaluation period. Please try again.' };
   }
 
@@ -131,19 +80,7 @@ async function checkCanSubmit() {
   return { ok: true, term: term, period: period };
 }
 
-// ============================================================
-// CMO 19 s.2025 INSTRUMENTS
-// ============================================================
-// Verbatim Annex A (SET) and Annex B (SEF). CMO §4.2: "SUCs shall not modify or
-// add indicators to the prescribed instruments." The portal previously carried
-// ONE paraphrased list used for BOTH instruments, so supervisors answered Annex A
-// items under an "Annex B" heading and five statements were shortened versions of
-// the printed form. These are copied from the admin's seed sets so all three
-// clients ask exactly the same thing.
-//
-// These are only the FALLBACK. loadPublishedQuestions() below replaces them with
-// whatever the admin has published, and every submission records which version it
-// was answered against.
+// Annex A, verbatim. Fallback only - loadPublishedQuestions() overrides.
 const DEFAULT_SET_QUESTIONS = [
   { id: 'q1',  sec: 'A', text: 'Comes to class on time.' },
   { id: 'q2',  sec: 'A', text: 'Explains learning outcomes, expectations, grading system, and various requirements of the subject/course.' },
@@ -162,9 +99,7 @@ const DEFAULT_SET_QUESTIONS = [
   { id: 'q15', sec: 'C', text: "Provides transparent and clear criteria in rating student's performance." }
 ];
 
-// ANNEX B, verbatim. Items 2, 4 and 9 differ from Annex A because they ask about
-// things a supervisor can verify. "Provide" in item 4 is CHED's own typo,
-// reproduced deliberately so the screen matches the printed form.
+// Annex B, verbatim. Items 2, 4 and 9 differ from Annex A.
 const DEFAULT_SEF_QUESTIONS = [
   { id: 'q1',  sec: 'A', text: 'Comes to class on time.' },
   { id: 'q2',  sec: 'A', text: 'Submits updated syllabus, grade sheets, and other required reports on time.' },
@@ -183,9 +118,7 @@ const DEFAULT_SEF_QUESTIONS = [
   { id: 'q15', sec: 'C', text: "Provides transparent and clear criteria in rating student's performance." }
 ];
 
-// The instrument actually in use this session. app.js reads Instrument.set /
-// Instrument.sef instead of a fixed list, so publishing a new version in the
-// admin changes the portal without a redeploy.
+// Instrument in use this session. Stamped on every submission.
 const Instrument = {
   set:   DEFAULT_SET_QUESTIONS,
   sef:   DEFAULT_SEF_QUESTIONS,
@@ -193,9 +126,7 @@ const Instrument = {
   sefId: ''
 };
 
-// Pulls the highest published version of each instrument from Firestore. Falls
-// back to the defaults above on any failure - a student must never be blocked
-// from evaluating because a query failed.
+// Highest published version per instrument. Falls back to the defaults.
 async function loadPublishedQuestions() {
   for (const [key, idKey, instrument] of [['set','setId','SET'], ['sef','sefId','SEF']]) {
     try {
@@ -227,11 +158,7 @@ const SECTIONS = {
   C: 'Commitment and Transparency'
 };
 
-// Bands must match the admin dashboard's getRemarks (admin-scoring.js) exactly.
-// The portal used to cut at 45 and say "Needs Improvement" where the dashboard
-// cuts at 50 and says "Fair", so one score carried two different labels
-// depending on which screen you looked at. These bands are institutional -
-// CMO 19 does not define them.
+// Bands must match getRemarks in admin-scoring.js. Institutional, not CMO.
 function getRemarks(score) {
   if (score >= 90) return 'Outstanding';
   if (score >= 75) return 'Very Satisfactory';
@@ -240,12 +167,7 @@ function getRemarks(score) {
   return 'Unsatisfactory';
 }
 
-
-// ============================================================
-// SHARED HELPERS
-// ============================================================
-
-
+// Escape before inserting anything user-typed into innerHTML.
 function escapeHtml(str) {
   return String(str == null ? '' : str)
     .replace(/&/g, '&amp;')
@@ -255,9 +177,6 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
-// ============================================================
-// TOAST
-// ============================================================
 function showToast(msg, type = 'info') {
   const container = document.getElementById('toastContainer');
   const toast = document.createElement('div');

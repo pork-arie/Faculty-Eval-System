@@ -1,12 +1,7 @@
-// ============================================================================
-// dashboard, evaluate, history,
-// feedback, profile, ngan an SEF screens sa supervisor.
-// core.js -> auth.js -> app.js.
-// ============================================================================
+// app.js - dashboard, evaluation screens, feedback, profile, supervisor SEF.
 
+// Boot after login: load the published questions, then the data.
 async function initApp(isInactive = false) {
-  // Gate anay: nakasulod na, pero waray maaabot tubtob diri pa nababag-o an
-  // default nga password.
   if (needsPasswordChange(currentStudent)) {
     window._pendingInactive = isInactive;
     showPasswordGate();
@@ -16,14 +11,10 @@ async function initApp(isInactive = false) {
   document.getElementById('loginPage').style.display  = 'none';
   document.getElementById('app').style.display = 'flex';
 
-  // Pull the admin's published Annex A / Annex B before ANY form is rendered, so
-  // the portal always asks the same questions the dashboard published and the
-  // app uses. Falls back to the built-in verbatim copies if the query fails.
   await loadPublishedQuestions();
 
   const isSupervisor = currentStudent.userType === 'supervisor';
 
-  // Sidebar user info
   const initials = currentStudent.name
     ? currentStudent.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
     : (isSupervisor ? 'SV' : 'S');
@@ -33,7 +24,6 @@ async function initApp(isInactive = false) {
     ? `Supervisor · ${currentStudent.dept || 'No department'}`
     : (currentStudent.dept || 'No department');
 
-  // Inactive student warning banner (not shown for supervisors)
   if (isInactive && !isSupervisor) {
     const existing = document.getElementById('inactiveAccountBanner');
     if (!existing) {
@@ -45,20 +35,15 @@ async function initApp(isInactive = false) {
     }
   }
 
-  // Supervisors use a different (non-student) home; skip student data loading
-  // so they never see enrolled subjects or the student SET form.
   if (isSupervisor) {
     await renderSupervisorHome();
     return;
   }
 
-
   try {
     await loadStudentData();
-    // Ipakita kun may query nga napakyas — diri la blangko nga pahina.
     if (window._loadErrors && window._loadErrors.length) {
-      showLoadBanner('Diri nakuha an iba nga datos: ' + window._loadErrors.join(', ')
-        + '. Kitaa an Console (F12) para ha detalye.');
+      showLoadBanner('Some data could not be loaded. Please refresh the page.');
     }
   } catch (e) {
     console.error('Could not load your subjects/evaluations:', e);
@@ -79,19 +64,6 @@ async function initApp(isInactive = false) {
   showPage('dashboard');
 }
 
-// ============================================================
-// SUPERVISOR (SEF) — i-evaluate an faculty ha imo departamento
-// ============================================================
-
-// Kuha-on an regular nga faculty ha departamento hini nga supervisor, ngan an
-// mga SEF nga naipasa na niya.
-// Ngatanan nga departamento nga ginmamangnoan hini nga supervisor: an iya mismo
-// nga departamento ngan an kada nakasurat ha supervisedDepts: [{dept, role}].
-//
-// Puydi magin chair an usa nga supervisor ha lain nga kolehiyo (CMO 9.2, 9.3).
-// An home department la an gin-check hadto, salit waray niya makita an faculty
-// han ikaduha nga kolehiyo ngan diri hiya nakaka-SEF nga pinugos han 9.1.
-// Naayos na ini ha app; an web waray — magkaiba an nakikita han pareho nga tawo.
 function supervisedDeptsOf(person) {
   const home = (person && person.dept || '').trim();
   const extra = Array.isArray(person && person.supervisedDepts) ? person.supervisedDepts : [];
@@ -99,6 +71,7 @@ function supervisedDeptsOf(person) {
   return list.filter((d, i) => d && list.indexOf(d) === i);   // non-empty, de-duplicated, home first
 }
 
+// Faculty across every department this supervisor chairs (CMO 9.2, 9.3).
 async function loadSupervisorData() {
   const myDepts = supervisedDeptsOf(currentStudent);
 
@@ -111,8 +84,6 @@ async function loadSupervisorData() {
     if (myDepts.indexOf((t.dept || '').trim()) === -1) return;   // any department they oversee
     deptFaculty.push({ ...t, docId: doc.id });
   });
-  // Igrupo per departamento (an iya mismo an syahan), tapos per ngaran, basi
-  // masayon basahon kun duha an iya kolehiyo.
   deptFaculty.sort((a, b) => {
     const da = myDepts.indexOf((a.dept || '').trim());
     const db_ = myDepts.indexOf((b.dept || '').trim());
@@ -120,13 +91,6 @@ async function loadSupervisorData() {
     return (a.name || '').localeCompare(b.name || '');
   });
 
-  // Naka-scope na ha mismo nga QUERY, diri katapos. Hadto, ngatanan nga SEF an
-  // ginkukuha tapos gin-tatanggal la an diri iya — salit an rating han iba nga
-  // supervisor aada gihapon ha browser bisan diri ginpapakita. Yana, diri na gud
-  // ito ginpapadara.
-  // Same reasoning as loadStudentData: filter on the field the rules check, or
-  // Firestore rejects the query outright. evaluatorUid alone is enough - a
-  // supervisor's own records are the only ones it can return.
   const myUid = (fbAuth.currentUser && fbAuth.currentUser.uid) || '';
   mySef = [];
   if (myUid) {
@@ -140,7 +104,6 @@ async function loadSupervisorData() {
   }
 }
 
-// Supervisor home: greeting + the list of department faculty to evaluate.
 async function renderSupervisorHome() {
   ['nav-evaluate','nav-history','nav-feedback'].forEach(id => {
     const el = document.getElementById(id);
@@ -156,7 +119,6 @@ async function renderSupervisorHome() {
   const stats = document.getElementById('dashStats');
   if (stats) stats.style.display = 'none';
 
-  // Go to dashboard page (without triggering the student renderDashboard)
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-dashboard').classList.add('active');
@@ -174,7 +136,6 @@ async function renderSupervisorHome() {
     return;
   }
 
-  // Period card -> supervisor summary
   const evaluated = mySef.length;
   const period = document.getElementById('dashPeriodInfo');
   if (period) period.innerHTML = `<div style="display:flex; gap:24px; flex-wrap:wrap;">`
@@ -183,7 +144,6 @@ async function renderSupervisorHome() {
     + `<div><div style="font-size:1.4rem; font-weight:800; color:#d97706;">${Math.max(0, deptFaculty.length - evaluated)}</div><div style="font-size:0.74rem; color:var(--muted);">Remaining</div></div>`
     + `</div>`;
 
-  // Faculty list card header
   const cardHeader = sl ? sl.closest('.card')?.querySelector('.card-header h3') : null;
   if (cardHeader) cardHeader.textContent = '🧑‍🏫 Department Faculty';
   const badge = document.getElementById('dashSubjectCountBadge');
@@ -225,7 +185,6 @@ function renderDeptFacultyList() {
   }).join('');
 }
 
-// Open the SEF form for a specific faculty member, reusing the evaluate page.
 async function startSef(teacherId) {
   const fac = deptFaculty.find(f => f.docId === teacherId);
   if (!fac) { showToast('Faculty not found.', 'warning'); return; }
@@ -240,7 +199,6 @@ async function startSef(teacherId) {
   const pTag = document.querySelector('#page-evaluate .page-title p');
   if (pTag) pTag.textContent = "Supervisor's Evaluation of Faculty — 15 CMO criteria (Annex B).";
 
-  // Hide the student subject picker; show the faculty being evaluated
   const wrap = document.querySelector('#page-evaluate .subject-select-wrap');
   if (wrap) wrap.style.display = 'none';
   document.getElementById('teacherInitials').textContent = fac.name ? fac.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() : 'F';
@@ -260,15 +218,12 @@ async function startSef(teacherId) {
   window.scrollTo(0, 0);
 }
 
-// Save a supervisor (SEF) evaluation. Shape matches what the admin reports read:
-// { teacherId, evaluatorType:'supervisor', totalScore } plus extra detail.
+// SEF submit. Doc id includes the term so next semester does not overwrite.
 async function submitSef() {
   const teacherId = window._sefTeacherId;
   const fac = deptFaculty.find(f => f.docId === teacherId);
   if (!teacherId || !fac) { showToast('No faculty selected.', 'warning'); return; }
 
-  // Annex B, not Annex A. The portal used to score the SEF against the student
-  // instrument, so supervisors were rating the wrong fifteen statements.
   const QS = Instrument.sef;
   const ratings = {}; let rawTotal = 0; let answered = 0;
   QS.forEach(q => {
@@ -280,8 +235,6 @@ async function submitSef() {
     return;
   }
 
-  // §8.4 - refuse if the office has closed the period, the deadline has passed,
-  // or no term is set. Checked here, at the moment of writing.
   const gate = await checkCanSubmit();
   if (!gate.ok) { showToast(gate.reason, 'warning'); return; }
 
@@ -289,32 +242,20 @@ async function submitSef() {
   btn.disabled = true;
   btn.innerHTML = `<svg width="14" height="14" class="spin-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-dasharray="30" stroke-dashoffset="10"/></svg> Submitting…`;
 
-  // Two decimals, matching Annex C's worked example (90.04) and the Android app.
-  // Math.round stored a whole number, so the same rating came out differently
-  // depending on which client submitted it.
   const finalScore = Number(((rawTotal / (QS.length * 5)) * 100).toFixed(2));
   const _sefTerm = gate.term;
 
   const rec = {
-    // The term is part of the key. Without it, a supervisor rating the same
-    // faculty next semester OVERWROTE this semester's record permanently, and
-    // the key differed from the app's - so app and web submissions for one term
-    // became two documents and were counted twice in the §9.3 average.
     id:            `sef_${currentStudent.docId}_${teacherId}_${_sefTerm.year}_${_sefTerm.sem}`.replace(/\s+/g, '-'),
     teacherId:     teacherId,
     supervisorId:  currentStudent.docId,
     supervisorTid: currentStudent.sid || currentStudent.tid || '',
     evaluatorType: 'supervisor',
-    // Firebase Auth uid of whoever submitted this. supervisorId is a Firestore
-    // document id, which rules cannot compare against request.auth.uid - this
-    // is the field that makes "read only your own records" expressible.
     evaluatorUid:  (fbAuth.currentUser && fbAuth.currentUser.uid) || '',
     ratings:       ratings,
     totalScore:    finalScore,
     rawScore:      rawTotal,
     maxRaw:        QS.length * 5,
-    // Which published version of Annex B these answers were given against, so a
-    // later wording change cannot silently re-label them.
     questionSetId: Instrument.sefId || '',
     comment:       document.getElementById('evalComment').value || '',
     schoolYear:    _sefTerm.year,
@@ -342,7 +283,7 @@ async function submitSef() {
   }
 }
 
-/** Usa nga banner ha igbaw han dashboard kun may datos nga diri nakuha. */
+// One banner at the top of the dashboard when a query fails.
 function showLoadBanner(msg) {
   const host = document.getElementById('page-dashboard');
   if (!host || host.querySelector('.load-banner')) return;
@@ -354,13 +295,8 @@ function showLoadBanner(msg) {
   host.prepend(b);
 }
 
+// array-contains query, same as the app. Each query guarded separately.
 async function loadStudentData() {
-  // Pareho na han app: array-contains query, diri kuha-an ngatanan nga subject
-  // tapos salaon ha browser. Usa la nga paagi, usa la nga resulta.
-  // Kada query may kalugaringon nga try/catch. Kun matambid ini nga function,
-  // waray na na-render an Profile, History ngan Feedback kay diri hira naka-guard
-  // — usa nga na-deny nga query, tulo nga blangko nga pahina. Yana, an masayop
-  // la an magigin blangko, ngan nasusumat kun ano an sayop.
   window._loadErrors = [];
   mySubjects = [];
   try {
@@ -374,16 +310,6 @@ async function loadStudentData() {
     window._loadErrors.push('subjects: ' + (err.code || err.message));
   }
 
-  // An akon mga evaluation.
-  //
-  // Salaon pinaagi han evaluatorUid, diri han studentId. An rule amo:
-  //     allow read: if resource.data.evaluatorUid == request.auth.uid
-  // Diri gintutugotan han Firestore an query nga diri niya masisiguro nga puro
-  // tugot nga dokumento an mababalik. Salit kun studentId an gamiton, bug-os
-  // nga query an gin-deny — amo ito nga naging "—" an mga numero ngan naipit
-  // ha "Loading period info…" an dashboard.
-  //
-  // Kun pareho an field han query ngan han rule, ligtas na an query.
   const myUid = (fbAuth.currentUser && fbAuth.currentUser.uid) || '';
   myEvals = [];
   const seen = new Set();
@@ -401,13 +327,6 @@ async function loadStudentData() {
     }
   }
 
-  // An mga evaluation nga naipasa antes pa mag-exist an evaluatorUid waray
-  // hito nga field, salit nalalaktawan hira ha query ha igbaw ngan nagigin
-  // waray sulod an history ngan feedback. Sarihi liwat pinaagi han studentId
-  // ngan i-merge — pareho gud han ginbubuhat han Android app.
-  //
-  // Naka-try/catch kay bangin i-deny ini han rules. Mas maupay an kulang nga
-  // history kay ha error nga magpapa-blangko han bug-os nga pahina.
   try {
     const legacy = await db.collection('evaluations')
       .where('studentId', '==', currentStudent.docId)
@@ -419,16 +338,11 @@ async function loadStudentData() {
       myEvals.push({ ...e, docId: doc.id });
     });
   } catch (e) {
-    // Expected once the rules are tight. Say so once, in the console, rather
-    // than silently - it explains any missing pre-migration history.
     console.info('Older evaluations without evaluatorUid are not readable under '
       + 'the current rules; the history shown may be incomplete.');
   }
 }
 
-// ============================================================
-// PAGE NAVIGATION
-// ============================================================
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -454,9 +368,7 @@ function closeSidebar() {
   document.getElementById('overlayBg').classList.remove('open');
 }
 
-// ============================================================
-// DASHBOARD
-// ============================================================
+// Subject cards, evaluation period, and progress counts.
 async function renderDashboard() {
   if (currentStudent && currentStudent.userType === 'supervisor') return;
   await loadStudentData();
@@ -467,7 +379,6 @@ async function renderDashboard() {
   document.getElementById('dashGreeting').textContent  = `${greet}, ${firstName}! 👋`;
   document.getElementById('dashSubtitle').textContent = `Welcome back to your evaluation portal.`;
 
-  // Stats
   const totalSubjects = mySubjects.length;
   const done     = mySubjects.filter(s => myEvals.some(e => e.subjectId === s.docId)).length;
   const pending  = totalSubjects - done;
@@ -476,7 +387,6 @@ async function renderDashboard() {
   document.getElementById('dashDone').textContent    = done;
   document.getElementById('dashPending').textContent = pending;
 
-  // Period info
   let periodHTML = '<div style="font-size:0.84rem; color:var(--muted);">No active evaluation period.</div>';
   try {
     const sySnap = await db.collection('schoolYears').get();
@@ -490,11 +400,6 @@ async function renderDashboard() {
     });
 
     if (activeSY && activeSem) {
-      // The deadline lives in settings/evalPeriod (that is the only place the
-      // admin writes it). This used to read activeSem.evalDeadline, a field the
-      // dashboard never writes anywhere, so the banner permanently said
-      // "No deadline set" - and it claimed "Evaluation Open" even when the
-      // office had closed the period.
       let _period = {};
       try {
         const pSnap = await db.collection('settings').doc('evalPeriod').get();
@@ -530,19 +435,15 @@ async function renderDashboard() {
   } catch(e) {}
   document.getElementById('dashPeriodInfo').innerHTML = periodHTML;
 
-  // Subject list
   document.getElementById('dashSubjectCountBadge').textContent = `${totalSubjects} subject${totalSubjects !== 1 ? 's' : ''}`;
 
   if (!totalSubjects) {
-    // Sabihon kun kay ano waray - diri la "waray subject", kay diri mahibaroan
-    // han estudyante kun sala ba an sistema o waray gud hiya na-enroll.
     document.getElementById('dashSubjectList').innerHTML =
       `<div class="empty-state">
-         <div class="empty-state-title">Waray pa subject nga naka-enroll</div>
+         <div class="empty-state-title">No subjects enrolled</div>
          <div class="empty-state-hint">
-           Diri pa kaw na-enroll ha bisan ano nga klase para hini nga semester,
-           o waray pa naibutang han admin an imo enrolment.
-           Kadto ha designated office kun sala ini.
+           You are not enrolled in any class for this semester.
+           Contact the designated office if this is incorrect.
            <div style="margin-top:8px;font-size:0.72rem;opacity:0.7;">
              ID: ${escapeHtml(currentStudent.sid || '')} &middot;
              Dept: ${escapeHtml(currentStudent.dept || '—')}
@@ -572,15 +473,6 @@ async function renderDashboard() {
   }).join('') + `<div style="height:1px;"></div>`;
 }
 
-// ============================================================
-// EVALUATE
-// ============================================================
-
-/**
- * Bubutangan hin sub.teacherName an kada subject, usa la ka beses kada session.
- * Naka-cache basi diri na mag-query utro kun magbalhin hin pahina, ngan usa la
- * an pagkuha kada maestro bisan damo an iya klase.
- */
 async function ensureSubjectTeacherNames() {
   const missing = [...new Set(mySubjects
     .filter(s => !s.teacherName && s.teacherId)
@@ -597,12 +489,8 @@ async function ensureSubjectTeacherNames() {
 }
 async function renderEvaluate() {
   if (currentStudent && currentStudent.userType === 'supervisor') return;
-  // Kuha-on anay an ngaran han mga maestro. teacherId la an nakatipig ha
-  // subject, pero an ngaran an nakikilala han estudyante, diri an course code.
   await ensureSubjectTeacherNames();
 
-  // Usa nga card kada subject, pareho han app: makikita an maestro ngan kun
-  // human na ba — diri na kinahanglan buksan pa, sugad han dropdown hadto.
   const picker = document.getElementById('subjectPicker');
   const doneIds = new Set(myEvals.map(e => e.subjectId));
 
@@ -645,10 +533,6 @@ async function renderEvaluate() {
   document.getElementById('evalFormWrap').style.display      = 'none';
 }
 
-/**
- * Handler han pag-klik han card. Gintitipigan an pinili nga id ha variable kay
- * waray na <select> nga bab-ason; _selectedSubjectId na an ginbabasa.
- */
 window._selectedSubjectId = '';
 
 function selectSubject(subId) {
@@ -671,10 +555,8 @@ async function onSubjectChange() {
 
   if (!subId || !subObj) return;
 
-  // Check already evaluated
   const alreadyDone = myEvals.some(e => e.subjectId === subId);
 
-  // Load teacher info
   if (subObj.teacherId) {
     try {
       const tSnap = await db.collection('teachers').doc(subObj.teacherId).get();
@@ -696,13 +578,12 @@ async function onSubjectChange() {
   }
 }
 
-// The list currently on screen: Annex B for a supervisor, Annex A for a student.
-// Everything that counts answers or scores must use THIS, never a fixed array,
-// or the two instruments get mixed up the way they were before.
+// Annex B for a supervisor, Annex A for a student.
 function activeQuestions() {
   return window._sefTeacherId ? Instrument.sef : Instrument.set;
 }
 
+// Build the rating grid for whichever instrument is on screen.
 function renderQuestions() {
   const container = document.getElementById('questionsContainer');
   const QS = activeQuestions();
@@ -736,6 +617,7 @@ function renderQuestions() {
   updateProgress();
 }
 
+// Answered count for the progress bar.
 function updateProgress() {
   const QS = activeQuestions();
   let answered = 0;
@@ -755,6 +637,7 @@ function clearEvalForm() {
   updateProgress();
 }
 
+// SET submit. Deterministic doc id prevents duplicate submissions.
 async function submitEvaluation() {
   if (window._sefTeacherId) { return submitSef(); }
   const subId  = window._selectedSubjectId;
@@ -763,7 +646,6 @@ async function submitEvaluation() {
   if (!subId || !subObj) { showToast('Please select a subject first.', 'warning'); return; }
   if (!subObj.teacherId)  { showToast('This subject has no assigned teacher.', 'warning'); return; }
 
-  // Collect ratings
   const ratings = {};
   let rawTotal  = 0;
   let answered  = 0;
@@ -779,7 +661,6 @@ async function submitEvaluation() {
     return;
   }
 
-  // §8.4 - see checkCanSubmit in core.js.
   const gate = await checkCanSubmit();
   if (!gate.ok) { showToast(gate.reason, 'warning'); return; }
 
@@ -787,26 +668,16 @@ async function submitEvaluation() {
   btn.disabled = true;
   btn.innerHTML = `<svg width="14" height="14" class="spin-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-dasharray="30" stroke-dashoffset="10"/></svg> Submitting…`;
 
-  // Two decimals, as in Annex C's worked example and the Android app.
   const finalScore = Number(((rawTotal / (QS.length * 5)) * 100).toFixed(2));
 
-  // CMO §4.3 — tag the evaluation with the CURRENT school year & semester so
-  // the admin dashboard can scope ratings to the correct rating period.
   const _term = gate.term;
 
   const evalRecord = {
-    // Deterministic, matching the Android app's evalDocId(). 'set_' + Date.now()
-    // produced a NEW document every time, so a double-tap or a second visit
-    // wrote a second evaluation for the same subject and term and silently
-    // inflated that class's average. With this key a resubmission is an UPDATE,
-    // which the rules refuse - one student, one subject, one term, one record.
     id:            `set_${currentStudent.docId}_${subId}_${_term.year}_${_term.sem}`.replace(/\s+/g, '-'),
     studentId:     currentStudent.docId,
     subjectId:     subId,
     teacherId:     subObj.teacherId,
     evaluatorType: 'student',
-    // See the SEF record above - this is what lets the rules scope a student to
-    // their own submissions, and it matches what the Android app writes.
     evaluatorUid:  (fbAuth.currentUser && fbAuth.currentUser.uid) || '',
     ratings:       ratings,
     totalScore:    finalScore,
@@ -823,7 +694,6 @@ async function submitEvaluation() {
     await db.collection('evaluations').doc(evalRecord.id).set(evalRecord);
     myEvals.push(evalRecord);
 
-    // Show result
     document.getElementById('resultScore').textContent   = finalScore;
     document.getElementById('resultRemarks').textContent = getRemarks(finalScore);
     document.getElementById('resultSubject').textContent = `${subObj.code}: ${subObj.name}`;
@@ -848,9 +718,6 @@ function closeResult() {
   showPage('history');
 }
 
-// ============================================================
-// HISTORY
-// ============================================================
 async function renderHistory() {
   await loadStudentData();
   document.getElementById('historyCount').textContent = `${myEvals.length} record${myEvals.length !== 1 ? 's' : ''}`;
@@ -860,7 +727,6 @@ async function renderHistory() {
     return;
   }
 
-  // Enrich with subject/teacher names
   const subMap = {};
   mySubjects.forEach(s => subMap[s.docId] = s);
 
@@ -889,9 +755,7 @@ async function renderHistory() {
     </div>`;
 }
 
-// ============================================================
-// FEEDBACK — show student their own submitted comments
-// ============================================================
+// Own submitted ratings and comments.
 async function renderFeedback() {
   await loadStudentData();
 
@@ -899,27 +763,20 @@ async function renderFeedback() {
   const listEl    = document.getElementById('feedbackList');
   const countEl   = document.getElementById('feedbackCount');
 
-  // Check if eval period is still open
   let periodOpen = false;
   try {
     const snap = await db.collection('settings').doc('evalPeriod').get();
     if (snap.exists) periodOpen = snap.data().open === true;
   } catch(e) {
-    // fallback: check localStorage mirror
     try {
       const local = localStorage.getItem('evalPeriod');
       if (local) periodOpen = JSON.parse(local).open === true;
     } catch(_) {}
   }
 
-  // Build a map of subject docId → subject data
   const subMap = {};
   mySubjects.forEach(s => subMap[s.docId] = s);
 
-  // Evaluations on subjects the student is no longer enrolled in still need a
-  // name. This used to pull the ENTIRE subjects collection - every subject in
-  // the university, to fill in a handful of labels - which the tightened rules
-  // refuse anyway. Fetch only the specific documents actually referenced.
   const missingIds = [...new Set(
     myEvals.map(e => e.subjectId).filter(id => id && !subMap[id])
   )];
@@ -930,7 +787,6 @@ async function renderFeedback() {
     } catch (e) { /* label falls back to "Unknown Subject" */ }
   }));
 
-  // Teacher names, again only for the subjects actually on this page.
   const teacherMap = {};
   const teacherIds = [...new Set(
     Object.values(subMap).map(sub => sub && sub.teacherId).filter(Boolean)
@@ -942,11 +798,9 @@ async function renderFeedback() {
     } catch (e) { /* falls back to a dash */ }
   }));
 
-  // Filter evals that have a non-empty comment
   const withComments = myEvals.filter(e => e.comment && e.comment.trim() !== '');
   const sorted       = [...withComments].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-  // Banner
   if (periodOpen) {
     banner.style.display = 'block';
     banner.innerHTML = `
@@ -1003,9 +857,6 @@ async function renderFeedback() {
   }).join('') + '<div style="height:4px;"></div>';
 }
 
-// ============================================================
-// PROFILE
-// ============================================================
 async function renderProfile() {
   await loadStudentData();
 
@@ -1030,7 +881,6 @@ async function renderProfile() {
       <div class="info-value">${item.value}</div>
     </div>`).join('');
 
-  // Eval summary
   const done    = mySubjects.filter(sub => myEvals.some(e => e.subjectId === sub.docId)).length;
   const pending = mySubjects.length - done;
 
