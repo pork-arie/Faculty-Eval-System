@@ -108,23 +108,118 @@ function viewTeacherReport(teacherId) {
   openModal('viewReportModal');
 }
 
+// Was a CSV export. Changed to PDF (via the browser's print dialog — the same
+// mechanism printAnnexD/printActiveAnnex already use, so "Save as PDF" is the
+// destination the user picks rather than a second code path).
+//
+// Also now reads window._allTeacherEvalData, the same cached, term-scoped,
+// dept-filtered dataset the on-screen Reports table renders from
+// (_buildTeacherEvalData in this file). The old CSV recomputed SET and SEF
+// itself with NO term filter and a raw average instead of getSEFForTeacher,
+// so an exported row could silently disagree with what the table on screen
+// showed for the same teacher. Exporting the cached data instead means the
+// PDF always matches the screen, and it respects whichever department pill
+// is currently selected.
 function exportReport() {
-  const teachers = getData('teachers', []).filter(t => !t.deleted);
-  let csv = 'Teacher ID,Name,Department,Faculty Type,SET Rating,SEF Rating\n';
-  teachers.forEach(teacher => {
-    const setScore = calculateWeightedSETRating(teacher.id);
-    const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacher.id && e.evaluatorType === 'supervisor');
-    const sefScore = sefEvals.length > 0 ? (sefEvals.reduce((a, b) => a + b.totalScore, 0) / sefEvals.length).toFixed(2) : '';
-    csv += `"${teacher.tid}","${teacher.name}","${teacher.dept || 'N/A'}","${teacher.facultyType || 'regular'}",${setScore}%,${sefScore ? sefScore + '%' : 'N/A'}\n`;
-  });
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
-    download: `teacher_eval_report_${new Date().toISOString().split('T')[0]}.csv`
-  });
-  a.click();
-  addAudit('Export Report', 'Exported CSV (SET and SEF separate columns)');
-  showToast('Report exported!', 'success');
+  const allData = window._allTeacherEvalData || _buildTeacherEvalData();
+  const dept    = window._reportsDeptFilter || '';
+  const list    = allData.filter(t => !dept || (t.dept || 'UNASSIGNED') === dept);
+  const termLabel = (typeof getReportTermInfo === 'function') ? getReportTermInfo().label : '';
+
+  const rows = list.map(t => `
+    <tr>
+      <td>${escapeHtml(t.tid)}</td>
+      <td>${escapeHtml(t.name)}</td>
+      <td>${escapeHtml(t.dept || 'N/A')}</td>
+      <td>${escapeHtml(t.facultyType || 'regular')}</td>
+      <td style="text-align:center;">${t.overallSET}${t.overallSET !== '—' ? '%' : ''}</td>
+      <td style="text-align:center;">${t.sefScore}${t.sefScore !== '—' ? '%' : ''}</td>
+    </tr>`).join('');
+
+  const html = `<html><head><title>Faculty Evaluation Report</title><style>
+      body{font-family:serif;margin:30px;font-size:12px;color:#111;}
+      h1{font-size:16px;margin:0 0 2px;}
+      .sub{color:#555;margin:0 0 16px;font-size:11px;}
+      table{width:100%;border-collapse:collapse;}
+      th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;}
+      th{background:#f2f2f2;}
+    </style></head><body>
+      <h1>Faculty Evaluation Report — SET and SEF Ratings</h1>
+      <div class="sub">${escapeHtml(termLabel)}${dept ? ' &middot; Department: ' + escapeHtml(dept) : ''} &middot; Generated ${new Date().toLocaleDateString()}</div>
+      <table><thead><tr><th>Teacher ID</th><th>Name</th><th>Department</th><th>Faculty Type</th><th>SET Rating</th><th>SEF Rating</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </body></html>`;
+
+  const w = window.open('', '_blank');
+  w.document.write(html);
+  w.document.close();
+  w.print();
+
+  addAudit('Export Report', 'Exported PDF (SET and SEF separate columns)' + (dept ? ` — dept ${dept}` : ''));
+  showToast('Report ready — choose "Save as PDF" in the print dialog.', 'success');
 }
+
+// Prints Annex C for every faculty member currently listed on the Reports
+// page (respects the department pill, like Export PDF above), as ONE
+// print job with a page break between faculty — one Print dialog covers
+// everyone instead of one popup per teacher.
+//
+// Reuses buildAnnexCContent (admin-annex.js) rather than recomputing
+// anything, so the printed figures are guaranteed to match what "View
+// Annex C" shows for that same teacher. It borrows the modal's own
+// content element to render into, then restores whatever was in it
+// afterward so the modal is undisturbed if it happens to be open.
+window.printAllAnnexC = function () {
+  const allData = window._allTeacherEvalData || _buildTeacherEvalData();
+  const dept    = window._reportsDeptFilter || '';
+  const list    = allData
+    .filter(t => (t.facultyType || 'regular') !== 'supervisor')
+    .filter(t => !dept || (t.dept || 'UNASSIGNED') === dept)
+    .filter(t => t.totalEvaluations > 0);
+
+  if (!list.length) {
+    showToast('No faculty with SET evaluations to print' + (dept ? ' in this department' : '') + '.', 'info');
+    return;
+  }
+
+  const body = document.getElementById('annexDModalBody');
+  if (!body) { showToast('Could not open the print view.', 'error'); return; }
+  const savedBody = body.innerHTML;
+
+  // Follow the Reports page's own term selection, same as clicking a row does.
+  const savedOverride = window._annexTermOverride;
+  window._annexTermOverride = null;
+
+  const sections = list.map(t => {
+    buildAnnexCContent(t.id);
+    return `<div style="page-break-after:always;">${body.innerHTML}</div>`;
+  });
+
+  body.innerHTML = savedBody;
+  window._annexTermOverride = savedOverride;
+
+  const w = window.open('', '_blank');
+  w.document.write(`<html><head><title>Annex C — All Faculty</title><style>
+      body{font-family:serif;margin:30px;font-size:12px;}
+      table{width:100%;border-collapse:collapse;}
+      th,td{border:1px solid #ccc;padding:6px 8px;}
+      button{display:none;}
+    </style></head><body>${sections.map(h => _annexPrintHtmlFromString(h)).join('')}</body></html>`);
+  w.document.close();
+  w.print();
+
+  addAudit('Print All Annex C', `${list.length} faculty` + (dept ? ` — dept ${dept}` : ''));
+};
+
+// Same cleanup _annexPrintHtml does (strip inputs/selects down to plain text,
+// drop buttons and .annex-noprint elements) but works on an HTML STRING
+// rather than a live DOM node, since printAllAnnexC builds several snippets
+// before any of them are attached to the page.
+window._annexPrintHtmlFromString = function (htmlStr) {
+  const holder = document.createElement('div');
+  holder.innerHTML = htmlStr;
+  return (typeof _annexPrintHtml === 'function') ? _annexPrintHtml(holder) : holder.innerHTML;
+};
 
 // ===== SUPERVISOR LIST =====
 window.renderSupervisorList = function(search = '') {

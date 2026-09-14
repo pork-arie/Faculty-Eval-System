@@ -1,17 +1,6 @@
-// ============================================================================
-// admin-scoring.js
-// ----------------------------------------------------------------------------
-// Every CMO 19 formula in one place.
-// Weighted SET (8.3), SEF averaged across supervisors (9.3), remarks bands,
-// report signatories, auto-finalisation. If a panelist asks how a rating is
-// computed, this is the only file they need to read.
-//
-// Split out of the original 4,441-line admin.js. Load order is load-bearing:
-// keep these in the order listed in dashboard.html - later files redefine
-// functions defined earlier, and the last definition wins.
-// ============================================================================
+// admin-scoring.js - all CMO 19 rating computation.
 
-// ===== CMO COMPLIANT SCORING SYSTEM =====
+// Institutional bands, not defined in CMO 19.
 window.getRemarks = function(percentage) {
     if (percentage >= 90) return 'Outstanding';
     if (percentage >= 75) return 'Very Satisfactory';
@@ -39,40 +28,11 @@ window.getActiveSY = function() {
     return null;
 };
 
-// ===== CMO §8.3 — THE ONE weighted-SET computation =====
-// Annex C, Annex D, the FER, Reports and the CSV export all go through here, so
-// the same faculty cannot show a different rating on two sheets printed from the
-// same screen. Three separate copies of this maths used to exist and they
-// disagreed on two points, both settled here:
-//
-//   - a class with NO evaluations is skipped entirely. It has no average to
-//     weight, and counting its enrolment in the divisor only drags the rating
-//     down for a class that was never rated. (Annex C used to count it, which is
-//     why Annex C and Annex D could print different scores for one faculty.)
-//   - exempted students (§8.2) are removed from the class head count. They are
-//     not permitted to evaluate, so they were never expected to.
-//
-// annexEvalInTerm and isStudentExempted are resolved at CALL time, not load time:
-// this file loads before adminEval.js defines them, but nothing calls this until
-// the dashboard is running, by which point both exist.
-// Column (3) of Annex C, "No. of Students" - what the class average is weighted by.
-//
-//   'respondents' (default) - how many students actually evaluated that class.
-//   'enrolled'              - the class roll, minus §8.2 exemptions.
-//
-// The CMO's worked example assumes full participation (§8.1 makes evaluation
-// mandatory), so the two agree there and it does not say which to use when they
-// diverge. They diverge badly in practice: weighting an average built from 8
-// responses by a roll of 39 asserts 31 ratings that were never given, and the
-// TOTAL column then stops being the sum of the ratings actually collected.
-// 'respondents' keeps every printed figure reproducible from the responses in
-// hand, which is the version to defend. Switch this one word if your office
-// rules otherwise.
+// DEFENCE POINT. Column (3) of Annex C: 'respondents' or 'enrolled'.
+// CMO assumes full participation, so it does not settle the case.
 const SET_WEIGHT_BY = 'respondents';
 
-// Year/Section label for one student, e.g. "BSIT 3A". Mirrors annexYearSection
-// in admin-annex.js; courseShorthand lives there and that file loads later, so
-// it is resolved at call time, not at load time.
+// Year/Section label, e.g. BSIT 4A.
 function _sectionLabel(st) {
     if (!st) return '\u2014';
     const course = (typeof courseShorthand === 'function')
@@ -82,30 +42,18 @@ function _sectionLabel(st) {
     return (course + ' ' + (yr ? yr[0] : '') + sec).trim() || '\u2014';
 }
 
-// Splits one class into its year/sections so Annex C can print a row each, the
-// way the signed form does. The per-section figures ALWAYS add back up to the
-// class total under either SET_WEIGHT_BY setting - which is the whole point of
-// splitting here rather than in the report:
-//
-//   'respondents' - a section's count is how many of its students answered.
-//   'enrolled'    - a section's count is how many it enrols, so a section that
-//                   answered nothing still occupies its share of the divisor.
-//
-// A class nobody evaluated gets one row (count 0) rather than disappearing.
+// One Annex C row per section. Rows always sum to the class total.
 function _setSectionRows(sub, classEvals, students) {
     const byId = {};
     students.forEach(s => { byId[s.id] = s; });
     const byEnrolled = (SET_WEIGHT_BY === 'enrolled');
 
-    // Scores actually given, grouped by the responder's year/section.
     const scores = {};
     classEvals.forEach(e => {
         const label = _sectionLabel(byId[e.studentId]);
         (scores[label] = scores[label] || []).push(parseFloat(e.totalScore) || 0);
     });
 
-    // Roll size per year/section, needed for the 'enrolled' setting and for the
-    // label of a class with no responses at all.
     const roll = {};
     (sub.enrolledIds || []).forEach(id => {
         const st = byId[id];
@@ -141,6 +89,9 @@ function _setSectionRows(sub, classEvals, students) {
     });
 }
 
+// CMO 19 8.3 - THE single weighted-SET computation.
+// Annex C, Annex D, FER and Reports all call this, so they agree.
+// Skips unrated classes; subtracts exempted students (8.2).
 window.computeWeightedSET = function(facultyId, termFilter) {
     const inTerm = (typeof termFilter === 'function') ? termFilter
                  : ((typeof annexEvalInTerm === 'function') ? annexEvalInTerm : () => true);
@@ -152,10 +103,6 @@ window.computeWeightedSET = function(facultyId, termFilter) {
         !s.isLabSchool                      // §8.5 — lab school excluded
     );
 
-    // e.teacherId is checked as well as e.subjectId. Narrowing by subject alone
-    // means that when a subject is reassigned mid-term, the PREVIOUS teacher's
-    // ratings follow the subject to the new teacher. Records written before
-    // teacherId existed carry no such field and are let through on subject alone.
     const evals = getData('evaluations', []).filter(e =>
         e.evaluatorType !== 'supervisor' &&
         (!e.teacherId || e.teacherId === facultyId) &&
@@ -173,14 +120,8 @@ window.computeWeightedSET = function(facultyId, termFilter) {
             ? classEvals.reduce((a, b) => a + (parseFloat(b.totalScore) || 0), 0) / classEvals.length
             : 0;
 
-        // One entry per year/section - Annex C prints a row each.
         const sections = _setSectionRows(sub, classEvals, students);
 
-        // The class figures are the SUM OF ITS OWN ROWS, exactly as the printed
-        // form adds column (3) and column (3x4) down the page. Computing the
-        // class total independently (pooled average x head count) disagrees with
-        // the rows whenever two sections rate differently and the weight is the
-        // roll rather than the responses - the table would then not add up.
         const weight = sections.reduce((n, r) => n + r.count, 0);
         const weighted = sections.reduce((n, r) => n + parseFloat(r.weightedScore), 0);
 
@@ -213,23 +154,13 @@ window.computeWeightedSET = function(facultyId, termFilter) {
     };
 };
 
-// ===== CMO COMPLIANT: Calculate Weighted SET Rating =====
-// Thin wrapper kept because many call sites use this name. All of the maths now
-// lives in computeWeightedSET above, so every screen agrees.
+// Wrapper kept for existing call sites.
 window.calculateWeightedSETRating = function(facultyId, termFilter) {
     const r = computeWeightedSET(facultyId, termFilter);
-    // 0 (not '0.00') when there is nothing to report — callers test truthiness.
     return r.totalStudents > 0 ? r.overallSET : 0;
 };
 
-// Editable cell for a printed form. Values typed here apply to this print run
-// only; the saved record is untouched. Rank in particular is often adjusted at
-// print time (a promotion mid-semester, or a rank the dropdown does not list).
 window.printField = function(value, minWidth, placeholder) {
-    // The rule is set INLINE rather than left to admin-styles.css. A stale cached
-    // stylesheet meant Name/Position rendered with no line at all, which looks
-    // like a broken form rather than a blank waiting to be filled.
-    // &nbsp; keeps an empty span from collapsing to zero height.
     const v = escapeHtml(value || '');
     return '<span contenteditable="true" spellcheck="false" data-print-field="1" '
       + 'data-placeholder="' + escapeHtml(placeholder || '') + '" '
@@ -239,8 +170,6 @@ window.printField = function(value, minWidth, placeholder) {
       + (v || '&nbsp;') + '</span>';
 };
 
-// Real date picker rather than a blank line, defaulted to today so the common
-// case needs no typing at all.
 window.printDate = function(idSuffix) {
     const today = new Date().toISOString().slice(0, 10);
     return '<input type="date" id="printDate_' + idSuffix + '" value="' + today + '" '
@@ -248,11 +177,6 @@ window.printDate = function(idSuffix) {
       + 'font-size:0.75rem;padding:1px 3px;background:transparent;outline:none;"/>';
 };
 
-// ===== REPORT SIGNATORIES =====
-// The Prepared by / Reviewed by names are the same on every printed report, so
-// they are stored once and filled in automatically rather than being handwritten
-// on each copy. The printed block stays editable (contenteditable) so a one-off
-// stand-in can be typed before printing without changing the saved default.
 window.getSignatories = function() {
     const d = getData('reportSignatories', {});
     return {
@@ -310,32 +234,16 @@ window.saveSignatories = function() {
     showToast('Signatories saved. They will appear on all printed reports.', 'success');
 };
 
-// A name/position line for the printed block. contenteditable so it can be
-// overtyped for a single print run; print:no-underline keeps it clean on paper.
 window.sigDate = function(which) {
     return '<div style="font-size:0.75rem;">Date: ' + printDate(which) + '</div>';
 };
 
 window.sigLine = function(label, value, width) {
-    // Uses printField so the signatory lines get the same on-screen affordance
-    // and the same solid rule when printed as every other editable cell.
     return '<div style="margin-bottom:6px;font-size:0.75rem;">' + label + ': '
       + printField(value, width, label) + '</div>';
 };
 
-// ===== SUPERVISOR (SEF) AGGREGATION =====
-// More than one supervisor can legitimately rate the same faculty member: a
-// college may have a dean and a program chair, and a chairperson borrowed from
-// another department supervises there too. Every one of those ratings is valid.
-//
-// The codebase used to disagree with itself about what to do with them — some
-// screens averaged, others took sefData[last] or .pop(), i.e. whichever
-// supervisor happened to submit most recently, silently discarding the rest.
-// That made the same faculty show different SEF figures on different pages.
-//
-// One rule now, everywhere: the SEF score is the MEAN of all supervisor ratings
-// for that faculty in the term. Averaging is the defensible reading of CMO 19 —
-// each supervisor's judgement carries equal weight, and no rating is thrown away.
+// CMO 19 9.3 - mean of the supervisors' ratings.
 window.getSEFForTeacher = function(teacherId, termFilter) {
     const list = getData('evaluations', [])
         .filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor')
@@ -347,35 +255,19 @@ window.getSEFForTeacher = function(teacherId, termFilter) {
     return { count: list.length, average: sum / list.length, list };
 };
 
-// ===== INSTITUTIONAL COMPOSITE: 60% SET + 40% SEF =====
-// IMPORTANT: this 60/40 weighting is NOT in CMO 19. The CMO reports SET and SEF
-// SEPARATELY - Annex C lists them side by side and Annex D does the same, with no
-// combined figure anywhere in the memorandum. If NwSSU wants a single number, it
-// is an institutional decision (or comes from DBM-CHED JC3), and it must not be
-// presented as a CMO requirement.
-//
-// The printed CMO forms (Annex C, Annex D, FEDAF) do NOT use this function - they
-// show SET and SEF as two separate figures, exactly as the annexes require. This
-// composite appears only on the internal FER modal, which is labelled accordingly.
+// INSTITUTIONAL 60/40 composite. NOT a CMO 19 formula.
+// The printed annexes report SET and SEF separately.
 window.calculateFinalRating = function(teacherId, termFilter) {
-    // Both halves must be scoped to the SAME rating period. getSEFForTeacher used
-    // to be called with no filter at all, so this figure mixed the selected term's
-    // SET with every SEF ever submitted, for every term.
     const inTerm = (typeof termFilter === 'function') ? termFilter
                  : ((typeof annexEvalInTerm === 'function') ? annexEvalInTerm : () => true);
     const studentPercentage = parseFloat(calculateWeightedSETRating(teacherId, inTerm));
     const sefAgg = getSEFForTeacher(teacherId, inTerm);
     const sefData = sefAgg.list;
 
-    // A real SET is never 0 (the lowest possible rating is 20%), so 0 means
-    // "no student evaluations yet". Likewise, no SEF record means "not evaluated
-    // by a supervisor" — it must NOT be treated as a score of 0.
     const hasSET = studentPercentage > 0;
     const hasSEF = sefData.length > 0;
     const supervisorScore = hasSEF ? sefAgg.average : null;   // mean of ALL supervisors
 
-    // Only compute the composite when BOTH halves exist; otherwise there is no
-    // combined score to show and the SET is reported on its own.
     const finalPercentage = (hasSET && hasSEF)
         ? Math.min(100, (studentPercentage * 0.60) + (supervisorScore * 0.40))
         : null;
@@ -393,15 +285,6 @@ window.calculateFinalRating = function(teacherId, termFilter) {
     };
 };
 
-// REMOVED (dead code): checkAndAutoFinalize
-// Replaced unconditionally by adminrate.js:52.
-// The 15 lines that were here never executed - the definition below in the
-// load order replaced this one before anything could call it.
-// Late-bound on purpose. This used to be setInterval(checkAndAutoFinalize, ...),
-// which captured THIS file's definition at load time - so the hourly timer kept
-// running the old implementation even after adminrate.js replaced the function,
-// while every manual call used the new one. Resolving the name when the timer
-// fires means both paths run the same code.
 setInterval(function () {
     if (typeof window.checkAndAutoFinalize === 'function') window.checkAndAutoFinalize();
 }, 3600000);

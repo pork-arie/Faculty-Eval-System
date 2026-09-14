@@ -1,19 +1,9 @@
-// ============================================================================
-// admin-nav.js
-// ----------------------------------------------------------------------------
-// App state, page navigation, dashboard cards, school year / semester.
-//
-// Split out of the original 4,441-line admin.js. Load order is load-bearing:
-// keep these in the order listed in dashboard.html - later files redefine
-// functions defined earlier, and the last definition wins.
-// ============================================================================
+// admin-nav.js - page switching and the dashboard summary cards.
 
-// ===== STATE =====
 let editStudentId = null, editTeacherId = null, editSubjectId = null;
 let _pendingFacultyType = "regular";
 let enrollSubjectId = null, resetPassStudentId = null;
 
-// ===== NAV =====
 function showPage(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -62,7 +52,6 @@ function doLogout() {
   } catch (e) { done(); }
 }
 
-// ===== DASHBOARD =====
 function renderDashboard() {
   const students = getData('students', []).filter(s => !s.deleted);
   const teachers = getData('teachers', []).filter(t => !t.deleted);
@@ -131,7 +120,6 @@ function renderDashboard() {
   `;
 }
 
-// ===== SCHOOL YEAR =====
 function renderSchoolYear() {
   const syl = getData('schoolYears', []);
   const el = document.getElementById('syList');

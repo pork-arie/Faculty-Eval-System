@@ -1,8 +1,5 @@
-// ===== ADMIN FEATURES: Dept Enrolled Modal, Student Grouping, Dept Mgmt Page, Feedback Page =====
-
-// ============================================================
-// FEATURE 1: ENROLLED STUDENTS MODAL (from dept page enrolled icon)
-// ============================================================
+// adminfeatures.js - department drill-downs, feedback page, shared table view.
+// Loads late: redefines renderStudents and wraps showPage.
 
 window.showDeptEnrolledStudents = function(deptCode) {
     const DEPT_CONFIG = getDepartments();
@@ -11,15 +8,9 @@ window.showDeptEnrolledStudents = function(deptCode) {
     const allStudents = getData('students', []).filter(s => !s.deleted);
     const allSubjects = getData('subjects', []).filter(s => s.dept === deptCode);
 
-    // Same set the dept stat card counts - see getDeptEnrolledStudentIds in
-    // admindept.js - so the card and the list agree by construction.
     const enrolledIds = getDeptEnrolledStudentIds(deptCode);
     const enrolledStudents = allStudents.filter(s => enrolledIds.has(s.id));
 
-    // Each student's classes, with enough detail to be worth expanding: who
-    // teaches it and whether they have actually evaluated it this term. Subject
-    // codes alone were already visible as badges; the point of opening a row is
-    // to see something the collapsed view cannot show.
     const teachers = getData('teachers', []);
     const inTerm = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : function () { return true; };
     const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor' && inTerm(e));
@@ -42,9 +33,6 @@ window.showDeptEnrolledStudents = function(deptCode) {
     document.getElementById('deptEnrolledCount').textContent =
         `${enrolledStudents.length} student${enrolledStudents.length !== 1 ? 's' : ''} \u00b7 click a row to see their subjects`;
 
-    // Stored before rendering: the row markup is shared with the search filter,
-    // and _deptEnrolledRow reads the map from here rather than taking it as an
-    // argument, so the two paths cannot drift apart again.
     window._deptEnrolledStudents = enrolledStudents;
     window._deptEnrolledSubjectMap = subjectMap;
 
@@ -52,9 +40,6 @@ window.showDeptEnrolledStudents = function(deptCode) {
     openModal('deptEnrolledModal');
 };
 
-// One renderer for both the initial list and the search results. These were two
-// near-identical copies that had already drifted - the empty state used
-// colspan="5" against a six-column table, so it under-spanned.
 window._deptEnrolledRender = function(list, emptyMsg) {
     const tbody = document.getElementById('deptEnrolledTbody');
     if (!tbody) return;
@@ -99,10 +84,6 @@ window._deptEnrolledRow = function(s) {
 window.toggleDeptEnrolledDetail = function(studentId) {
     const row = document.getElementById('dedet-' + studentId);
     if (!row) return;
-    // Treat anything that is not an open row as closed, rather than testing for
-    // the literal 'none'. Reading back an inline style is brittle - a stylesheet
-    // or a browser default can leave it as an empty string and the first click
-    // then closes an already-closed row instead of opening it.
     const open = row.style.display !== 'table-row';
     row.style.display = open ? 'table-row' : 'none';
     const chev = document.getElementById('dechev-' + studentId);
@@ -121,9 +102,6 @@ window.filterDeptEnrolledStudents = function(query) {
     _deptEnrolledRender(filtered, 'No students match your search.');
 };
 
-// Patch renderDeptPage to make ALL FOUR dept stat cards clickable:
-//   0 Teachers -> scroll to the Faculty table   1 Subjects -> scroll to the Subjects table
-//   2 Enrolled -> enrolled-students modal        3 Evaluations -> Reports & Analytics
 (function patchDeptStatCards() {
     const origRenderDeptPage = window.renderDeptPage;
     if (!origRenderDeptPage) {
@@ -146,7 +124,6 @@ window.filterDeptEnrolledStudents = function(query) {
             card.onclick = opts.onClick;
         };
 
-        // Smooth-scroll to an on-page table and briefly highlight its card
         const scrollToEl = (el) => {
             if (!el) return;
             const box = el.closest('.card') || el.closest('.dept-table-card') || el.parentElement || el;
@@ -171,11 +148,6 @@ window.filterDeptEnrolledStudents = function(query) {
     };
 })();
 
-
-// ============================================================
-// FEATURE 2: STUDENT MANAGEMENT — GROUPED BY DEPARTMENT
-// ============================================================
-
 let _studentSearchQuery = '';
 let _studentDeptFilter = '';
 
@@ -187,7 +159,6 @@ window.renderStudents = function(search) {
     const allStudents = getData('students', []).filter(s => !s.deleted);
     const DEPT_CONFIG = getDepartments();
 
-    // Apply search filter
     const filtered = allStudents.filter(s => {
         const matchSearch = !query ||
             s.name.toLowerCase().includes(query.toLowerCase()) ||
@@ -196,8 +167,6 @@ window.renderStudents = function(search) {
         const matchDept = !deptFilter || s.dept === deptFilter;
         return matchSearch && matchDept;
     });
-    // 1st Year -> 5th Year, then section, then name. See byYearThenName in
-    // admin-core.js; the department roster uses the same comparator.
     filtered.sort(byYearThenName);
 
     const tbody = document.getElementById('studentsTbody');
@@ -208,7 +177,6 @@ window.renderStudents = function(search) {
         return;
     }
 
-    // Group by department
     const groups = {};
     filtered.forEach(s => {
         const dept = s.dept || 'UNASSIGNED';
@@ -216,7 +184,6 @@ window.renderStudents = function(search) {
         groups[dept].push(s);
     });
 
-    // Sort dept groups: known depts first in order, then unassigned
     const deptOrder = Object.keys(DEPT_CONFIG);
     const sortedDepts = [
         ...deptOrder.filter(d => groups[d]),
@@ -267,20 +234,17 @@ window.filterStudentsByDept = function(deptCode) {
     _studentDeptFilter = deptCode;
     renderStudents();
 
-    // Update dept filter button states
     document.querySelectorAll('.student-dept-filter-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.dept === deptCode);
     });
 };
 
-// Build the dept filter pills in the students page
 window.buildStudentDeptFilterBar = function() {
     const container = document.getElementById('studentDeptFilterBar');
     if (!container) return;
     const DEPT_CONFIG = getDepartments();
     const allStudents = getData('students', []).filter(s => !s.deleted);
 
-    // Count per dept
     const counts = {};
     allStudents.forEach(s => { counts[s.dept || 'UNASSIGNED'] = (counts[s.dept || 'UNASSIGNED'] || 0) + 1; });
 
@@ -305,7 +269,6 @@ window.buildStudentDeptFilterBar = function() {
     container.innerHTML = html;
 };
 
-// Patch showPage to rebuild filter bars when navigating to students or teachers
 const _origShowPage = window.showPage;
 window.showPage = function(page) {
     _origShowPage(page);
@@ -342,28 +305,18 @@ window.showPage = function(page) {
     }
 };
 
-
-// ============================================================
-// FEATURE 3: DEPARTMENTS MANAGEMENT PAGE (nav item)
-// ============================================================
-
-// ── Emoji palette ──
 const DM_EMOJIS = ['🎓','📚','🏛️','💻','⚕️','⚖️','🏗️','🌾','🔬','🎨','🎭','📐','🧬','🏥','🧑‍💼','📊','🛠️','🌍','✈️','🏋️'];
 
-// ── Layout preference ──
 let _dmLayout = localStorage.getItem('deptManageLayout') || 'grid';
 
-// ── Inject styles once ──
 (function injectDMStyles() {
     if (document.getElementById('_dmStyles')) return;
     const s = document.createElement('style');
     s.id = '_dmStyles';
     s.textContent = `
-    /* Layout toggle buttons */
     .dm-layout-toggle { border: 1px solid var(--border) !important; padding: 5px 8px !important; }
     .dm-layout-toggle.active { background: var(--primary) !important; color: #fff !important; border-color: var(--primary) !important; }
 
-    /* Delete confirmation — slides up over the action bar */
     .dmc-del-confirm {
         position: absolute; bottom: 0; left: 0; right: 0;
         overflow: hidden; max-height: 0; transition: max-height .28s cubic-bezier(.4,0,.2,1);
@@ -381,7 +334,6 @@ let _dmLayout = localStorage.getItem('deptManageLayout') || 'grid';
     .dmc-del-confirm-btn { padding: 4px 14px; background: #dc2626; color: #fff; border: none; border-radius: 6px; font-size: 0.72rem; font-weight: 700; cursor: pointer; transition: background .12s; font-family: inherit; }
     .dmc-del-confirm-btn:hover { background: #b91c1c; }
 
-    /* List layout delete */
     .dml-del-wrap { border-top: 1px solid #fecaca; background: #fef2f2; }
 
     .dept-manage-list { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #fff; }
@@ -410,7 +362,6 @@ let _dmLayout = localStorage.getItem('deptManageLayout') || 'grid';
     .dml-actions { display: flex; gap: 6px; flex-shrink: 0; }
     .dml-del-wrap { border-top: 1px solid #fecaca; background: #fef2f2; }
 
-    /* Edit modal icon area */
     .edm-icon-prev {
         width: 52px; height: 52px; border-radius: 10px; background: var(--primary-light);
         display: flex; align-items: center; justify-content: center; font-size: 1.8rem;
@@ -430,7 +381,6 @@ let _dmLayout = localStorage.getItem('deptManageLayout') || 'grid';
     }
     .edm-upload-lbl:hover { background: var(--primary-light); }
 
-    /* Color swatches */
     .dm-color-swatch {
         width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
         border: 2px solid transparent; transition: transform .1s, border-color .1s;
@@ -442,7 +392,6 @@ let _dmLayout = localStorage.getItem('deptManageLayout') || 'grid';
     document.head.appendChild(s);
 })();
 
-// ── Color palette for new departments ──
 const DM_COLORS = [
     { hex: '#3b82f6', label: 'Blue' },
     { hex: '#8b5cf6', label: 'Violet' },
@@ -456,7 +405,6 @@ const DM_COLORS = [
     { hex: '#14b8a6', label: 'Teal' },
     { hex: '#84cc16', label: 'Lime' },
     { hex: '#64748b', label: 'Slate' },
-    // Original colors of the 8 default departments
     { hex: '#9ca3af', label: 'Steel (CCJS)' },
     { hex: '#eab308', label: 'Gold (CCIS)' },
     { hex: '#059669', label: 'Green (CON)' },
@@ -487,10 +435,6 @@ window._dmPickColor = function(hex, el) {
     if (hiddenInput) hiddenInput.value = hex;
 };
 
-
-// Shrink an uploaded department image to a small thumbnail so the base64 stays
-// tiny — large images exceed Firestore's 1MB document limit, which made icon
-// changes save locally but silently fail to sync (and revert on reload).
 window._resizeDeptImage = function(file, cb) {
     const reader = new FileReader();
     reader.onload = function(ev) {
@@ -547,7 +491,6 @@ window.showDeptManagePage = function() {
     if (pageEl) pageEl.classList.add('active');
     const navEl = document.getElementById('nav-deptManage');
     if (navEl) navEl.classList.add('active');
-    // Restore layout toggle state
     document.getElementById('dmLayoutGrid')?.classList.toggle('active', _dmLayout === 'grid');
     document.getElementById('dmLayoutList')?.classList.toggle('active', _dmLayout === 'list');
     _initDMColorPicker();
@@ -712,7 +655,6 @@ window.executeDMDelete = function(code) {
 
 window.confirmRemoveDept = window.executeDMDelete; // backward compat alias
 
-// ── Card menu dropdown helpers ──
 window.toggleDMCardMenu = function(code, e) {
     e.stopPropagation();
     const dd = document.getElementById('dmc-dd-' + code);
@@ -726,7 +668,6 @@ window.closeDMCardMenus = function() {
     document.querySelectorAll('.dmc-dropdown.open').forEach(d => d.classList.remove('open'));
 };
 
-// Close dropdowns when clicking outside
 document.addEventListener('click', function() { closeDMCardMenus(); });
 
 window.saveDeptFromManagePage = function() {
@@ -736,13 +677,11 @@ window.saveDeptFromManagePage = function() {
     const desc  = (document.getElementById('dmDesc')?.value  || '').trim() || name;
     const color = (document.getElementById('dmColor')?.value || _dmSelectedColor || '#3b82f6').trim();
 
-    // Auto-generate code from short name (uppercase, no spaces, max 8 chars)
     const baseCode = short.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 8);
 
     if (!name) { showToast('Please fill in the Full Name.', 'error'); return; }
     if (!baseCode) { showToast('Short Name must contain letters or numbers.', 'error'); return; }
 
-    // Auto-increment code if duplicate
     const existing = getDepartments();
     let code = baseCode;
     let suffix = 2;
@@ -750,12 +689,10 @@ window.saveDeptFromManagePage = function() {
 
     addDepartment(code, name, short, desc, icon, color);
 
-    // Clear form
     ['dmName','dmShort','dmDesc'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     document.getElementById('dmIcon').value = '';
     const prev = document.getElementById('dmIconPreview');
     if (prev) prev.innerHTML = `<svg width="18" height="18" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
-    // Reset color picker
     _dmSelectedColor = DM_COLORS[0].hex;
     document.querySelectorAll('#dmColorPicker .dm-color-swatch').forEach((b, i) => b.classList.toggle('sel', i === 0));
     const colorInput = document.getElementById('dmColor');
@@ -765,7 +702,6 @@ window.saveDeptFromManagePage = function() {
     buildStudentDeptFilterBar();
 };
 
-// ── Edit Department Modal ──
 window.openEditDeptModal = function(code) {
     const depts = getDepartments();
     const cfg = depts[code];
@@ -880,7 +816,6 @@ window.saveEditDept = function() {
 
     const isDefault = !cfg.isCustom;
 
-    // Build change log
     const changes = [];
     if (cfg.name  !== name)  changes.push(`name → "${name}"`);
     if (cfg.short !== short) changes.push(`short → "${short}"`);
@@ -888,9 +823,6 @@ window.saveEditDept = function() {
     if (cfg.icon  !== icon)  changes.push('icon updated');
     if ((cfg.color || '') !== color) changes.push('color updated');
 
-    // FIX: write directly into the unified 'departments' store (not the old 'customDepartments' key)
-    // 'customDepartments' was a stale separate key that syncCollectionToFirestore had no mapping for,
-    // causing Firestore to create a blank document while the real departments collection stayed unchanged.
     const allDepts = getDepartments();
     allDepts[originalCode] = {
         ...allDepts[originalCode],
@@ -913,16 +845,10 @@ window.saveEditDept = function() {
     closeModal('editDeptModal');
     renderDeptManagePage();
 
-    // Refresh live dept page if currently viewing this dept
     if (typeof currentDept !== 'undefined' && currentDept === originalCode) {
         renderDeptPage(originalCode);
     }
 };
-
-
-// ============================================================
-// FEATURE 4: FEEDBACK PAGE (student comments to instructors)
-// ============================================================
 
 window.showFeedbackPage = function(deptFilter) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -931,8 +857,6 @@ window.showFeedbackPage = function(deptFilter) {
     if (pageEl) pageEl.classList.add('active');
     const navEl = document.getElementById('nav-feedback');
     if (navEl) navEl.classList.add('active');
-    // Reset to the requested department (or All if none) so a stale filter
-    // from a previous visit never sticks around.
     _feedbackDeptFilter = deptFilter || '';
     _feedbackSearchQuery = '';
     const searchInput = document.querySelector('#page-feedback input[type="text"]');
@@ -944,14 +868,6 @@ window.showFeedbackPage = function(deptFilter) {
 let _feedbackDeptFilter = '';
 let _feedbackSearchQuery = '';
 
-// Student evaluations still on the books.
-//
-// Deleting a faculty member or a student is a SOFT delete - the record stays
-// with deleted:true so old reports do not lose their labels - but their
-// evaluations were never filtered here, so a removed teacher kept appearing on
-// this page with their comments. Hidden now, not deleted: the underlying
-// documents are left alone so Annex C for a past term still adds up. Use
-// "Clean up removed faculty" below to delete them for good.
 window._liveFeedbackEvals = function() {
     const teachers = getData('teachers', []);
     const subjects = getData('subjects', []);
@@ -964,8 +880,6 @@ window._liveFeedbackEvals = function() {
     });
 };
 
-// Evaluations whose faculty no longer exists, or was deleted. These are the
-// ones the page hides.
 window._orphanFeedbackEvals = function() {
     const live = new Set(_liveFeedbackEvals().map(function (e) { return e.id; }));
     return getData('evaluations', []).filter(function (e) {
@@ -973,9 +887,6 @@ window._orphanFeedbackEvals = function() {
     });
 };
 
-// Removes ONE evaluation, from localStorage and from Firestore. The sync helper
-// has no delete path, so without the second call the document comes straight
-// back on the next full sync.
 window.deleteFeedbackEntry = async function(evalId) {
     if (!confirm('Delete this evaluation permanently?\n\nThe rating and comment are removed and the faculty average is recomputed without them. This cannot be undone.')) return;
     const evals = getData('evaluations', []);
@@ -990,7 +901,6 @@ window.deleteFeedbackEntry = async function(evalId) {
     renderFeedbackPage();
 };
 
-// Deletes every evaluation left behind by a removed faculty member.
 window.purgeOrphanFeedback = async function() {
     const orphans = _orphanFeedbackEvals();
     if (!orphans.length) { showToast('Nothing to clean up.', 'info'); return; }
@@ -1009,15 +919,12 @@ window.purgeOrphanFeedback = async function() {
 };
 
 window.renderFeedbackPage = function() {
-    // Include every student evaluation — even ones with no written comment —
-    // so faculty who were rated still show up.
     const allEvals = _liveFeedbackEvals();
     const allTeachers = getData('teachers', []);
     const allStudents = getData('students', []);
     const allSubjects = getData('subjects', []);
     const DEPT_CONFIG = getDepartments();
 
-    // Build feedback filter dept pills
     const feedbackDeptBar = document.getElementById('feedbackDeptBar');
     if (feedbackDeptBar) {
         const deptCounts = {};
@@ -1040,7 +947,6 @@ window.renderFeedbackPage = function() {
         feedbackDeptBar.innerHTML = pillHtml;
     }
 
-    // Surface the hidden ones rather than letting them sit invisible forever.
     const purgeBtn = document.getElementById('feedbackPurgeBtn');
     if (purgeBtn) {
         const n = _orphanFeedbackEvals().length;
@@ -1054,8 +960,6 @@ window.renderFeedbackPage = function() {
 };
 
 window._renderFeedbackList = function() {
-    // Include every student evaluation — even ones with no written comment —
-    // so a faculty member who was rated still appears here.
     const allEvals = _liveFeedbackEvals();
     const allTeachers = getData('teachers', []);
     const allStudents = getData('students', []);
@@ -1064,15 +968,12 @@ window._renderFeedbackList = function() {
 
     const q = _feedbackSearchQuery.toLowerCase();
 
-    // Filter
     const filtered = allEvals.filter(ev => {
         const sub = allSubjects.find(s => s.id === ev.subjectId);
         const teacher = allTeachers.find(t => t.id === (sub ? sub.teacherId : null) || t.id === ev.teacherId);
         const dept = sub ? sub.dept : '';
 
         const matchDept = !_feedbackDeptFilter || (dept || '').toUpperCase() === _feedbackDeptFilter.toUpperCase();
-        // NOTE: searching by student name/ID is intentionally NOT supported —
-        // CMO No. 19 §6.10 requires student responses stay anonymous.
         const matchSearch = !q ||
             (teacher && teacher.name.toLowerCase().includes(q)) ||
             (sub && (sub.name.toLowerCase().includes(q) || sub.code.toLowerCase().includes(q))) ||
@@ -1084,7 +985,6 @@ window._renderFeedbackList = function() {
     const container = document.getElementById('feedbackList');
     if (!container) return;
 
-    // Stats
     const statsEl = document.getElementById('feedbackStats');
     if (statsEl) {
         const withComments = filtered.filter(ev => ev.comment && ev.comment.trim()).length;
@@ -1101,7 +1001,6 @@ window._renderFeedbackList = function() {
         return;
     }
 
-    // Group by teacher
     const byTeacher = {};
     filtered.forEach(ev => {
         const sub = allSubjects.find(s => s.id === ev.subjectId);
@@ -1125,10 +1024,8 @@ window._renderFeedbackList = function() {
         const deptLabel = cfg ? cfg.short : group.dept;
         const colorClass = cfg ? cfg.colorClass : 'dept-custom';
 
-        // Anonymous respondent labels (CMO §6.10) — student identity is never shown.
         const anonMap = _anonRespondentMap(tid);
 
-        // A teacher can handle several subjects — separate the evaluations by subject.
         const bySubject = {};
         group.comments.forEach(({ ev, sub }) => {
             const subKey = sub ? sub.id : 'unknown';
@@ -1179,8 +1076,6 @@ window._renderFeedbackList = function() {
                 </div>`;
             });
 
-            // Show only the first rating per subject by default; the rest stay
-            // in a collapsed container toggled from the teacher-card header.
             const groupId = `fbsub-${tid}-${subKey}`;
             const firstHtml = itemHtmls[0] || '';
             const restHtml = itemHtmls.slice(1).join('');
@@ -1230,8 +1125,6 @@ window._renderFeedbackList = function() {
     }).join('');
 };
 
-// Collect a faculty member's student evaluations (helper shared by the
-// chooser and the printer).
 function _teacherStudentEvals(teacherId) {
     const allSubjects = getData('subjects', []);
     return getData('evaluations', []).filter(e =>
@@ -1240,11 +1133,6 @@ function _teacherStudentEvals(teacherId) {
     );
 }
 
-// Assign each of a faculty member's evaluations a STABLE anonymous number
-// ("Respondent 1", "Respondent 2", …). Ordered by submission time so the same
-// response always gets the same label across the screen, chooser, and prints.
-// CMO No. 19 §6.10: student identity must never be traceable — so we key on
-// the evaluation id, never on the student.
 function _anonRespondentMap(teacherId) {
     const evals = _teacherStudentEvals(teacherId).slice().sort((a, b) =>
         String(a.timestamp || '').localeCompare(String(b.timestamp || '')) ||
@@ -1255,9 +1143,6 @@ function _anonRespondentMap(teacherId) {
     return map;
 }
 
-// Entry point from the "Print All Ratings" button. If there is more than one
-// response, let the admin choose to print everything or one anonymous
-// respondent; otherwise print straight away. Student identity is never shown.
 window.printTeacherFeedback = function(teacherId) {
     const evals = _teacherStudentEvals(teacherId);
     if (!evals.length) {
@@ -1265,7 +1150,6 @@ window.printTeacherFeedback = function(teacherId) {
         return;
     }
 
-    // Only one response → nothing to choose, print directly.
     if (evals.length <= 1) {
         _doPrintTeacherFeedback(teacherId, 'all');
         return;
@@ -1276,8 +1160,6 @@ window.printTeacherFeedback = function(teacherId) {
     const anonMap = _anonRespondentMap(teacherId);
     const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s));
 
-    // One option per evaluation, labelled by anonymous respondent number +
-    // subject (subject is not identifying). value = evaluation id.
     const options = evals
         .slice()
         .sort((a, b) => (anonMap[a.id] || 0) - (anonMap[b.id] || 0))
@@ -1287,7 +1169,6 @@ window.printTeacherFeedback = function(teacherId) {
             return `<option value="${esc(e.id)}">Respondent ${anonMap[e.id] || '—'}${subTxt}</option>`;
         }).join('');
 
-    // Lightweight self-contained chooser overlay (no dependency on the app's modal system).
     const overlay = document.createElement('div');
     overlay.className = 'fb-print-overlay';
     overlay.innerHTML = `
@@ -1315,9 +1196,6 @@ window.printTeacherFeedback = function(teacherId) {
     };
 };
 
-// Builds and opens the printable report. scope === 'all' prints every
-// evaluation; otherwise scope is a single evaluation id (one anonymous
-// respondent). Student identity is never printed.
 window._doPrintTeacherFeedback = function(teacherId, scope) {
     const teacher = getData('teachers', []).find(t => t.id === teacherId);
     const allSubjects = getData('subjects', []);
@@ -1338,13 +1216,11 @@ window._doPrintTeacherFeedback = function(teacherId, scope) {
     const deptName = cfg.name || (teacher ? teacher.dept : '') || 'N/A';
     const now = new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
 
-    // Overall average SET across this faculty's evaluations
     const scored = evals.filter(e => typeof e.totalScore === 'number');
     const avgSET = scored.length ? (scored.reduce((a, b) => a + b.totalScore, 0) / scored.length).toFixed(2) : '—';
 
     const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s));
 
-    // Group the printout by subject (a faculty can handle several subjects).
     const bySubjectPrint = {};
     evals.forEach(ev => {
         const sub = allSubjects.find(s => s.id === ev.subjectId);
@@ -1455,7 +1331,6 @@ window._doPrintTeacherFeedback = function(teacherId, scope) {
     if (typeof addAudit === 'function') addAudit('Print Ratings', `Printed ${singleRespondent ? 'one anonymous respondent' : 'all ratings'} for ${teacher ? teacher.name : teacherId}`);
 };
 
-// Print a SINGLE evaluation — one student's comment and rating for one subject.
 window.printOneEvaluation = function(evalId) {
     const ev = getData('evaluations', []).find(e => e.id === evalId);
     if (!ev) { showToast('Could not find that evaluation.', 'warning'); return; }
@@ -1526,9 +1401,6 @@ window.printOneEvaluation = function(evalId) {
     if (typeof addAudit === 'function') addAudit('Print Rating', `Printed one anonymous rating (Respondent ${respondentNo} → ${teacher ? teacher.name : 'faculty'})`);
 };
 
-// The 15 CMO SET questions students actually answer (mirrors QUESTIONS in
-// the student app user.js). Student evaluations store ratings keyed by q1..q15,
-// so this is what makes the feedback breakdown and printouts show real questions.
 window.SET_QUESTIONS = [
     { id: 'q1',  sec: 'A', text: 'Comes to class on time.' },
     { id: 'q2',  sec: 'A', text: 'Explains learning outcomes and the grading system at the start of the course.' },
@@ -1547,10 +1419,6 @@ window.SET_QUESTIONS = [
     { id: 'q15', sec: 'C', text: 'Provides transparent and fair criteria in rating student performance.' }
 ];
 
-// Best-effort label lookup for a rating item id. Student SET evaluations
-// store q1..q15 — resolve those to the full CMO question text. Falls back to
-// category labels (CATEGORIES / SUPERVISOR_CATEGORIES) and then a readable
-// version of the raw key so nothing is ever hidden.
 function _feedbackQuestionLabel(itemId) {
     const q = (window.SET_QUESTIONS || []).find(x => x.id === itemId);
     if (q) return q.text;
@@ -1561,10 +1429,6 @@ function _feedbackQuestionLabel(itemId) {
     return String(itemId).replace(/^sef/i, 'Item ').replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-// Normalize whatever per-question data a student evaluation carries into a
-// flat list of { label, score } rows. The student-facing app isn't part of
-// these admin files, so the scores could live under any of several keys and
-// in either object or array form — we probe them all rather than assume one.
 function _extractRatingRows(ev) {
     if (!ev || typeof ev !== 'object') return [];
     const candidateKeys = ['ratings', 'scores', 'answers', 'responses',
@@ -1592,8 +1456,6 @@ function _extractRatingRows(ev) {
             }
         });
     } else {
-        // Order by the SET question sequence (q1..q15) when keys are q-ids,
-        // otherwise keep natural insertion order.
         const order = (window.SET_QUESTIONS || []).map(q => q.id);
         const entries = Object.entries(data).sort((a, b) => {
             const ia = order.indexOf(a[0]);
@@ -1613,8 +1475,6 @@ function _extractRatingRows(ev) {
     return rows;
 }
 
-// Renders the per-question score points for one evaluation, hidden behind
-// the "View Rating" toggle so only the comment shows by default.
 function _buildFeedbackRatingBreakdown(ev) {
     const rows = _extractRatingRows(ev);
     if (!rows.length) {
@@ -1629,14 +1489,10 @@ function _buildFeedbackRatingBreakdown(ev) {
     </div>`;
 }
 
-// Jump from a department page straight into the Feedback page,
-// pre-filtered to whichever department was being viewed.
 window.goToDeptFeedback = function(deptCode) {
     showFeedbackPage(deptCode || '');
 };
 
-// Reveal/hide a single evaluation's rating breakdown. Ratings stay hidden
-// by default — only the comment shows normally, as required.
 window.toggleFeedbackRating = function(ratingId, btnEl) {
     const el = document.getElementById(ratingId);
     if (!el) return;
@@ -1645,8 +1501,6 @@ window.toggleFeedbackRating = function(ratingId, btnEl) {
     if (btnEl) btnEl.textContent = showing ? 'View Rating' : 'Hide Rating';
 };
 
-// Expand/collapse every collapsed subject group within one teacher card at
-// once (button lives beside "Print All Ratings" in the header).
 window.toggleTeacherMore = function(teacherId, btnEl, total) {
     const card = document.getElementById(`fbteacher-${teacherId}`);
     if (!card) return;
@@ -1660,7 +1514,6 @@ window.filterFeedback = function(dept, search) {
     if (dept !== undefined && dept !== null) _feedbackDeptFilter = dept;
     if (search !== undefined && search !== null) _feedbackSearchQuery = search;
 
-    // Update pill active states
     document.querySelectorAll('#feedbackDeptBar .student-dept-filter-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.dept === _feedbackDeptFilter ||
             (!btn.dataset.dept && !_feedbackDeptFilter));
@@ -1668,9 +1521,6 @@ window.filterFeedback = function(dept, search) {
 
     _renderFeedbackList();
 };
-// ============================================================
-// TEACHER DEPT FILTER BAR — Faculty only (mirrors student pattern)
-// ============================================================
 
 let _teacherDeptFilter = '';
 
@@ -1678,7 +1528,6 @@ window.buildTeacherDeptFilterBar = function() {
     const container = document.getElementById('teacherDeptFilterBar');
     if (!container) return;
     const DEPT_CONFIG = getDepartments();
-    // Faculty only — supervisors have their own separate bar
     const allFaculty = getData('teachers', []).filter(t => !t.deleted && t.facultyType !== 'supervisor');
 
     const counts = {};
@@ -1716,10 +1565,6 @@ window.filterTeachersByDept = function(deptCode) {
     renderTeachers(search);
 };
 
-// ============================================================
-// SUPERVISOR DEPT FILTER BAR — Supervisors only, independent
-// ============================================================
-
 let _supervisorDeptFilter = '';
 
 window.buildSupervisorDeptFilterBar = function() {
@@ -1728,7 +1573,6 @@ window.buildSupervisorDeptFilterBar = function() {
     const DEPT_CONFIG = getDepartments();
     const allSupervisors = getData('teachers', []).filter(t => !t.deleted && t.facultyType === 'supervisor');
 
-    // A supervisor covering two departments is counted under both pills.
     const counts = {};
     allSupervisors.forEach(t => {
         const list = (typeof getSupervisedDepts === 'function') ? getSupervisedDepts(t) : [];
@@ -1766,13 +1610,6 @@ window.filterSupervisorsByDept = function(deptCode) {
     renderSupervisorTable(search);
 };
 
-// ============================================================
-// DEPARTMENT "VIEW ALL" PAGE  (Teachers / Subjects / Enrolled)
-// Styled exactly like the Reports & Analytics "View Full List":
-// an in-app page (sidebar stays) using .page-header / .card /
-// .data-table, with a Back button and Export CSV.
-// ============================================================
-// Expand/collapse the subject list under an enrolled-student row.
 window._dflToggle = function(studentId) {
     const row = document.querySelector('tr._dfl-detail[data-for="' + studentId + '"]');
     if (!row) return;
@@ -1800,9 +1637,6 @@ window.showDeptFullList = function(deptCode, type) {
   let columns, rows;
 
   if (type === 'teachers') {
-    // Regular faculty by home department, plus any supervisor assigned to oversee
-    // this department - a chairperson borrowed from another college belongs on
-    // this list too, same as on the department page itself.
     const list = allTeachers.filter(t => {
         const isSup = (t.facultyType || 'regular') === 'supervisor';
         if (!isSup) return t.dept === deptCode;
@@ -1813,9 +1647,6 @@ window.showDeptFullList = function(deptCode, type) {
     columns = ['ID', 'Name', 'Status', 'SET %', 'SEF %'];
     rows = list.map(t => {
       const setSc = (typeof calculateWeightedSETRating === 'function') ? calculateWeightedSETRating(t.id) : '0';
-      // Mean of every supervisor rating, matching getSEFForTeacher() in admin.js.
-      // This used to take the last one written, so a faculty with two supervisors
-      // showed a different figure here than on the reports page.
       const sefAgg = (typeof getSEFForTeacher === 'function')
         ? getSEFForTeacher(t.id)
         : (() => {
@@ -1844,8 +1675,6 @@ window.showDeptFullList = function(deptCode, type) {
     });
   } else { // enrolled
     columns = ['Student ID', 'Name', 'Course', 'Year & Section', 'Subjects'];
-    // Row set is getDeptEnrolledStudentIds(); the loop below only attaches which
-    // subjects each one takes, so this page cannot drift from the card again.
     const deptIds = getDeptEnrolledStudentIds(deptCode);
     const inTerm = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : function () { return true; };
     const termEvals = allEvals.filter(e => e.evaluatorType !== 'supervisor' && inTerm(e));
@@ -1857,12 +1686,6 @@ window.showDeptFullList = function(deptCode, type) {
         if (!st) return;
         if (!map[eid]) map[eid] = { st: st, subs: [] };
         const tch = allTeachers.find(t => t.id === sub.teacherId);
-        // Whether THIS student has evaluated THIS class, in the active term.
-        // Same term test Annex C uses, so the two can never disagree.
-        // Whether, not when. A submission date is a trace back to an individual
-        // student's response, which CMO 6.10 asks the designated office to
-        // prevent - and "Evaluated" already answers the only question this view
-        // needs to answer. The timestamp is deliberately not carried here.
         const ev = termEvals.find(e => e.studentId === eid && e.subjectId === sub.id);
         map[eid].subs.push({
           code: sub.code, name: sub.name || '',
@@ -1871,24 +1694,14 @@ window.showDeptFullList = function(deptCode, type) {
         });
       });
     });
-    // Course first, then year, section and name - so a department that runs
-    // several programmes reads one programme at a time instead of interleaving
-    // them by year. See byCourseThenYear in admin-core.js.
     const orderedKeys = Object.keys(map).sort((ka, kb) => byCourseThenYear(map[ka].st, map[kb].st));
     rows = orderedKeys.map(k => {
       const st = map[k].st, subs = map[k].subs;
       const ys = (st.year || '') + (st.section ? ' - ' + st.section : '');
-      // Short form on screen ("BSIT"), full registered name in the CSV and in
-      // the search text, so a search for either still finds the student.
       const courseFull  = String(st.course || '');
       const courseShort = courseFull
         ? ((typeof courseShorthand === 'function') ? courseShorthand(courseFull) : courseFull)
         : '\u2014';
-      // Columns are unchanged. The only visible addition is a chevron in the
-      // Subjects cell, so the row reads as expandable without altering the table.
-      // The codes live in the dropdown now, not here. The cell keeps a plain
-      // count so the row still says how many classes the student carries - and
-      // so the cell is not an empty box with only a chevron in it.
       const chev = '<svg class="_dfl-chev" width="11" height="11" fill="none" stroke="currentColor" '
         + 'stroke-width="2.5" viewBox="0 0 24 24" style="vertical-align:-1px;margin-right:7px;'
         + 'color:var(--muted,#64748b);transition:transform 0.15s;"><polyline points="9 18 15 12 9 6"/></svg>';
@@ -1920,7 +1733,6 @@ window.showDeptFullList = function(deptCode, type) {
   const title = (titleMap[type] || 'List') + ' \u2014 ' + esc(cfg.name);
   const sub = rows.length + ' ' + (rows.length === 1 ? 'record' : 'records');
 
-  // Ensure the page container exists (created once, reused after)
   let pageEl = document.getElementById('page-deptFullList');
   if (!pageEl) {
     pageEl = document.createElement('div');
@@ -1933,8 +1745,6 @@ window.showDeptFullList = function(deptCode, type) {
   const headHtml = '<tr>' + columns.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr>';
   const bodyHtml = rows.length
     ? rows.map(r => {
-        // Rows with a detail payload toggle it; rows with an onclick keep their
-        // existing behaviour. Nothing else about the table changes.
         const open = r.detail ? ' onclick="_dflToggle(\'' + r.id + '\')" style="cursor:pointer;" title="Show this student\'s subjects and evaluation status"' : '';
         const click = r.onclick ? ' onclick="' + r.onclick + '" style="cursor:pointer;" title="Open report"' : open;
         return '<tr data-s="' + r.s + '"' + click + '>'
@@ -1958,16 +1768,13 @@ window.showDeptFullList = function(deptCode, type) {
     + '</div>'
     + '<div class="card"><div class="table-wrap"><table class="data-table"><thead>' + headHtml + '</thead><tbody id="_dflBody">' + bodyHtml + '</tbody></table></div></div>';
 
-  // Activate this page (same mechanism as showPage)
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   pageEl.classList.add('active');
   if (typeof closeSidebar === 'function') closeSidebar();
   window.scrollTo(0, 0);
 
-  // Stash for CSV export
   window._dflExport = { title: title, columns: columns, rows: rows };
 
-  // Live search
   const searchEl = document.getElementById('_dflSearch');
   const bodyEl   = document.getElementById('_dflBody');
   const subEl    = document.getElementById('_dflSub');
@@ -1980,8 +1787,6 @@ window.showDeptFullList = function(deptCode, type) {
         tr.style.display = hit ? '' : 'none';
         if (hit) shown++;
       });
-      // Collapse every open detail row. Leaving one open while its parent is
-      // filtered out would strand a subject list under an unrelated student.
       Array.prototype.forEach.call(bodyEl.querySelectorAll('tr._dfl-detail'), tr => { tr.style.display = 'none'; });
       Array.prototype.forEach.call(bodyEl.querySelectorAll('._dfl-chev'), c => { c.style.transform = ''; });
       if (subEl) subEl.textContent = shown + ' ' + (shown === 1 ? 'record' : 'records');
@@ -1989,7 +1794,6 @@ window.showDeptFullList = function(deptCode, type) {
   }
 };
 
-// CSV export for whatever dept list is currently shown
 window._exportDeptListCSV = function() {
   const d = window._dflExport;
   if (!d || !d.rows.length) { if (typeof showToast === 'function') showToast('Nothing to export.', 'info'); return; }
