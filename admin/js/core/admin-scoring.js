@@ -29,7 +29,20 @@ window.getActiveSY = function() {
 };
 
 // DEFENCE POINT. Column (3) of Annex C: 'respondents' or 'enrolled'.
-// CMO assumes full participation, so it does not settle the case.
+//
+// CMO 19 assumes full participation (8.1 makes evaluation mandatory), so the
+// memorandum never has to choose and does not settle the case.
+//
+// 'respondents' - column (3) counts the students who actually submitted, so
+//   avg x count is the sum of the ratings really collected and every printed
+//   figure traces back to a real response.
+// 'enrolled'    - column (3) matches the class roll, the literal reading of
+//   "No. of Students". But with 1 of 2 answering, that one rating is weighted
+//   as though both students gave it - the absent student is assumed to agree.
+//
+// Set to 'respondents' so nothing is assumed. Participation is still visible:
+// the count in column (3) opens a roster showing who has and has not
+// submitted (annexSectionRoster in admin-annex.js).
 const SET_WEIGHT_BY = 'respondents';
 
 // Year/Section label, e.g. BSIT 4A.
@@ -63,17 +76,22 @@ function _setSectionRows(sub, classEvals, students) {
         roll[label] = (roll[label] || 0) + 1;
     });
 
-    if (!classEvals.length) {
-        const labels = Object.keys(roll).sort();
-        return [{
-            yearSection: labels.length ? labels.join(', ') : '\u2014',
-            count: 0, avgScore: '0.00', weightedScore: '0.00', rated: false
-        }];
-    }
+    // One row per section on the roll, even when the class has no responses at
+    // all. The old code collapsed an unevaluated class into a single row
+    // listing every section in one cell - "BSIT 1A, BSIT 1B, BSIT 2A, ..." -
+    // which was unreadable and showed 0 where the reader expects a head count.
+    // Always list every section on the roll, plus any section that answered but
+    // is no longer on it (a transferred student). Listing only the sections
+    // that answered made an unevaluated class vanish from the form entirely,
+    // and the reader could not tell the class existed.
+    const labels = Array.from(new Set(
+        Object.keys(roll).concat(Object.keys(scores))
+    )).sort();
 
-    const labels = byEnrolled
-        ? Object.keys(roll).sort()          // every section on the roll
-        : Object.keys(scores).sort();       // only sections that answered
+    if (!labels.length) {
+        return [{ yearSection: '\u2014', count: 0, avgScore: '0.00',
+                  weightedScore: '0.00', rated: false }];
+    }
 
     return labels.map(label => {
         const given = scores[label] || [];
@@ -83,7 +101,12 @@ function _setSectionRows(sub, classEvals, students) {
             yearSection:   label,
             count:         count,
             avgScore:      avg.toFixed(2),
-            weightedScore: (avg * count).toFixed(2),
+            // A section nobody answered has no average, so there is nothing to
+            // weight. It is listed for completeness but contributes neither a
+            // score nor a head count to the TOTAL - counting its students while
+            // contributing zero would drag the faculty's rating down for a
+            // class that was simply never rated.
+            weightedScore: given.length ? (avg * count).toFixed(2) : '0.00',
             rated:         given.length > 0
         };
     });
@@ -122,8 +145,11 @@ window.computeWeightedSET = function(facultyId, termFilter) {
 
         const sections = _setSectionRows(sub, classEvals, students);
 
-        const weight = sections.reduce((n, r) => n + r.count, 0);
-        const weighted = sections.reduce((n, r) => n + parseFloat(r.weightedScore), 0);
+        // Only sections that actually have responses are weighted. A section
+        // listed with no responses shows its head count on the form but adds
+        // nothing to either total, so it cannot pull the rating down.
+        const weight   = sections.reduce((n, r) => n + (r.rated ? r.count : 0), 0);
+        const weighted = sections.reduce((n, r) => n + (r.rated ? parseFloat(r.weightedScore) : 0), 0);
 
         return {
             seq:           idx + 1,

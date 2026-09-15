@@ -441,7 +441,10 @@ function renderRptViewAll() {
                         <th style="color:#d97706;text-align:center;">SEF Rating</th>
                     </tr>
                 </thead>
-                <tbody>${list.map(t => _buildFacultyRow(t)).join('')}</tbody>`;
+                <tbody>${list.length
+                    ? list.map(t => _buildFacultyRow(t)).join('')
+                    : _rptEmptyRow(6, `No faculty yet${dept ? ' in ' + deptLabel : ''}.`,
+                        'Assign faculty to a department and give them a teaching load to see them here.')}</tbody>`;
     } else {
         tbody = `<thead>
                     <tr>
@@ -452,7 +455,10 @@ function renderRptViewAll() {
                         <th style="text-align:center;">Status</th>
                     </tr>
                 </thead>
-                <tbody>${list.map(t => _buildSupervisorRow(t)).join('')}</tbody>`;
+                <tbody>${list.length
+                    ? list.map(t => _buildSupervisorRow(t)).join('')
+                    : _rptEmptyRow(5, `No supervisors yet${dept ? ' in ' + deptLabel : ''}.`,
+                        'Designate a faculty member as a program chair to see them here.')}</tbody>`;
     }
 
     document.getElementById('rptViewAllContent').innerHTML = `
@@ -462,8 +468,8 @@ function renderRptViewAll() {
                 <p>${subtitle}</p>
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
-                <button class="btn btn-ghost btn-sm" onclick="_exportRptViewAllCSV('${tableType}', window._rptViewAllList, '${deptLabel}')">
-                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV
+                <button class="btn btn-ghost btn-sm" ${list.length ? '' : 'disabled style="opacity:.5;cursor:not-allowed;"'} onclick="_exportRptViewAllPDF('${tableType}', window._rptViewAllList, '${deptLabel}')">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export PDF
                 </button>
                 <button class="btn btn-ghost btn-sm" onclick="showPage('reports')">
                     <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><polyline points="15 18 9 12 15 6"/></svg>Back to Reports
@@ -480,29 +486,54 @@ function renderRptViewAll() {
     window._rptViewAllList = list;
 }
 
-// CSV export scoped to what is shown in the View All modal
-function _exportRptViewAllCSV(tableType, list, deptLabel) {
-    const isFaculty = tableType === 'faculty';
-    let csv;
-    if (isFaculty) {
-        csv = 'Teacher ID,Name,Department,Classes,Evals,SET Rating,SEF Rating\n';
-        list.forEach(t => {
-            csv += `"${t.tid}","${t.name}","${t.dept || 'N/A'}",${t.totalClasses},${t.totalEvaluations},${t.overallSET !== '\u2014' ? t.overallSET + '%' : 'N/A'},${t.sefScore !== '\u2014' ? t.sefScore + '%' : 'N/A'}\n`;
-        });
-    } else {
-        csv = 'Teacher ID,Name,Department,SET Rating,SEF Rating,Status\n';
-        list.forEach(t => {
-            csv += `"${t.tid}","${t.name}","${t.dept || 'N/A'}",${t.overallSET !== '\u2014' ? t.overallSET + '%' : 'N/A'},${t.sefScore !== '\u2014' ? t.sefScore + '%' : 'N/A'},"${t.status || ''}"\n`;
-        });
+// Was a CSV export. Now prints the same list through the browser's print
+// dialog, so the destination "Save as PDF" produces the file - the same
+// mechanism Annex C/D and the Reports export use, rather than a second
+// code path with its own formatting.
+function _exportRptViewAllPDF(tableType, list, deptLabel) {
+    list = list || [];
+    if (!list.length) {
+        showToast('Nothing to export — the list is empty.', 'info');
+        return;
     }
-    const safeLabel = deptLabel.replace(/[^a-z0-9]/gi, '_');
-    const a = Object.assign(document.createElement('a'), {
-        href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
-        download: `${tableType}_${safeLabel}_${new Date().toISOString().split('T')[0]}.csv`
-    });
-    a.click();
-    addAudit('Export View-All CSV', `Exported ${tableType} list for ${deptLabel}`);
-    showToast('CSV exported!', 'success');
+
+    const isFaculty = tableType === 'faculty';
+    const termLabel = (typeof getReportTermInfo === 'function') ? getReportTermInfo().label : '';
+    const pct = v => (v !== '\u2014' ? v + '%' : 'N/A');
+
+    const head = isFaculty
+        ? '<tr><th>Teacher ID</th><th>Name</th><th>Department</th><th>Classes</th><th>Evals</th><th>SET Rating</th><th>SEF Rating</th></tr>'
+        : '<tr><th>Teacher ID</th><th>Name</th><th>Department</th><th>SET Rating</th><th>SEF Rating</th><th>Status</th></tr>';
+
+    const rows = list.map(t => isFaculty
+        ? `<tr><td>${escapeHtml(t.tid)}</td><td>${escapeHtml(t.name)}</td><td>${escapeHtml(t.dept || 'N/A')}</td>`
+          + `<td style="text-align:center;">${t.totalClasses}</td><td style="text-align:center;">${t.totalEvaluations}</td>`
+          + `<td style="text-align:center;">${pct(t.overallSET)}</td><td style="text-align:center;">${pct(t.sefScore)}</td></tr>`
+        : `<tr><td>${escapeHtml(t.tid)}</td><td>${escapeHtml(t.name)}</td><td>${escapeHtml(t.dept || 'N/A')}</td>`
+          + `<td style="text-align:center;">${pct(t.overallSET)}</td><td style="text-align:center;">${pct(t.sefScore)}</td>`
+          + `<td style="text-align:center;">${escapeHtml(t.status || '')}</td></tr>`
+    ).join('');
+
+    const title = (isFaculty ? 'Faculty Performance' : 'Supervisors') + ' \u2014 ' + deptLabel;
+
+    const w = window.open('', '_blank');
+    w.document.write(`<html><head><title>${escapeHtml(title)}</title><style>
+        body{font-family:serif;margin:30px;font-size:12px;color:#111;}
+        h1{font-size:16px;margin:0 0 2px;}
+        .sub{color:#555;margin:0 0 16px;font-size:11px;}
+        table{width:100%;border-collapse:collapse;}
+        th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;}
+        th{background:#f2f2f2;}
+      </style></head><body>
+        <h1>${escapeHtml(title)}</h1>
+        <div class="sub">${escapeHtml(termLabel)} &middot; ${list.length} ${isFaculty ? 'faculty member' : 'supervisor'}${list.length !== 1 ? 's' : ''} &middot; Generated ${new Date().toLocaleDateString()}</div>
+        <table><thead>${head}</thead><tbody>${rows}</tbody></table>
+      </body></html>`);
+    w.document.close();
+    w.print();
+
+    addAudit('Export View-All PDF', `Exported ${tableType} list for ${deptLabel}`);
+    showToast('Report ready — choose "Save as PDF" in the print dialog.', 'success');
 }
 
 // ===== SUBJECT DEPT FILTER PILLS =====

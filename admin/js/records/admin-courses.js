@@ -78,7 +78,11 @@ window.loadStuCourses = function(deptCode) {
 
   const courses = COURSES_BY_DEPT[deptCode];
   if (!courses || !courses.length) {
-    sel.innerHTML = '<option value="">— No courses set up for ' + deptCode + ' —</option>';
+    // Same reasoning as populateStuCourseDropdown: preserve what the record
+    // already has rather than offering only a blank.
+    sel.innerHTML = '<option value="">— No courses set up for ' + deptCode + ' —</option>'
+      + (_stuPendingCourse ? `<option value="${_stuPendingCourse}" selected>${_stuPendingCourse} (not registered)</option>` : '');
+    _stuPendingCourse = '';
     return;
   }
 
@@ -102,7 +106,20 @@ window.deptForCourse = function(course) {
 function populateStuCourseDropdown(deptCode, selected) {
   const sel = document.getElementById('stuCourse');
   if (!sel) return;
-  const courses = COURSES_BY_DEPT[deptCode] || [];
+  const courses = (COURSES_BY_DEPT[deptCode] || []).slice();
+
+  // Keep a course the student already has even when it is not registered under
+  // this department. Without this the <select> has no matching <option>, so it
+  // falls back to the blank one - and saving then writes that blank straight
+  // over a course the record already held. Editing anything at all, a password
+  // included, silently wiped the course.
+  if (selected && courses.indexOf(selected) === -1) {
+    sel.innerHTML = `<option value="">— Select Course —</option>`
+      + `<option value="${selected}" selected>${selected} (not registered)</option>`
+      + courses.map(c => `<option value="${c}">${c}</option>`).join('');
+    return;
+  }
+
   sel.innerHTML = `<option value="">— Select Course —</option>` +
     courses.map(c => `<option value="${c}"${c === selected ? ' selected' : ''}>${c}</option>`).join('');
 }

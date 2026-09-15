@@ -960,7 +960,7 @@ function _renderCoursesMgmtBody() {
         <!-- Add single course row -->
         <div class="cm-add-row">
             <input class="form-control" id="mcNewCrseInput"
-                placeholder="e.g. BSMT (Bachelor of Science in Marine Transportation)"
+                placeholder="e.g. Bachelor of Science in Marine Transportation (BSMT)"
                 onkeydown="if(event.key==='Enter'){mcAddCourseFromPanel()}" />
             <button class="btn btn-primary" style="white-space:nowrap;font-size:0.8rem;"
                 onclick="mcAddCourseFromPanel()">+ Add Course</button>

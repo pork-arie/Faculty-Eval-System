@@ -172,13 +172,24 @@ function exportReport() {
 window.printAllAnnexC = function () {
   const allData = window._allTeacherEvalData || _buildTeacherEvalData();
   const dept    = window._reportsDeptFilter || '';
+  // Faculty AND supervisors. A supervisor also teaches, so they have their own
+  // SET rating and their own Annex C; excluding them left those forms unprinted.
+  //
+  // Included if there is anything to put on the form: an assigned class, a
+  // student evaluation, or a supervisor rating.
+  //
+  // Each of the three matters on its own. A class with no responses yet still
+  // prints a valid Annex C showing zero responses, which is what the office
+  // needs mid-period - requiring evaluations made a whole department look
+  // broken, since picking a dept nobody had evaluated produced nothing at all.
+  // sefRaters covers the faculty rated by their program chair who hold no
+  // class this term: they still have an SEF figure and still need their form.
   const list    = allData
-    .filter(t => (t.facultyType || 'regular') !== 'supervisor')
     .filter(t => !dept || (t.dept || 'UNASSIGNED') === dept)
-    .filter(t => t.totalEvaluations > 0);
+    .filter(t => t.totalClasses > 0 || t.totalEvaluations > 0 || t.sefRaters > 0);
 
   if (!list.length) {
-    showToast('No faculty with SET evaluations to print' + (dept ? ' in this department' : '') + '.', 'info');
+    showToast('Nothing to print' + (dept ? ' in this department' : '') + ' — no assigned classes, student evaluations, or supervisor ratings.', 'info');
     return;
   }
 
@@ -208,7 +219,7 @@ window.printAllAnnexC = function () {
   w.document.close();
   w.print();
 
-  addAudit('Print All Annex C', `${list.length} faculty` + (dept ? ` — dept ${dept}` : ''));
+  addAudit('Print All Annex C', `${list.length} faculty and supervisors` + (dept ? ` — dept ${dept}` : ''));
 };
 
 // Same cleanup _annexPrintHtml does (strip inputs/selects down to plain text,

@@ -167,6 +167,144 @@ function _annexPrintHtml(sourceEl) {
     return clone.innerHTML;
 }
 
+// ============================================================
+// SECTION ROSTER  (click column 3 of Annex C)
+// ------------------------------------------------------------
+// Answers two questions the printed form cannot: who in this section has
+// actually submitted, and has anyone submitted TWICE.
+//
+// Duplicates matter because a second submission is counted twice over: once in
+// the number of submissions that column (3) weights by, and again in the mean
+// that column (4) reports. The printed form shows only the totals, so nothing
+// on it reveals that two of the ratings came from the same student - which is
+// why this view exists.
+//
+// Shows submission STATUS only - never the rating or the comment. The office
+// must be able to chase non-respondents (evaluation is mandatory, CMO 8.1)
+// without being able to read what any named student wrote (6.10).
+// ============================================================
+window.annexSectionRoster = function (subjectId, sectionLabel) {
+  const sub = getData('subjects', []).find(x => x.id === subjectId);
+  if (!sub) { showToast('Subject not found.', 'error'); return; }
+
+  const students = getData('students', []).filter(s => !s.deleted);
+  const inTerm   = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : () => true;
+
+  // Same scoping as the row itself: this subject, student evaluations, this term.
+  const evals = getData('evaluations', []).filter(e =>
+      e.subjectId === subjectId &&
+      e.evaluatorType !== 'supervisor' &&
+      (!e.teacherId || e.teacherId === sub.teacherId) &&
+      inTerm(e));
+
+  // A row labelled "BSIT 1A, BSIT 1B" is an unrated class - one row covering
+  // every section. Accept any of the listed labels in that case.
+  const wanted = String(sectionLabel || '').split(',').map(x => x.trim()).filter(Boolean);
+  const labelOf = st => (typeof _sectionLabel === 'function') ? _sectionLabel(st) : '';
+  const inSection = st => !wanted.length || wanted.indexOf(labelOf(st)) !== -1;
+
+  const roster = (sub.enrolledIds || [])
+      .map(id => students.find(s => s.id === id))
+      .filter(Boolean)
+      .filter(inSection)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+
+  // Count submissions per student so a second copy is visible rather than just
+  // inflating the total.
+  const countFor = {};
+  evals.forEach(e => { if (e.studentId) countFor[e.studentId] = (countFor[e.studentId] || 0) + 1; });
+
+  const submitted = roster.filter(s => (countFor[s.id] || 0) > 0).length;
+  const dupes     = roster.filter(s => (countFor[s.id] || 0) > 1);
+
+  // Submissions made BY this section, so the counts match the row that was
+  // clicked rather than the whole subject.
+  const sectionIds   = new Set(roster.map(s => s.id));
+  const sectionEvals = evals.filter(e => sectionIds.has(e.studentId));
+
+  // A stray is a submission from someone not enrolled in THE SUBJECT at all -
+  // a transferred student, or a stale record. Checked against the subject's
+  // full enrolment, not this section's: comparing against the section would
+  // report every student from a different section as unenrolled.
+  const subjectIds = new Set((sub.enrolledIds || []));
+  const strays = Object.keys(countFor).filter(id => !subjectIds.has(id));
+
+  const rows = roster.map(s => {
+    const n   = countFor[s.id] || 0;
+    const dup = n > 1;
+    return `<tr${dup ? ' style="background:#fef2f2;"' : ''}>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;font-family:monospace;font-size:0.8rem;">${escapeHtml(s.sid || '')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(s.name || '')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;">
+          ${n === 0
+            ? '<span style="color:#b45309;">Not yet</span>'
+            : '<span style="color:#15803d;">Submitted</span>'}
+        </td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;font-weight:${dup ? '700' : '400'};color:${dup ? '#b91c1c' : 'inherit'};">
+          ${n}${dup ? ' &#9888; duplicate' : ''}
+        </td>
+      </tr>`;
+  }).join('');
+
+  const strayRows = strays.map(id => {
+    const s = students.find(x => x.id === id);
+    return `<tr style="background:#fffbeb;">
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;font-family:monospace;font-size:0.8rem;">${escapeHtml(s ? s.sid : id)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(s ? s.name : '(student record not found)')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;color:#b45309;">Not enrolled</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;">${countFor[id]}</td>
+      </tr>`;
+  }).join('');
+
+  const warn = [];
+  if (dupes.length) warn.push(`${dupes.length} student${dupes.length !== 1 ? 's have' : ' has'} submitted more than once`);
+  if (strays.length) warn.push(`${strays.length} submission${strays.length !== 1 ? 's are' : ' is'} from someone not enrolled in this subject`);
+
+  const old = document.getElementById('annexRosterOverlay');
+  if (old) old.remove();
+
+  const wrap = document.createElement('div');
+  wrap.id = 'annexRosterOverlay';
+  wrap.className = 'modal-overlay active';
+  wrap.style.display = 'flex';
+  wrap.innerHTML = `
+    <div class="modal" style="max-width:620px;">
+      <div class="modal-header">
+        <h3>${escapeHtml(sub.code)} &mdash; ${escapeHtml(sectionLabel || 'All sections')}</h3>
+        <button class="modal-close" onclick="document.getElementById('annexRosterOverlay').remove()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-size:0.85rem;">
+          <div><strong>${roster.length}</strong> enrolled</div>
+          <div style="color:#15803d;"><strong>${submitted}</strong> submitted</div>
+          <div style="color:#b45309;"><strong>${roster.length - submitted}</strong> not yet</div>
+          <div><strong>${sectionEvals.length}</strong> submission${sectionEvals.length !== 1 ? 's' : ''} from this section</div>
+        </div>
+        ${warn.length ? `<div style="background:#fef2f2;border-left:3px solid #b91c1c;padding:8px 10px;margin-bottom:12px;font-size:0.82rem;color:#7f1d1d;">
+            &#9888; ${escapeHtml(warn.join('. '))}. A repeated submission is counted twice in both the number of submissions and the average, so it skews the weighted score.
+          </div>` : ''}
+        <div style="max-height:340px;overflow:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+            <thead><tr style="background:#f2f7f4;">
+              <th style="padding:7px 8px;text-align:left;">Student ID</th>
+              <th style="padding:7px 8px;text-align:left;">Name</th>
+              <th style="padding:7px 8px;text-align:center;">Status</th>
+              <th style="padding:7px 8px;text-align:center;">Submissions</th>
+            </tr></thead>
+            <tbody>${rows || `<tr><td colspan="4" style="padding:18px;text-align:center;color:#888;">No students enrolled in this section.</td></tr>`}${strayRows}</tbody>
+          </table>
+        </div>
+        <p style="font-size:0.74rem;color:#777;margin:12px 0 0;line-height:1.5;">
+          Submission status only. Individual ratings and comments stay anonymous (CMO 19 &sect;6.10).
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="document.getElementById('annexRosterOverlay').remove()">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+};
+
 window.printAnnexD = function() {
     const printContent = document.getElementById('annexDPrintArea');
     if (!printContent) return;
@@ -274,8 +412,13 @@ window.courseShorthand = function(name) {
     // 2. CODE IN BRACKETS - "Bachelor of Elementary Education (BEEd)" -> BEED.
     //    Needed wherever the initials would be wrong or ambiguous, e.g.
     //    Criminology (BSCrim), which otherwise gives BSC.
-    const paren = n.match(/\(([^)]{2,12})\)/);
-    if (paren) return paren[1].trim().toUpperCase();
+    // Up to 24 characters, not 12. Real course shortnames at NwSSU carry a
+    // major after the code - "BSAG ANIMAL SCIENCE", "BSIT AUTOMOTIVE" - and the
+    // old 12-char cap made those fall through to the initials branch below,
+    // which printed "BSAAS" and "BSITA" on Annex C instead of what the office
+    // actually typed in the brackets.
+    const paren = n.match(/\(([^)]{2,24})\)/);
+    if (paren) return paren[1].trim().replace(/\s+/g, ' ').toUpperCase();
 
     // 3. Something already short with no spaces is left alone - "BSCE" -> BSCE.
     if (n.indexOf(' ') === -1 && n.length <= 8) return n.toUpperCase();
@@ -403,17 +546,14 @@ window.buildAnnexCContent = function(teacherId) {
                 count: sec.count,
                 enrolledCount: c.enrolledCount,
                 evalCount: c.evalCount,
+                // A section with no responses prints a dash in both value
+                // columns. Showing 0.00 implied a rating of zero was recorded.
                 avgScore: sec.rated ? sec.avgScore : '\u2014',
-                weightedScore: sec.rated ? sec.weightedScore : '0.00'
+                weightedScore: sec.rated ? sec.weightedScore : '\u2014'
             });
         });
     });
 
-    // Response rate, printed under the table. Column (3) counts respondents, so
-    // without this the form gives no way to see that 8 of 39 answered - and a
-    // reader comparing it against the class roll would think the roll was wrong.
-    const _rollTotal = setAgg.classes.reduce((n, c) => n + c.enrolledCount, 0);
-    const _respTotal = setAgg.classes.reduce((n, c) => n + c.evalCount, 0);
 
     // Year/Section is built from each enrolled student's course + year + section,
     // so a course value that is not one of your registered courses prints straight
@@ -508,7 +648,7 @@ window.buildAnnexCContent = function(teacherId) {
             <strong>Step 2:</strong> Multiply the number of students in each class with its average SET rating to get the Weighted SET Score per class. &nbsp;
             <strong>Step 3:</strong> Get the total number of students and the total weighted SET score.
         </p>
-        ${annexCNotice ? `<div style="border:1px solid #f0c36d;background:#fff8e6;color:#7a5b00;padding:9px 12px;border-radius:6px;font-size:0.76rem;margin-bottom:10px;">${escapeHtml(annexCNotice)}</div>` : ''}
+        ${annexCNotice ? `<div class="annex-noprint" style="border:1px solid #f0c36d;background:#fff8e6;color:#7a5b00;padding:9px 12px;border-radius:6px;font-size:0.76rem;margin-bottom:10px;">${escapeHtml(annexCNotice)}</div>` : ''}
         <div style="overflow-x:auto;margin-bottom:16px;">
         <table style="width:100%;min-width:480px;border-collapse:collapse;border:1px solid #ccc;table-layout:fixed;">
             <colgroup>
@@ -535,7 +675,12 @@ window.buildAnnexCContent = function(teacherId) {
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.seq}</td>
                     <td style="padding:5px;border:1px solid #ccc;font-style:italic;font-size:0.78rem;word-break:break-word;">${escapeHtml(cr.sub.code)}</td>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;word-break:break-word;">${escapeHtml(cr.yearSection)}</td>
-                    <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.count}</td>
+                    <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;cursor:pointer;"
+                        onclick="annexSectionRoster('${cr.sub.id}', &quot;${String(cr.yearSection).replace(/"/g, '')}&quot;)"
+                        title="Click to see who has submitted in this section">
+                        <span>${cr.count}</span>
+                        <span class="annex-noprint" style="color:#3f6f5b;font-size:0.7rem;margin-left:3px;">&#9432;</span>
+                    </td>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;">${cr.avgScore}</td>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-weight:600;font-size:0.78rem;">${cr.weightedScore}</td>
                 </tr>`).join('') : `<tr><td colspan="6" style="padding:10px;text-align:center;color:#888;font-size:0.8rem;">No regular-load subjects.</td></tr>`}
@@ -577,7 +722,6 @@ window.buildAnnexCContent = function(teacherId) {
         <h4 style="background:#f0f0f0;padding:6px 12px;font-size:0.8rem;font-weight:700;margin:0 0 8px;text-transform:uppercase;">D. SET and SEF Ratings</h4>
         <p style="font-size:0.75rem;color:#555;margin:0 0 8px;padding:0 4px;">
             <strong>Computation:</strong> Calculate the Overall SET Rating by dividing the total Weighted SET Score by the total number of students (${totalWeightedScore.toFixed(2)} ÷ ${totalStudents} = ${overallSET}).
-            <br/><span style="font-size:0.72rem;">Column (3) counts the students who submitted an evaluation: ${_respTotal} of ${_rollTotal} enrolled${_rollTotal ? ' (' + Math.round(_respTotal / _rollTotal * 100) + '%)' : ''}.</span>
         </p>
         <table style="width:100%;border-collapse:collapse;margin-bottom:16px;border:1px solid #ccc;table-layout:fixed;">
             <colgroup><col style="width:50%"/><col style="width:50%"/></colgroup>

@@ -672,11 +672,7 @@ window.addEventListener('load', () => {
               </button>
               <button type="button" class="reports-menu-item" role="menuitem" onclick="closeReportsMenu();exportReport()">
                 <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                <span class="reports-menu-text"><span class="reports-menu-label">Export PDF</span><span class="reports-menu-desc">Print the current term&rsquo;s ratings — choose &ldquo;Save as PDF&rdquo; in the print dialog</span></span>
-              </button>
-              <button type="button" class="reports-menu-item" role="menuitem" onclick="closeReportsMenu();printAllAnnexC()">
-                <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                <span class="reports-menu-text"><span class="reports-menu-label">Print All</span><span class="reports-menu-desc">Annex C for every listed faculty member, one print job</span></span>
+                <span class="reports-menu-text"><span class="reports-menu-label">Export CSV</span><span class="reports-menu-desc">Download the current term&rsquo;s ratings as a spreadsheet</span></span>
               </button>
               <div class="reports-menu-sep"></div>
               <div class="reports-menu-group">Setup</div>
@@ -1287,8 +1283,8 @@ window.addEventListener('load', () => {
         <div class="modal-body">
           <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;margin-bottom:16px;font-size:0.8rem;">
             <strong>CSV Format:</strong> ID Number, Full Name, Year Level, Section, Course, Department, Subject Codes (semicolon-separated)<br>
-            <code style="display:block;margin-top:6px;color:#166534;background:#dcfce7;padding:6px 10px;border-radius:4px;">2024001,Juan dela Cruz,1st Year,A,BSINFOT (Bachelor of Science in Information Technology),CCIS,CS301;CS302</code>
-            <span style="color:var(--muted);">Year Level options: 1st Year / 2nd Year / 3rd Year / 4th Year / 5th Year &nbsp;|&nbsp; Course column can be full name or short code</span>
+            <code style="display:block;margin-top:6px;color:#166534;background:#dcfce7;padding:6px 10px;border-radius:4px;">24-00001,Juan dela Cruz,1st Year,A,Bachelor of Science in Information Technology (BSIT),CCIS,CS301;CS302</code>
+            <span style="color:var(--muted);">ID Number must be YY-NNNNN (for example 24-00001) &mdash; rows in any other format are skipped. &nbsp;|&nbsp; Year Level options: 1st Year / 2nd Year / 3rd Year / 4th Year / 5th Year &nbsp;|&nbsp; Course column can be full name or short code</span>
           </div>
           <div style="border:2px dashed var(--border);border-radius:10px;padding:28px;text-align:center;margin-bottom:14px;cursor:pointer;" onclick="document.getElementById('bulkStudentFile').click()" id="bulkStudentDropZone">
             <svg width="32" height="32" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24" style="margin-bottom:8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>

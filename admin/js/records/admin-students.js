@@ -232,7 +232,14 @@ function saveStudent() {
       showToast('Another student already uses that ID.', 'error'); return;
     }
     const idx = students.findIndex(s => s.id === editStudentId);
-    Object.assign(students[idx], { sid, name, course, year, section, dept }, nameFields);
+    // Never let a blank course overwrite one already on the record. The course
+    // <select> is filled from the chosen department, so it can come back empty
+    // for reasons that have nothing to do with the course itself - a department
+    // with no registered courses, or a course registered elsewhere. Clearing a
+    // course is done by changing it, not by saving an empty dropdown.
+    const edits = { sid, name, year, section, dept };
+    if (course) edits.course = course;
+    Object.assign(students[idx], edits, nameFields);
     addAudit('Edit Student', `Updated: ${name} (${sid})`);
     // The password box on the EDIT form used to write students[idx].password and
     // say "Student updated!". For an existing account that field is not the
