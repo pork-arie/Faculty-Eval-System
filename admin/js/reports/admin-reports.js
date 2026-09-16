@@ -9,11 +9,14 @@
 // ============================================================================
 
 // ===== EVAL CONTROL =====
+// Submission Tracking filters. Declared OUTSIDE renderEvalControl because that
+// function re-runs whenever the period is opened or closed - state declared
+// inside it would reset the filter on every toggle.
+window._trackQuery = '';
+window._trackDept  = '';
+
 function renderEvalControl() {
   const period = getData('evalPeriod', { open: false, deadline: '' });
-  const subjects = getData('subjects', []);
-  const evals = getData('evaluations', []);
-  const students = getData('students', []).filter(s => !s.deleted);
   document.getElementById('evalControlContent').innerHTML = `
     <div class="card" style="margin-bottom:20px;">
       <div class="card-header-bar"><h3>Evaluation Period Control</h3></div>
@@ -30,25 +33,131 @@ function renderEvalControl() {
       </div>
     </div>
     <div class="card">
-      <div class="card-header-bar"><h3>Submission Tracking</h3></div>
+      <div class="card-header-bar" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <h3>Submission Tracking</h3>
+        <input class="form-control" id="trackSearch" placeholder="Search subject code, name, or faculty..."
+               value="${escapeHtml(window._trackQuery)}" oninput="filterTracking(this.value)"
+               style="max-width:280px;margin:0;"/>
+      </div>
+      <div id="trackDeptBar" style="display:flex;gap:6px;flex-wrap:wrap;padding:12px 16px 0;"></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Subject</th><th>Total Enrolled</th><th>Submitted</th><th>Pending</th><th>Progress</th></tr></thead>
-        <tbody>${subjects.map(sub => {
-          const enrolled = (sub.enrolledIds||[]).filter(eid => students.find(s=>s.id===eid)).length;
-          const submitted = evals.filter(e => e.subjectId === sub.id && e.evaluatorType !== 'supervisor').length;
-          const pending = enrolled - submitted;
-          const pct = enrolled ? Math.round((submitted/enrolled)*100) : 0;
-          return `<tr>
-            <td><strong>${escapeHtml(sub.code)}</strong> - ${escapeHtml(sub.name)}</td>
-            <td>${enrolled}</td>
-            <td><span class="badge badge-success">${submitted}</span></td>
-            <td><span class="badge badge-warning">${pending}</span></td>
-            <td style="min-width:120px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div class="progress-fill" style="width:${pct}%"></div></div><span style="font-size:0.72rem;font-weight:700;">${pct}%</span></div></td>
-          </tr>`;
-        }).join('')}</tbody>
+        <thead><tr><th>Subject</th><th>Faculty</th><th>Total Enrolled</th><th>Submitted</th><th>Pending</th><th>Progress</th></tr></thead>
+        <tbody id="trackTbody"></tbody>
       </table></div>
+      <div style="padding:10px 16px 14px;font-size:0.74rem;color:var(--muted);">
+        Click any subject to see who has submitted and who has not.
+      </div>
     </div>
   `;
+  renderTrackDeptBar();
+  renderTrackingRows();
+}
+
+// Department pills, same pattern as the Students page.
+function renderTrackDeptBar() {
+  const bar = document.getElementById('trackDeptBar');
+  if (!bar) return;
+  const DEPT_CONFIG = getDepartments();
+  const subjects = getData('subjects', []);
+
+  const counts = {};
+  subjects.forEach(s => { const d = s.dept || 'UNASSIGNED'; counts[d] = (counts[d] || 0) + 1; });
+
+  let html = `<button class="student-dept-filter-btn${window._trackDept === '' ? ' active' : ''}" data-dept="" onclick="filterTrackingByDept('')">
+      All <span class="dept-filter-count">${subjects.length}</span></button>`;
+
+  Object.entries(DEPT_CONFIG).forEach(([code, cfg]) => {
+    if (counts[code]) {
+      html += `<button class="student-dept-filter-btn${window._trackDept === code ? ' active' : ''}" data-dept="${code}" onclick="filterTrackingByDept('${code}')">
+          ${escapeHtml(cfg.short || code)} <span class="dept-filter-count">${counts[code]}</span></button>`;
+    }
+  });
+
+  if (counts['UNASSIGNED']) {
+    html += `<button class="student-dept-filter-btn${window._trackDept === 'UNASSIGNED' ? ' active' : ''}" data-dept="UNASSIGNED" onclick="filterTrackingByDept('UNASSIGNED')">
+        No Dept <span class="dept-filter-count">${counts['UNASSIGNED']}</span></button>`;
+  }
+  bar.innerHTML = html;
+}
+
+window.filterTracking = function (q) {
+  window._trackQuery = q || '';
+  renderTrackingRows();
+};
+
+window.filterTrackingByDept = function (dept) {
+  window._trackDept = dept;
+  document.querySelectorAll('#trackDeptBar .student-dept-filter-btn').forEach(p => {
+    p.classList.toggle('active', p.dataset.dept === dept);
+  });
+  renderTrackingRows();
+};
+
+// Rows only - the search box is never re-rendered, so typing does not lose focus.
+// Grouped by department, then by subject code within each group.
+function renderTrackingRows() {
+  const tbody = document.getElementById('trackTbody');
+  if (!tbody) return;
+
+  const DEPT_CONFIG = getDepartments();
+  const students = getData('students', []).filter(s => !s.deleted);
+  const teachers = getData('teachers', []);
+  const evals    = getData('evaluations', []);
+  const q        = window._trackQuery.trim().toLowerCase();
+
+  const rows = getData('subjects', [])
+    .filter(sub => {
+      const dept = sub.dept || 'UNASSIGNED';
+      if (window._trackDept && dept !== window._trackDept) return false;
+      if (!q) return true;
+      const t = teachers.find(x => x.id === sub.teacherId);
+      return (sub.code || '').toLowerCase().includes(q)
+          || (sub.name || '').toLowerCase().includes(q)
+          || (t && (t.name || '').toLowerCase().includes(q));
+    })
+    .sort((a, b) => {
+      const da = a.dept || 'UNASSIGNED', db = b.dept || 'UNASSIGNED';
+      if (da !== db) return da.localeCompare(db);
+      return String(a.code || '').localeCompare(String(b.code || ''), undefined, { numeric: true });
+    });
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted);">No subjects match this filter.</td></tr>`;
+    return;
+  }
+
+  let html = '', lastDept = null;
+  rows.forEach(sub => {
+    const dept = sub.dept || 'UNASSIGNED';
+    if (dept !== lastDept) {
+      const cfg = DEPT_CONFIG[dept];
+      const label = cfg ? ((cfg.short || dept) + ' — ' + cfg.name) : 'No Department';
+      html += `<tr><td colspan="6" style="background:var(--bg,#f2f7f4);font-weight:700;font-size:0.78rem;
+                text-transform:uppercase;letter-spacing:0.05em;color:var(--primary,#3f6f5b);padding:8px 12px;">
+                ${escapeHtml(label)}</td></tr>`;
+      lastDept = dept;
+    }
+
+    const enrolled  = (sub.enrolledIds || []).filter(eid => students.find(s => s.id === eid)).length;
+    const submitted = evals.filter(e => e.subjectId === sub.id && e.evaluatorType !== 'supervisor').length;
+    const pending   = Math.max(0, enrolled - submitted);
+    const pct       = enrolled ? Math.round((submitted / enrolled) * 100) : 0;
+    const teacher   = teachers.find(t => t.id === sub.teacherId);
+
+    // Whole row opens the roster. annexSectionRoster with a blank section label
+    // covers every section of the subject - the same view Annex C column (3)
+    // opens, so there is one implementation of "who submitted", not two.
+    html += `<tr style="cursor:pointer;" title="Click to see who has submitted"
+                 onclick="annexSectionRoster('${sub.id}', &quot;&quot;)">
+      <td><strong>${escapeHtml(sub.code)}</strong> - ${escapeHtml(sub.name)}</td>
+      <td>${escapeHtml(teacher ? teacher.name : '—')}</td>
+      <td>${enrolled}</td>
+      <td><span class="badge badge-success">${submitted}</span></td>
+      <td><span class="badge badge-warning">${pending}</span></td>
+      <td style="min-width:120px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div class="progress-fill" style="width:${pct}%"></div></div><span style="font-size:0.72rem;font-weight:700;">${pct}%</span></div></td>
+    </tr>`;
+  });
+  tbody.innerHTML = html;
 }
 
 function toggleEvalPeriod() {

@@ -52,11 +52,36 @@ function doLogout() {
   } catch (e) { done(); }
 }
 
+// Evaluations shown on the dashboard card.
+//
+// evals.length counted EVERY document in the collection: student and
+// supervisor submissions together, from every rating period, including
+// evaluations belonging to faculty that have since been deleted. The number
+// was therefore larger than anything else on screen agreed with, and nobody
+// could say what it represented.
+//
+// Scoped to the active term and split by instrument, which is also how CMO 19
+// reports them - SET and SEF are separate figures, not one pool.
+function _countDashEvals() {
+  const liveTeachers = new Set(getData('teachers', []).filter(t => !t.deleted).map(t => t.id));
+  const inTerm = (typeof evalInActiveTerm === 'function') ? evalInActiveTerm : () => true;
+
+  let set = 0, sef = 0;
+  getData('evaluations', []).forEach(e => {
+    if (!inTerm(e)) return;
+    // A rating for a removed faculty member is history, not current activity.
+    if (e.teacherId && !liveTeachers.has(e.teacherId)) return;
+    if (e.evaluatorType === 'supervisor') sef++; else set++;
+  });
+  return { set, sef, total: set + sef };
+}
+
 function renderDashboard() {
   const students = getData('students', []).filter(s => !s.deleted);
   const teachers = getData('teachers', []).filter(t => !t.deleted);
   const subjects = getData('subjects', []);
   const evals = getData('evaluations', []);
+  const _dashEvalCounts = _countDashEvals();
   const period = getData('evalPeriod', {});
   const sy = getActiveSY();
 
@@ -64,7 +89,7 @@ function renderDashboard() {
     <div class="stat-card stat-card-clickable" onclick="showPage('students')" title="View all students"><div class="stat-icon" style="background:#eff6ff;"><svg width="20" height="20" fill="none" stroke="#2563eb" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div><div class="value">${students.length}</div><div class="label">Total Students</div></div>
     <div class="stat-card stat-card-clickable" onclick="showPage('teachers')" title="View all teachers"><div class="stat-icon" style="background:#f0fdf4;"><svg width="20" height="20" fill="none" stroke="#16a34a" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div><div class="value">${teachers.length}</div><div class="label">Total Teachers</div></div>
     <div class="stat-card stat-card-clickable" onclick="showPage('subjects')" title="View all subjects"><div class="stat-icon" style="background:#fdf4ff;"><svg width="20" height="20" fill="none" stroke="#9333ea" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg></div><div class="value">${subjects.length}</div><div class="label">Total Subjects</div></div>
-    <div class="stat-card stat-card-clickable" onclick="showPage('reports')" title="View Reports & Analytics"><div class="stat-icon" style="background:#fff7ed;"><svg width="20" height="20" fill="none" stroke="#ea580c" stroke-width="2" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/></svg></div><div class="value">${evals.length}</div><div class="label">Evaluations</div></div>
+    <div class="stat-card stat-card-clickable" onclick="showPage('reports')" title="View Reports & Analytics"><div class="stat-icon" style="background:#fff7ed;"><svg width="20" height="20" fill="none" stroke="#ea580c" stroke-width="2" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/></svg></div><div class="value">${_dashEvalCounts.total}</div><div class="label">${_dashEvalCounts.set} SET &middot; ${_dashEvalCounts.sef} SEF this term</div></div>
   `;
 
   const deptMap = {};

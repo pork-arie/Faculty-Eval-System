@@ -150,3 +150,121 @@ window.resetLoginPassword = async function (kind, record, newPass) {
     showToast(record.name + ' can now sign in with: ' + wanted, 'success');
     return true;
 };
+// ============================================================
+// SKELETON LOADING
+// ------------------------------------------------------------
+// The dashboard renders from localStorage, so on a warm cache the real
+// content is already on screen before Firestore answers. Skeletons are
+// therefore shown ONLY where a container is genuinely empty - a first
+// login, a cleared browser, or a collection that failed to load. Covering
+// existing rows with a shimmer on every refresh would make the page feel
+// slower than it is.
+//
+// Called at the start of loadFromFirebase(), and cleared naturally when
+// the render functions write real markup over it.
+// ============================================================
+
+window.skelLine = function (w) {
+  return `<span class="skel skel-line" style="width:${w || '100%'};"></span>`;
+};
+
+// Four placeholder stat cards matching the dashboard's real ones.
+function _skelStatCards(n) {
+  return Array.from({ length: n || 4 }, () => `
+    <div class="skel-card">
+      <span class="skel skel-circle"></span>
+      <span class="skel skel-line" style="width:42%;height:20px;"></span>
+      <span class="skel skel-line sm" style="width:64%;"></span>
+    </div>`).join('');
+}
+
+// Placeholder rows sized to whatever table they land in - the column count
+// is read from the table's own header, so this keeps working if a column
+// is added later.
+function _skelRows(cols, n) {
+  const widths = ['70%','55%','45%','60%','40%','50%'];
+  return Array.from({ length: n }, () => '<tr>' +
+    Array.from({ length: cols }, (_, c) =>
+      `<td style="padding:12px 10px;">${skelLine(widths[c % widths.length])}</td>`).join('') +
+    '</tr>').join('');
+}
+
+// Filter pills (Students, Teachers, Subjects, Departments).
+function _skelPills(n) {
+  return Array.from({ length: n || 5 }, () =>
+    '<span class="skel skel-pill" style="margin-right:6px;"></span>').join('');
+}
+
+// A stack of list rows, for panels that are not tables - the audit log,
+// the school-year list, the department grid.
+function _skelList(n) {
+  return Array.from({ length: n || 5 }, () => `
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--border,#eef2f0);">
+      <span class="skel skel-circle" style="height:30px;width:30px;"></span>
+      <span style="flex:1;display:flex;flex-direction:column;gap:6px;">
+        <span class="skel skel-line" style="width:38%;"></span>
+        <span class="skel skel-line sm" style="width:22%;"></span>
+      </span>
+      <span class="skel skel-pill"></span>
+    </div>`).join('');
+}
+
+// A card panel with a heading and a table inside - Reports, Evaluation
+// Control and View Full List all render one of these into a single div.
+function _skelPanel() {
+  return `
+    <div class="skel-card" style="gap:16px;">
+      <span class="skel skel-line" style="width:30%;height:16px;"></span>
+      <div>${_skelPills(4)}</div>
+      ${_skelList(5)}
+    </div>`;
+}
+
+// Every container the page scripts fill. Keyed by element id so a page that
+// renders into one big div gets a placeholder too - previously only tables
+// were covered, so Reports, Evaluation Control, the audit log and the
+// department pages all sat blank while everything else shimmered.
+const SKEL_TARGETS = {
+  dashStats:                  () => _skelStatCards(4),
+  syList:                     () => _skelList(4),
+  studentDeptFilterBar:       () => _skelPills(6),
+  teacherDeptFilterBar:       () => _skelPills(6),
+  supervisorDeptFilterBar:    () => _skelPills(4),
+  subjectDeptFilterBar:       () => _skelPills(6),
+  supervisorPageDeptFilterBar:() => _skelPills(4),
+  evalControlContent:         () => _skelPanel(),
+  reportsContent:             () => _skelPanel(),
+  rptViewAllContent:          () => _skelPanel(),
+  auditLogList:               () => _skelList(6),
+  deptManageGrid:             () => _skelStatCards(6),
+  deptStatsRow:               () => _skelStatCards(4),
+  feedbackStats:              () => _skelStatCards(3),
+  feedbackDeptBar:            () => _skelPills(6),
+  feedbackList:               () => _skelList(4)
+};
+
+window.showSkeleton = function (force) {
+  try {
+    // Named containers first - these are the panels that are not tables.
+    Object.keys(SKEL_TARGETS).forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (!force && el.children.length) return;   // never cover real content
+      el.innerHTML = SKEL_TARGETS[id]();
+    });
+
+    const page = document.querySelector('.page.active');
+    if (!page) return;
+
+    page.querySelectorAll('table').forEach(tbl => {
+      const body = tbl.querySelector('tbody');
+      if (!body) return;
+      if (!force && body.children.length) return;   // never cover real rows
+      const cols = tbl.querySelectorAll('thead th').length || 4;
+      body.innerHTML = _skelRows(cols, 6);
+    });
+  } catch (e) {
+    // Purely cosmetic. A failure here must never stop the data load.
+    console.warn('Skeleton render skipped:', e && e.message);
+  }
+};
