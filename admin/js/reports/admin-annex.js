@@ -278,7 +278,7 @@ window.annexSectionRoster = function (subjectId, sectionLabel) {
           <div><strong>${roster.length}</strong> enrolled</div>
           <div style="color:#15803d;"><strong>${submitted}</strong> submitted</div>
           <div style="color:#b45309;"><strong>${roster.length - submitted}</strong> not yet</div>
-          <div><strong>${sectionEvals.length}</strong> submission${sectionEvals.length !== 1 ? 's' : ''} from this section</div>
+          <div><strong>${sectionEvals.length}</strong> submission${sectionEvals.length !== 1 ? 's' : ''} ${wanted.length ? 'from this section' : 'in total'}</div>
         </div>
         ${warn.length ? `<div style="background:#fef2f2;border-left:3px solid #b91c1c;padding:8px 10px;margin-bottom:12px;font-size:0.82rem;color:#7f1d1d;">
             &#9888; ${escapeHtml(warn.join('. '))}. A repeated submission is counted twice in both the number of submissions and the average, so it skews the weighted score.
