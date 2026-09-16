@@ -273,9 +273,30 @@ window.toggleEnrollShowAll = function() {
   renderEnrollList(enrollCandidates(sub, window._enrollShowAll), sub.enrolledIds || [], search);
 };
 
+// ============================================================
+// MANAGE ENROLLMENT  -  Course -> Year -> Section
+// ------------------------------------------------------------
+// Replaces a flat checklist of every student in the department. At NwSSU a
+// subject is offered to a cohort, so the office thinks in terms of "BSIT, 3rd
+// Year, Section A" - not a list of 200 names to hunt through.
+//
+// Step 1  course buttons
+// Step 2  year levels within the chosen course
+// Step 3  sections within the chosen year, with Enrol all / Remove all
+//
+// Selections are kept in window._enrollChecked across all three steps, so
+// moving between sections never loses a tick. Irregular students are handled by
+// the search box, which looks across the WHOLE department regardless of the
+// course/year/section drilled into - that is the manual path for a student
+// sitting in a subject outside their own cohort.
+// ============================================================
+
+window._enrollChecked = new Set();
+window._enrollStep    = { course: '', year: '' };
+
 function openEnrollModal(subId) {
   enrollSubjectId = subId;
-  window._enrollShowAll = false;          // always start scoped to the department
+  window._enrollShowAll = false;
   const sub = getData('subjects', []).find(s => s.id === subId);
   document.getElementById('enrollSubjectName').textContent = `${sub.code} - ${sub.name}`;
   const searchEl = document.getElementById('enrollSearchInput');
@@ -291,49 +312,199 @@ function openEnrollModal(subId) {
     if (matches.length) preselected = matches.map(st => st.id);
   }
 
-  renderEnrollList(enrollCandidates(sub, false), preselected);
+  window._enrollChecked = new Set(preselected);
+  window._enrollStep = { course: '', year: '' };
+  renderEnrollPicker();
   openModal('enrollModal');
 }
 
-// "Select cohort" - re-applies the curriculum match ON TOP of whatever is already
-// ticked, so it never wipes a manual selection.
+// Students this subject may draw from: the department roster, plus anyone
+// already enrolled (so a student moved out of the department is not silently
+// dropped when the modal is reopened).
+function _enrollPool() {
+  const sub = getData('subjects', []).find(s => s.id === enrollSubjectId);
+  return enrollCandidates(sub, window._enrollShowAll);
+}
+
+function _enrollCourseOf(st) { return (st.course || '').trim() || '(no course)'; }
+function _enrollYearOf(st)   { return (st.year   || '').trim() || '(no year)'; }
+function _enrollSecOf(st)    { return (st.section|| '').trim() || '(no section)'; }
+
+window.enrollPickCourse = function (course) {
+  window._enrollStep = { course: course, year: '' };
+  renderEnrollPicker();
+};
+window.enrollPickYear = function (year) {
+  window._enrollStep.year = year;
+  renderEnrollPicker();
+};
+window.enrollBack = function (to) {
+  if (to === 'course') window._enrollStep = { course: '', year: '' };
+  else window._enrollStep.year = '';
+  renderEnrollPicker();
+};
+
+// Ticking is remembered in the Set, not read back off the DOM, so a student
+// stays enrolled after you navigate to another section and back.
+window.enrollToggle = function (id, on) {
+  if (on) window._enrollChecked.add(id); else window._enrollChecked.delete(id);
+  _enrollUpdateCount();
+};
+
+window.enrollBulkSection = function (course, year, section, on) {
+  _enrollPool()
+    .filter(st => _enrollCourseOf(st) === course && _enrollYearOf(st) === year && _enrollSecOf(st) === section)
+    .forEach(st => { if (on) window._enrollChecked.add(st.id); else window._enrollChecked.delete(st.id); });
+  renderEnrollPicker();
+};
+
+function _enrollUpdateCount() {
+  const el = document.getElementById('enrollCount');
+  if (el) el.textContent = window._enrollChecked.size;
+}
+
+function _enrollBtn(label, sub, onclick, badge) {
+  return `<button type="button" onclick="${onclick}"
+      style="display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;
+             text-align:left;padding:10px 12px;margin-bottom:6px;border:1px solid var(--border);
+             border-radius:8px;background:#fff;cursor:pointer;font-size:0.84rem;">
+      <span><span style="font-weight:600;">${escapeHtml(label)}</span>
+        ${sub ? `<span style="color:var(--muted);font-size:0.74rem;display:block;">${escapeHtml(sub)}</span>` : ''}</span>
+      <span style="font-size:0.72rem;color:var(--primary);font-weight:700;white-space:nowrap;">${badge || ''}</span>
+    </button>`;
+}
+
+function _enrollCrumb() {
+  const st = window._enrollStep;
+  if (!st.course) return '';
+  const parts = [`<a onclick="enrollBack('course')" style="cursor:pointer;color:var(--primary);">All courses</a>`];
+  if (st.year) {
+    parts.push(`<a onclick="enrollBack('year')" style="cursor:pointer;color:var(--primary);">${escapeHtml(st.course)}</a>`);
+    parts.push(`<span>${escapeHtml(st.year)}</span>`);
+  } else {
+    parts.push(`<span>${escapeHtml(st.course)}</span>`);
+  }
+  return `<div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px;">${parts.join(' &rsaquo; ')}</div>`;
+}
+
+function renderEnrollPicker() {
+  const box = document.getElementById('enrollList');
+  if (!box) return;
+  const search = ((document.getElementById('enrollSearchInput') || {}).value || '').trim().toLowerCase();
+  const pool = _enrollPool();
+  const chosen = window._enrollChecked;
+
+  // Search overrides the drill-down entirely and looks across the whole pool.
+  // This is the manual path for an irregular student who is not in the cohort.
+  if (search) {
+    const hits = pool.filter(st =>
+      (st.name || '').toLowerCase().includes(search) || (st.sid || '').toLowerCase().includes(search));
+    box.innerHTML = `<div style="font-size:0.76rem;color:var(--muted);margin-bottom:8px;">
+        ${hits.length} match${hits.length !== 1 ? 'es' : ''} across the whole department &mdash; tick anyone to enrol them, cohort or not.
+      </div>` + (hits.length ? hits.map(_enrollRow).join('') :
+        `<div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">No student matches that search.</div>`);
+    return;
+  }
+
+  const st = window._enrollStep;
+
+  // STEP 1 - courses
+  if (!st.course) {
+    const byCourse = {};
+    pool.forEach(x => { (byCourse[_enrollCourseOf(x)] = byCourse[_enrollCourseOf(x)] || []).push(x); });
+    const names = Object.keys(byCourse).sort();
+    if (!names.length) {
+      box.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">No students in this department yet.</div>`;
+      return;
+    }
+    box.innerHTML = `<div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px;">Step 1 &mdash; choose a course</div>`
+      + names.map(c => {
+          const list = byCourse[c];
+          const n = list.filter(x => chosen.has(x.id)).length;
+          return _enrollBtn(c, `${list.length} student${list.length !== 1 ? 's' : ''}`,
+                            `enrollPickCourse(&quot;${c.replace(/"/g,'')}&quot;)`,
+                            n ? `${n} enrolled` : '');
+        }).join('');
+    return;
+  }
+
+  // STEP 2 - year levels
+  if (!st.year) {
+    const inCourse = pool.filter(x => _enrollCourseOf(x) === st.course);
+    const byYear = {};
+    inCourse.forEach(x => { (byYear[_enrollYearOf(x)] = byYear[_enrollYearOf(x)] || []).push(x); });
+    const years = Object.keys(byYear).sort();
+    box.innerHTML = _enrollCrumb()
+      + `<div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px;">Step 2 &mdash; choose a year level</div>`
+      + years.map(y => {
+          const list = byYear[y];
+          const n = list.filter(x => chosen.has(x.id)).length;
+          return _enrollBtn(y, `${list.length} student${list.length !== 1 ? 's' : ''}`,
+                            `enrollPickYear(&quot;${y.replace(/"/g,'')}&quot;)`,
+                            n ? `${n} enrolled` : '');
+        }).join('');
+    return;
+  }
+
+  // STEP 3 - sections, then the students in each
+  const inYear = pool.filter(x => _enrollCourseOf(x) === st.course && _enrollYearOf(x) === st.year);
+  const bySec = {};
+  inYear.forEach(x => { (bySec[_enrollSecOf(x)] = bySec[_enrollSecOf(x)] || []).push(x); });
+  const secs = Object.keys(bySec).sort();
+
+  box.innerHTML = _enrollCrumb()
+    + `<div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px;">Step 3 &mdash; enrol by section</div>`
+    + secs.map(sec => {
+        const list = bySec[sec].slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        const n = list.filter(x => chosen.has(x.id)).length;
+        const all = n === list.length;
+        const c = st.course.replace(/"/g,''), y = st.year.replace(/"/g,''), sc = sec.replace(/"/g,'');
+        return `<div style="border:1px solid var(--border);border-radius:8px;margin-bottom:10px;overflow:hidden;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;
+                        padding:9px 12px;background:var(--bg,#f2f7f4);">
+              <div style="font-weight:600;font-size:0.84rem;">Section ${escapeHtml(sec)}
+                <span style="font-weight:400;color:var(--muted);font-size:0.74rem;">
+                  &middot; ${n} of ${list.length} enrolled</span></div>
+              <button type="button" class="btn btn-ghost btn-sm"
+                onclick="enrollBulkSection(&quot;${c}&quot;,&quot;${y}&quot;,&quot;${sc}&quot;,${all ? 'false' : 'true'})">
+                ${all ? 'Remove all' : 'Enrol all'}</button>
+            </div>
+            <div style="padding:4px 12px 8px;">${list.map(_enrollRow).join('')}</div>
+          </div>`;
+      }).join('');
+}
+
+function _enrollRow(s) {
+  const on = window._enrollChecked.has(s.id);
+  return `<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:0.82rem;
+                        padding:6px 0;border-bottom:1px solid var(--border);">
+      <input type="checkbox" ${on ? 'checked' : ''} style="accent-color:var(--primary);"
+             onchange="enrollToggle('${s.id}', this.checked)"/>
+      <div><div style="font-weight:600;">${escapeHtml(s.name)}</div>
+      <div style="font-size:0.72rem;color:var(--muted);">${escapeHtml(s.sid)} &middot; ${s.course ? escapeHtml(s.course) + ' &middot; ' : ''}${escapeHtml(s.year || '')} Sec ${escapeHtml(s.section || '')} &middot; ${escapeHtml(s.dept || '—')}</div></div>
+    </label>`;
+}
+
+// "Select cohort" - re-applies the curriculum match ON TOP of what is ticked,
+// so it never wipes a manual selection.
 window.enrollSelectCohort = function() {
   const sub = getData('subjects', []).find(s => s.id === enrollSubjectId);
   if (!sub) return;
-  const checked = new Set([...document.querySelectorAll('#enrollList input[type=checkbox]:checked')].map(c => c.value));
   enrollCandidates(sub, window._enrollShowAll)
     .filter(st => studentMatchesSubject(st, sub))
-    .forEach(st => checked.add(st.id));
-  const search = (document.getElementById('enrollSearchInput') || {}).value || '';
-  renderEnrollList(enrollCandidates(sub, window._enrollShowAll), [...checked], search);
+    .forEach(st => window._enrollChecked.add(st.id));
+  renderEnrollPicker();
+  _enrollUpdateCount();
   showToast('Cohort selected. Untick anyone who should not be enrolled.', 'info');
 };
 
-function renderEnrollList(students, enrolledIds, search = '') {
-  const filtered = students.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.sid.includes(search));
-  if (!filtered.length) {
-    document.getElementById('enrollList').innerHTML =
-      '<li style="padding:22px 0;text-align:center;color:var(--muted);font-size:0.82rem;">'
-      + 'No matching students in this department.</li>';
-    return;
-  }
-  document.getElementById('enrollList').innerHTML = filtered.map(s => `
-    <li style="padding:8px 0;border-bottom:1px solid var(--border);">
-      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:0.82rem;">
-        <input type="checkbox" value="${s.id}" ${enrolledIds.includes(s.id)?'checked':''} style="accent-color:var(--primary);"/>
-        <div><div style="font-weight:600;">${escapeHtml(s.name)}</div><div style="font-size:0.72rem;color:var(--muted);">${s.sid} · ${s.course ? escapeHtml(s.course)+' · ' : ''}${s.year} Sec ${s.section} · ${s.dept || '—'}</div></div>
-      </label>
-    </li>
-  `).join('');
-}
-
-function filterEnrollList(search) {
-  const sub = getData('subjects', []).find(s => s.id === enrollSubjectId);
-  renderEnrollList(enrollCandidates(sub, window._enrollShowAll), sub.enrolledIds || [], search);
-}
+function filterEnrollList() { renderEnrollPicker(); }
 
 function saveEnrollment() {
-  const checked = [...document.querySelectorAll('#enrollList input[type=checkbox]:checked')].map(c => c.value);
+  // Read the Set, not the DOM. Only the section currently drilled into is
+  // rendered, so querying the DOM would save just those and silently unenrol
+  // every other section.
+  const checked = [...window._enrollChecked];
   const subjects = getData('subjects', []);
   const idx = subjects.findIndex(s => s.id === enrollSubjectId);
   subjects[idx].enrolledIds = checked;
