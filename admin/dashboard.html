@@ -177,8 +177,14 @@ async function syncCollectionToFirestore(key, val) {
   } catch(e) { console.warn('Firestore sync error:', e.message); }
 }
 
+let _staleCollections = [];
+
 async function loadFromFirebase() {
   updateFirebaseStatus('loading');
+  _staleCollections = [];
+  // Placeholders while the first fetch is in flight. Only fills containers
+  // that are actually empty, so a warm cache still shows real data instantly.
+  if (typeof showSkeleton === 'function') showSkeleton();
   try {
     const collections = ['students','teachers','subjects','evaluations','schoolYears','auditLog'];
     for (const col of collections) {
@@ -191,6 +197,10 @@ async function loadFromFirebase() {
       } catch (e) {
         console.warn('Could not load "' + col + '" from Firestore:', e.code || e.message,
                      '— keeping whatever is already in localStorage.');
+        // Remember WHICH ones failed. Previously the failure was swallowed and
+        // the badge still said "Firebase Live", so the dashboard could render a
+        // stale Annex C from old localStorage while claiming to be up to date.
+        _staleCollections.push(col);
         continue;
       }
       if (!snap.empty) {
@@ -286,7 +296,13 @@ async function loadFromFirebase() {
       }
     }
 
-    updateFirebaseStatus('connected');
+    // Stamp the time of a CLEAN pull only. A partial load must not look like a
+    // fresh one - before a presentation the only question that matters is
+    // whether what is on screen came from Firestore just now.
+    if (!_staleCollections.length) {
+      try { localStorage.setItem('_lastSync', new Date().toISOString()); } catch (e) {}
+    }
+    updateFirebaseStatus(_staleCollections.length ? 'stale' : 'connected');
     // Re-run the migration after Firebase data overwrites localStorage.
     // This assigns facultyType to any legacy Firestore records that lack it,
     // without ever overriding records that already have facultyType set.
@@ -295,24 +311,79 @@ async function loadFromFirebase() {
     // departments into localStorage — fixes disappear-on-reload and ghost cards
     if (typeof refreshDeptConfig === 'function') refreshDeptConfig();
     if (typeof renderDeptManagePage === 'function') renderDeptManagePage();
-    renderDashboard();
+    _rerenderCurrentPage();
   } catch(e) {
     console.warn('Firebase load failed, using local data:', e.message);
     updateFirebaseStatus('error');
-    renderDashboard();
+    _rerenderCurrentPage();
   }
+}
+
+// "just now" / "6 minutes ago" / a date. Reading a raw ISO string off a badge
+// is not something anyone should have to do mid-presentation.
+function _lastSyncText() {
+  let t;
+  try { t = localStorage.getItem('_lastSync'); } catch (e) {}
+  if (!t) return 'in this session';
+  const mins = Math.round((Date.now() - new Date(t).getTime()) / 60000);
+  if (mins < 1)    return 'just now';
+  if (mins === 1)  return '1 minute ago';
+  if (mins < 60)   return mins + ' minutes ago';
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24)    return hrs + (hrs === 1 ? ' hour ago' : ' hours ago');
+  return 'on ' + new Date(t).toLocaleString();
 }
 
 function updateFirebaseStatus(status) {
   const el = document.getElementById('fbStatusBadge');
   if (!el) return;
   const cfg = {
-    loading:   { icon: '⏳', text: 'Connecting...', color: '#f59e0b' },
-    connected: { icon: '🔥', text: 'Firebase Live', color: '#16a34a' },
-    error:     { icon: '⚠️', text: 'Offline Mode',  color: '#dc2626' }
+    loading:   { icon: '⏳', text: 'Connecting...',  color: '#f59e0b', tip: 'Loading data from Firestore' },
+    connected: { icon: '🔥', text: 'Firebase Live',  color: '#16a34a', tip: 'All data loaded from Firestore ' + _lastSyncText() + '. Click to refresh.' },
+    stale:     { icon: '⚠️', text: 'Data may be old', color: '#d97706',
+                 tip: 'Could not load: ' + _staleCollections.join(', ')
+                      + '. Showing the copy saved ' + _lastSyncText() + '. Click to retry.' },
+    error:     { icon: '⚠️', text: 'Offline Mode',   color: '#dc2626',
+                 tip: 'No connection. Showing the copy saved ' + _lastSyncText() + '. Click to retry.' }
   };
-  const c = cfg[status];
+  const c = cfg[status] || cfg.error;
+  // Clickable: a flaky connection at boot used to leave the dashboard showing
+  // old records with no way to reload short of pressing F5.
+  el.style.cursor = status === 'loading' ? 'default' : 'pointer';
+  el.title = c.tip;
+  el.onclick = status === 'loading' ? null : function () { refreshFromCloud(); };
   el.innerHTML = `<span style="color:${c.color};font-size:0.72rem;font-weight:600;">${c.icon} ${c.text}</span>`;
+}
+
+// Manual re-pull. Re-renders the page you are actually on afterwards.
+window.refreshFromCloud = async function () {
+  showToast('Refreshing from Firestore…', 'info');
+  // force = true: the person asked for this, so show the placeholders even
+  // though real data is already on screen. Otherwise a refresh on a warm
+  // cache looks like nothing happened.
+  if (typeof showSkeleton === 'function') showSkeleton(true);
+  await loadFromFirebase();
+  showToast(_staleCollections.length
+      ? 'Still could not load: ' + _staleCollections.join(', ')
+      : 'Data refreshed.', _staleCollections.length ? 'warning' : 'success');
+};
+
+// After a reload the open page must be redrawn, or the admin keeps looking at
+// the records that were on screen before the refresh.
+function _rerenderCurrentPage() {
+  // Read the open page from the DOM. There is no page-state variable to consult
+  // - showPage only toggles the .active class - and the id is "page-<name>".
+  const el = document.querySelector('.page.active');
+  const page = el ? el.id.replace(/^page-/, '') : 'dashboard';
+  const fn = {
+    dashboard:  'renderDashboard',  schoolYear: 'renderSchoolYear', students: 'renderStudents',
+    teachers:   'renderTeachers',   subjects:   'renderSubjects',   reports:  'renderReports',
+    evalControl:'renderEvalControl',auditLog:   'renderAuditLog',   feedback: 'renderFeedbackPage',
+    supervisor: 'renderSupervisorList', rptViewAll: 'renderRptViewAll',
+    dept: 'renderDeptPage', deptManage: 'renderDeptManagePage'
+  }[page];
+  if (fn && typeof window[fn] === 'function') { try { window[fn](); return; } catch (e) {} }
+  if (typeof renderDashboard === 'function') renderDashboard();
 }
 
 window.addEventListener('load', () => {
@@ -1189,11 +1260,17 @@ window.addEventListener('load', () => {
           <div id="enrollDeptFilter"></div>
           <div class="search-box" style="margin-bottom:10px;">
             <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" id="enrollSearchInput" placeholder="Search students..." oninput="filterEnrollList(this.value)"/>
+            <input type="text" id="enrollSearchInput" placeholder="Search any student by name or ID (for irregulars)..." oninput="filterEnrollList()"/>
           </div>
-          <div style="max-height:280px;overflow-y:auto;"><ul class="checklist" id="enrollList"></ul></div>
+          <div style="max-height:340px;overflow-y:auto;" id="enrollList"></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('enrollModal')">Cancel</button><button class="btn btn-primary" onclick="saveEnrollment()">Save Enrollment</button></div>
+        <div class="modal-footer" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <span style="font-size:0.78rem;color:var(--muted);"><strong id="enrollCount">0</strong> student(s) enrolled</span>
+          <span style="display:flex;gap:8px;">
+            <button class="btn btn-ghost" onclick="closeModal('enrollModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveEnrollment()">Save Enrollment</button>
+          </span>
+        </div>
       </div>
     </div>
 
