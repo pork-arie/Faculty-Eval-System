@@ -382,7 +382,21 @@ function _rerenderCurrentPage() {
     supervisor: 'renderSupervisorList', rptViewAll: 'renderRptViewAll',
     dept: 'renderDeptPage', deptManage: 'renderDeptManagePage'
   }[page];
-  if (fn && typeof window[fn] === 'function') { try { window[fn](); return; } catch (e) {} }
+
+  // Some renderers need to be told WHICH record to draw. renderDeptPage takes a
+  // department code; called bare it renders nothing, which left the forced
+  // skeletons on screen until the page was changed. The code is on
+  // window.currentDept, set by openDeptPage.
+  const arg = { dept: window.currentDept }[page];
+
+  if (fn && typeof window[fn] === 'function') {
+    // A renderer that needs an argument it has not got would repaint nothing,
+    // so fall through to the dashboard rather than leave placeholders stuck.
+    if (page === 'dept' && !arg) { if (typeof renderDashboard === 'function') renderDashboard(); return; }
+    try { window[fn](arg); return; } catch (e) {
+      console.warn('Could not re-render "' + page + '":', e && e.message);
+    }
+  }
   if (typeof renderDashboard === 'function') renderDashboard();
 }
 
