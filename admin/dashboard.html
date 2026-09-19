@@ -39,6 +39,21 @@ window.firebaseConfig = window.firebaseConfig || {
 try {
   firebase.initializeApp(window.firebaseConfig);
   window.db     = firebase.firestore();
+
+  // Campus and office networks often sit behind a proxy or filter that breaks
+  // Firestore's default streaming transport (WebChannel). The request does not
+  // fail cleanly - it hangs - so the dashboard keeps showing the last cached
+  // copy while appearing to work. That is the "old data on university wifi,
+  // correct data on mobile data" case.
+  //
+  // This tells the SDK to detect such a network and fall back to long polling,
+  // which those proxies do pass. Must run before any read or write.
+  try {
+    window.db.settings({ experimentalAutoDetectLongPolling: true, merge: true });
+  } catch (e) {
+    console.warn('Could not set the Firestore transport option:', e && e.message);
+  }
+
   window.fbAuth = firebase.auth();
   db = window.db; fbAuth = window.fbAuth;
 } catch (e) {
@@ -193,7 +208,14 @@ async function loadFromFirebase() {
       // loop, so every collection after it in this list was never loaded at all.
       let snap;
       try {
-        snap = await db.collection(col).get();
+        // A blocked network can leave a read pending indefinitely rather than
+        // rejecting. Without a ceiling the loop never finishes, the badge stays
+        // on "Connecting..." and the stale data is never reported as stale.
+        snap = await Promise.race([
+          db.collection(col).get(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('timed out after 10s')), 10000))
+        ]);
       } catch (e) {
         console.warn('Could not load "' + col + '" from Firestore:', e.code || e.message,
                      '— keeping whatever is already in localStorage.');
