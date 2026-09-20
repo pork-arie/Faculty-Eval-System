@@ -2,13 +2,12 @@
 
 // Boot after login: load the published questions, then the data.
 async function initApp(isInactive = false) {
-  if (needsPasswordChange(currentStudent)) {
-    window._pendingInactive = isInactive;
-    showPasswordGate();
-    return;
-  }
+  // The forced password change is handled on index.html, before the redirect
+  // here. If an account somehow reaches the dashboard still needing it, send
+  // it back rather than letting it through - the gate markup is not on this
+  // page.
+  if (needsPasswordChange(currentStudent)) { goToLogin(); return; }
 
-  document.getElementById('loginPage').style.display  = 'none';
   document.getElementById('app').style.display = 'flex';
 
   await loadPublishedQuestions();

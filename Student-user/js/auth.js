@@ -2,6 +2,50 @@
 // password change, logout. Load order: core.js -> auth.js -> app.js.
 
 const fbAuth = firebase.auth();
+
+// ============================================================
+// PAGE ROLE
+// ------------------------------------------------------------
+// index.html is the login page, dashboard.html is the app. Both load
+// this file, so it has to know which one it is running on: the app
+// shell (#app) exists only on the dashboard.
+//
+// Doing it this way rather than with two copies of auth.js keeps one
+// implementation of sign-in, the password gate and session restore.
+// ============================================================
+const IS_DASHBOARD = !!document.getElementById('app');
+
+// Redirect guard.
+//
+// Both pages run the same restore, so a fault on one can send the person
+// to the other, which sends them straight back. That reads to the user as
+// a login that never finishes. Two hops is all any legitimate flow needs,
+// so the third is refused and the person is left on a usable page.
+function _hop() {
+  var n = 0;
+  try { n = parseInt(sessionStorage.getItem('_navHops') || '0', 10) + 1;
+        sessionStorage.setItem('_navHops', String(n)); } catch (e) { return 1; }
+  return n;
+}
+function _clearHops() { try { sessionStorage.removeItem('_navHops'); } catch (e) {} }
+
+function goToDashboard() {
+  if (_hop() > 3) { console.error('Redirect loop stopped on the way to the dashboard.'); return; }
+  location.replace('dashboard.html');
+}
+function goToLogin() {
+  if (_hop() > 3) { console.error('Redirect loop stopped on the way to the login.'); return; }
+  location.replace('index.html');
+}
+
+// Handed to the dashboard through sessionStorage. Previously initApp() was
+// called directly with this flag; across a page load it has to travel in
+// storage instead.
+function enterApp(isInactive) {
+  try { sessionStorage.setItem('studentInactive', isInactive ? '1' : '0'); } catch (e) {}
+  _clearHops();   // a fresh sign-in starts the count over
+  goToDashboard();
+}
 fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function () {});
 
 // Login email = <id>@nwssu.app. Shared with the Android app.
@@ -160,7 +204,8 @@ async function doLogin() {
       await claimUid('teachers', supDoc.id);
       await reclaimMyEvaluations(supDoc.id);
       await logLogin(sid, true, 'supervisor');
-      initApp();
+      if (needsPasswordChange(data)) { window._pendingInactive = false; showPasswordGate(); return; }
+      enterApp(false);
       return;
     }
 
@@ -190,7 +235,8 @@ async function doLogin() {
     await reclaimMyEvaluations(doc.id);
     await logLogin(sid, true, 'student');
 
-    initApp(isInactive);
+    if (needsPasswordChange(data)) { window._pendingInactive = isInactive; showPasswordGate(); return; }
+    enterApp(isInactive);
   } catch (e) {
     console.error('Login failed:', e);
     const code = (e && e.code) || '';
@@ -222,7 +268,7 @@ function showLoginError(msg) {
   err.textContent = msg;
   err.style.display = 'block';
   btn.disabled = false;
-  btn.innerHTML = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign In`;
+  btn.innerHTML = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign in`;
 }
 
 // Gate when the password is still the issued default.
@@ -235,8 +281,14 @@ function needsPasswordChange(person) {
 }
 
 function showPasswordGate() {
-  document.getElementById('loginPage').style.display = 'none';
-  document.getElementById('app').style.display = 'none';
+  // #app lives on dashboard.html, not on the login page. Reading .style
+  // off a missing element threw a TypeError and stopped the gate from
+  // ever appearing, so an account still on its default password could
+  // not get past login at all.
+  const loginPage = document.getElementById('loginPage');
+  const appShell  = document.getElementById('app');
+  if (loginPage) loginPage.style.display = 'none';
+  if (appShell)  appShell.style.display  = 'none';
   document.getElementById('pwGate').style.display = 'flex';
   document.getElementById('pwGateNew').value = '';
   document.getElementById('pwGateConfirm').value = '';
@@ -276,7 +328,7 @@ async function submitNewPassword() {
 
   document.getElementById('pwGate').style.display = 'none';
   showToast('Password updated. Welcome!', 'success');
-  initApp(window._pendingInactive === true);
+  enterApp(window._pendingInactive === true);
 }
 
 // Settings > Change password. Verifies against the roster first.
@@ -335,40 +387,69 @@ async function changePassword() {
 }
 
 // Clear session and sign out of Firebase Auth.
+// Sign out and return to the login page. The DOM teardown the old version
+// did - hiding #app, clearing the login inputs, resetting the button - is
+// unnecessary now: the browser leaves this page entirely, and index.html
+// loads with its form already blank.
 function doLogout() {
   currentStudent = null;
   mySubjects     = [];
   myEvals        = [];
-  sessionStorage.removeItem('studentSession');
-  fbAuth.signOut().catch(function () {});
-  document.getElementById('app').style.display       = 'none';
-  document.getElementById('loginPage').style.display = 'flex';
-  document.getElementById('loginSid').value  = '';
-  document.getElementById('loginPass').value = '';
-  document.getElementById('loginError').style.display = 'none';
-  const btn = document.getElementById('loginBtn');
-  btn.disabled = false;
-  btn.innerHTML = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign In`;
+  try {
+    sessionStorage.removeItem('studentSession');
+    sessionStorage.removeItem('studentInactive');
+  } catch (e) {}
+  _clearHops();
+  // Navigate regardless of whether signOut resolves; a failed network call
+  // must not strand someone on a page they have asked to leave.
+  fbAuth.signOut().catch(function () {}).then(goToLogin, goToLogin);
 }
 
-(async function autoLogin() {
+// ============================================================
+// SESSION RESTORE
+// ------------------------------------------------------------
+// Runs on both pages, and does the opposite thing on each:
+//
+//   index.html      already signed in  -> straight to the dashboard
+//   dashboard.html  not signed in      -> straight back to the login
+//
+// The Firebase session is the authority, not sessionStorage: a stored
+// session with no Firebase user behind it is stale and is discarded.
+// ============================================================
+async function restoreSession() {
   const saved = sessionStorage.getItem('studentSession');
-  if (!saved) return;
 
+  // No stored session. The login page simply waits for a sign-in; the
+  // dashboard has nothing to show and returns to the login.
+  if (!saved) { if (IS_DASHBOARD) goToLogin(); return; }
+
+  // Unsubscribe AFTER the promise settles. Calling stop() from inside the
+  // callback reads the const before it is assigned if the SDK ever fires
+  // synchronously - a cached session can do exactly that - and the whole
+  // restore then throws.
+  let stopWatching = null;
   const user = await new Promise(function (resolve) {
-    const stop = fbAuth.onAuthStateChanged(function (u) { stop(); resolve(u); });
+    stopWatching = fbAuth.onAuthStateChanged(resolve);
   });
-  if (!user) { sessionStorage.removeItem('studentSession'); return; }
+  if (typeof stopWatching === 'function') stopWatching();
+  if (!user) {
+    sessionStorage.removeItem('studentSession');
+    if (IS_DASHBOARD) goToLogin();
+    return;
+  }
 
   try {
     const sess = JSON.parse(saved);
+
     if (sess.userType === 'supervisor') {
       const doc = await db.collection('teachers').doc(sess.docId).get();
       if (doc.exists) {
         const data = doc.data();
         if (!data.deleted && data.facultyType === 'supervisor' && (data.status || 'active') === 'active') {
           currentStudent = { ...data, docId: doc.id, sid: data.tid, userType: 'supervisor' };
-          initApp();
+          if (!IS_DASHBOARD) { goToDashboard(); return; }
+          _clearHops();
+          initApp(false);
           return;
         }
       }
@@ -378,11 +459,51 @@ function doLogout() {
         const data = doc.data();
         if (!data.deleted) {
           currentStudent = { ...data, docId: doc.id, userType: 'student' };
+          if (!IS_DASHBOARD) { goToDashboard(); return; }
+          // The inactive flag was decided at login and carried across the
+          // redirect, but the record is re-read here so a status changed
+          // since then still wins.
+          _clearHops();
           initApp(data.status !== 'active');
           return;
         }
       }
     }
-  } catch(e) {}
+  } catch (e) {
+    // A genuine fault here is not the same as a stale session. Falling
+    // through would clear a valid login and bounce the person to the
+    // login page with no explanation - which is exactly how the
+    // initApp() race presented. Report it and stop.
+    console.error('Session restore failed:', e);
+    // The stored session MUST be cleared before leaving. index.html also
+    // runs this function: if it still finds a session it sends the person
+    // straight back here, and the two pages bounce each other forever -
+    // which looks exactly like a login that never completes.
+    try {
+      sessionStorage.removeItem('studentSession');
+      sessionStorage.removeItem('studentInactive');
+    } catch (e2) {}
+    if (IS_DASHBOARD) {
+      showToast('Could not load your session. Please sign in again.', 'error');
+      setTimeout(goToLogin, 1500);
+    }
+    return;
+  }
+
+  // The stored session no longer matches a usable record.
   sessionStorage.removeItem('studentSession');
-})();
+  try { sessionStorage.removeItem('studentInactive'); } catch (e) {}
+  if (IS_DASHBOARD) goToLogin();
+}
+
+// Run only once every script on the page has parsed.
+//
+// app.js loads AFTER this file, so calling initApp() the moment auth.js
+// executes can hit a ReferenceError - and the catch above would read that
+// as an unusable session and bounce a perfectly good login back to
+// index.html. Waiting for load removes the race entirely.
+if (document.readyState === 'complete') {
+  restoreSession();
+} else {
+  window.addEventListener('load', restoreSession);
+}

@@ -14,6 +14,16 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
+// Campus wifi and other filtered networks often break Firestore's default
+// streaming transport, leaving reads to hang rather than fail - the portal
+// then shows nothing while appearing to work. Detect that and fall back to
+// long polling. Must run before any read or write.
+try {
+  db.settings({ experimentalAutoDetectLongPolling: true, merge: true });
+} catch (e) {
+  console.warn('Could not set the Firestore transport option:', e && e.message);
+}
+
 // Login address used when the normal account is locked.
 // New account = new uid, so past evaluations need re-pointing.
 function fallbackEmailFor(id) {
