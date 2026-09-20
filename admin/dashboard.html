@@ -39,21 +39,6 @@ window.firebaseConfig = window.firebaseConfig || {
 try {
   firebase.initializeApp(window.firebaseConfig);
   window.db     = firebase.firestore();
-
-  // Campus and office networks often sit behind a proxy or filter that breaks
-  // Firestore's default streaming transport (WebChannel). The request does not
-  // fail cleanly - it hangs - so the dashboard keeps showing the last cached
-  // copy while appearing to work. That is the "old data on university wifi,
-  // correct data on mobile data" case.
-  //
-  // This tells the SDK to detect such a network and fall back to long polling,
-  // which those proxies do pass. Must run before any read or write.
-  try {
-    window.db.settings({ experimentalAutoDetectLongPolling: true, merge: true });
-  } catch (e) {
-    console.warn('Could not set the Firestore transport option:', e && e.message);
-  }
-
   window.fbAuth = firebase.auth();
   db = window.db; fbAuth = window.fbAuth;
 } catch (e) {
@@ -96,26 +81,58 @@ fbAuth.onAuthStateChanged(async (user) => {
     return;
   }
   sessionStorage.removeItem('_dashRetried');
-  let allowed = false;
+
+  // Three outcomes, not two.
+  //
+  //   'yes'     the admins document exists, or we created it
+  //   'no'      Firestore actively refused - this account is not an admin
+  //   'unknown' we could not reach Firestore at all
+  //
+  // 'unknown' used to be treated as 'no', so a momentary network drop signed
+  // the admin out mid-session. onAuthStateChanged also fires on every hourly
+  // token refresh, so one blip at the wrong moment ended the session with no
+  // explanation. A failure to CHECK is not a failure to QUALIFY.
+  let verdict = 'unknown';
   try {
     const ref = db.collection('admins').doc(user.uid);
     const doc = await ref.get();
     if (doc.exists) {
-      allowed = true;
+      verdict = 'yes';
     } else {
       try {
         await ref.set({ role: 'admin', email: user.email || '', createdAt: new Date().toISOString() }, { merge: true });
-        allowed = true;
+        verdict = 'yes';
       } catch (writeErr) {
-        console.warn('Could not create admins doc (rules?):', writeErr.message);
-        allowed = !STRICT_ADMIN;
+        // permission-denied here is a real answer: the rules say no.
+        verdict = (writeErr && writeErr.code === 'permission-denied') ? 'no' : 'unknown';
+        console.warn('Could not create admins doc:', writeErr && writeErr.message);
       }
     }
   } catch (readErr) {
-    console.warn('Could not read admins doc (rules?):', readErr.message);
-    allowed = !STRICT_ADMIN;
+    verdict = (readErr && readErr.code === 'permission-denied') ? 'no' : 'unknown';
+    console.warn('Could not read admins doc:', readErr && readErr.message);
   }
-  if (!allowed) { await fbAuth.signOut(); window.location.replace('../index.html'); return; }
+
+  if (verdict === 'no' && STRICT_ADMIN) {
+    await fbAuth.signOut();
+    window.location.replace('../index.html');
+    return;
+  }
+
+  if (verdict === 'unknown') {
+    // Stay signed in on what we already verified this session, and say so.
+    // Only a session that was NEVER verified is turned away.
+    if (!window._adminVerified) {
+      _dashFatal('Could not reach Firestore to confirm your administrator account.<br><br>'
+        + 'This is usually a network problem rather than a permissions one. '
+        + 'Check your connection and reload.<br><br>'
+        + '<a href="../index.html" style="color:#3fb950;">&#8592; Back to login</a>');
+      return;
+    }
+    console.warn('Admin check skipped this time (offline); keeping the session that was already verified.');
+  } else {
+    window._adminVerified = true;
+  }
   window._adminUser = { uid: user.uid, email: user.email };
   document.documentElement.style.visibility = 'visible';
 });
@@ -194,12 +211,17 @@ async function syncCollectionToFirestore(key, val) {
 
 let _staleCollections = [];
 
+// Whether the last pull from Firestore was COMPLETE.
+//
+// adminrate.js checks this before pushing localStorage back up. Pushing a
+// half-loaded copy overwrites good records with older ones - and now that
+// the sync also deletes documents missing locally, it would remove them.
+window._firestoreLoadClean = false;
+
 async function loadFromFirebase() {
   updateFirebaseStatus('loading');
   _staleCollections = [];
-  // Placeholders while the first fetch is in flight. Only fills containers
-  // that are actually empty, so a warm cache still shows real data instantly.
-  if (typeof showSkeleton === 'function') showSkeleton();
+  window._firestoreLoadClean = false;   // re-earned on every load
   try {
     const collections = ['students','teachers','subjects','evaluations','schoolYears','auditLog'];
     for (const col of collections) {
@@ -208,14 +230,7 @@ async function loadFromFirebase() {
       // loop, so every collection after it in this list was never loaded at all.
       let snap;
       try {
-        // A blocked network can leave a read pending indefinitely rather than
-        // rejecting. Without a ceiling the loop never finishes, the badge stays
-        // on "Connecting..." and the stale data is never reported as stale.
-        snap = await Promise.race([
-          db.collection(col).get(),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('timed out after 10s')), 10000))
-        ]);
+        snap = await db.collection(col).get();
       } catch (e) {
         console.warn('Could not load "' + col + '" from Firestore:', e.code || e.message,
                      '— keeping whatever is already in localStorage.');
@@ -295,8 +310,24 @@ async function loadFromFirebase() {
       // never appears in deptSnap. deptsFromDB is then written back to localStorage, silently
       // wiping any dept that exists locally but hasn't been confirmed by Firestore yet.
       // Solution: merge any local-only custom departments back in so they survive the overwrite.
+      // A department that is local-only can be one of two OPPOSITE things:
+      // just created and not yet confirmed by Firestore, or just deleted from
+      // Firestore and not yet gone from this browser. Re-uploading both is why
+      // a deleted department kept coming back - the delete removed the
+      // document, and the next page load put it straight back.
+      //
+      // removeDepartment() now records the code, so the two cases can be told
+      // apart: a tombstoned code is dropped, anything else is re-synced as
+      // before.
+      let tombstones = [];
+      try { tombstones = JSON.parse(localStorage.getItem('deletedDepts') || '[]'); } catch (e) {}
+
       Object.entries(localDepts).forEach(([code, cfg]) => {
         if (!deptsFromDB[code] && cfg.isCustom) {
+          if (tombstones.indexOf(code) !== -1) {
+            console.log('Skipping deleted department:', code);
+            return;                         // stays deleted
+          }
           deptsFromDB[code] = cfg;
           // Re-attempt the Firestore write in case it was lost in the race
           db.collection('departments').doc(code).set({ code, ...cfg })
@@ -304,6 +335,14 @@ async function loadFromFirebase() {
             .catch(e => console.warn('❌ Failed to re-sync pending dept:', code, e));
         }
       });
+
+      // Once Firestore no longer has the document AND it is gone locally, the
+      // tombstone has done its job and would otherwise block re-creating a
+      // department with the same code later.
+      const stillNeeded = tombstones.filter(code => deptsFromDB[code] || localDepts[code]);
+      if (stillNeeded.length !== tombstones.length) {
+        try { localStorage.setItem('deletedDepts', JSON.stringify(stillNeeded)); } catch (e) {}
+      }
 
       localStorage.setItem('departments', JSON.stringify(deptsFromDB));
     } else {
@@ -318,12 +357,8 @@ async function loadFromFirebase() {
       }
     }
 
-    // Stamp the time of a CLEAN pull only. A partial load must not look like a
-    // fresh one - before a presentation the only question that matters is
-    // whether what is on screen came from Firestore just now.
-    if (!_staleCollections.length) {
-      try { localStorage.setItem('_lastSync', new Date().toISOString()); } catch (e) {}
-    }
+    // Only a complete pull makes the local copy safe to push back up.
+    if (!_staleCollections.length) window._firestoreLoadClean = true;
     updateFirebaseStatus(_staleCollections.length ? 'stale' : 'connected');
     // Re-run the migration after Firebase data overwrites localStorage.
     // This assigns facultyType to any legacy Firestore records that lack it,
@@ -341,32 +376,15 @@ async function loadFromFirebase() {
   }
 }
 
-// "just now" / "6 minutes ago" / a date. Reading a raw ISO string off a badge
-// is not something anyone should have to do mid-presentation.
-function _lastSyncText() {
-  let t;
-  try { t = localStorage.getItem('_lastSync'); } catch (e) {}
-  if (!t) return 'in this session';
-  const mins = Math.round((Date.now() - new Date(t).getTime()) / 60000);
-  if (mins < 1)    return 'just now';
-  if (mins === 1)  return '1 minute ago';
-  if (mins < 60)   return mins + ' minutes ago';
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24)    return hrs + (hrs === 1 ? ' hour ago' : ' hours ago');
-  return 'on ' + new Date(t).toLocaleString();
-}
-
 function updateFirebaseStatus(status) {
   const el = document.getElementById('fbStatusBadge');
   if (!el) return;
   const cfg = {
     loading:   { icon: '⏳', text: 'Connecting...',  color: '#f59e0b', tip: 'Loading data from Firestore' },
-    connected: { icon: '🔥', text: 'Firebase Live',  color: '#16a34a', tip: 'All data loaded from Firestore ' + _lastSyncText() + '. Click to refresh.' },
+    connected: { icon: '🔥', text: 'Firebase Live',  color: '#16a34a', tip: 'All data loaded from Firestore. Click to refresh.' },
     stale:     { icon: '⚠️', text: 'Data may be old', color: '#d97706',
-                 tip: 'Could not load: ' + _staleCollections.join(', ')
-                      + '. Showing the copy saved ' + _lastSyncText() + '. Click to retry.' },
-    error:     { icon: '⚠️', text: 'Offline Mode',   color: '#dc2626',
-                 tip: 'No connection. Showing the copy saved ' + _lastSyncText() + '. Click to retry.' }
+                 tip: 'Could not load: ' + _staleCollections.join(', ') + '. Showing the last saved copy. Click to retry.' },
+    error:     { icon: '⚠️', text: 'Offline Mode',   color: '#dc2626', tip: 'No connection. Showing the last saved copy. Click to retry.' }
   };
   const c = cfg[status] || cfg.error;
   // Clickable: a flaky connection at boot used to leave the dashboard showing
@@ -380,10 +398,6 @@ function updateFirebaseStatus(status) {
 // Manual re-pull. Re-renders the page you are actually on afterwards.
 window.refreshFromCloud = async function () {
   showToast('Refreshing from Firestore…', 'info');
-  // force = true: the person asked for this, so show the placeholders even
-  // though real data is already on screen. Otherwise a refresh on a warm
-  // cache looks like nothing happened.
-  if (typeof showSkeleton === 'function') showSkeleton(true);
   await loadFromFirebase();
   showToast(_staleCollections.length
       ? 'Still could not load: ' + _staleCollections.join(', ')
@@ -404,21 +418,7 @@ function _rerenderCurrentPage() {
     supervisor: 'renderSupervisorList', rptViewAll: 'renderRptViewAll',
     dept: 'renderDeptPage', deptManage: 'renderDeptManagePage'
   }[page];
-
-  // Some renderers need to be told WHICH record to draw. renderDeptPage takes a
-  // department code; called bare it renders nothing, which left the forced
-  // skeletons on screen until the page was changed. The code is on
-  // window.currentDept, set by openDeptPage.
-  const arg = { dept: window.currentDept }[page];
-
-  if (fn && typeof window[fn] === 'function') {
-    // A renderer that needs an argument it has not got would repaint nothing,
-    // so fall through to the dashboard rather than leave placeholders stuck.
-    if (page === 'dept' && !arg) { if (typeof renderDashboard === 'function') renderDashboard(); return; }
-    try { window[fn](arg); return; } catch (e) {
-      console.warn('Could not re-render "' + page + '":', e && e.message);
-    }
-  }
+  if (fn && typeof window[fn] === 'function') { try { window[fn](); return; } catch (e) {} }
   if (typeof renderDashboard === 'function') renderDashboard();
 }
 
