@@ -901,3 +901,177 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 @media (max-width: 520px) {
   .subject-picker { grid-template-columns: 1fr; }
 }
+/* ============================================================
+   LOGIN — split card
+   ------------------------------------------------------------
+   Deep green field, two angled white bands behind, and a card in
+   two halves: the form on the left, the university mark on the
+   right. The old centred card's classes are kept below this so
+   the forced-password-change screen still renders.
+   ============================================================ */
+.auth-bg {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #17603a;   /* the login's own green - deliberately lighter than --forest (#064e3b) */
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Two skewed bands. Purely decorative, so they are hidden from
+   assistive tech and dropped entirely on small screens where the
+   card fills the width anyway. */
+.auth-bg::before,
+.auth-bg::after {
+  content: '';
+  position: absolute;
+  background: #ffffff;
+  transform: skewX(-12deg);
+  pointer-events: none;
+}
+.auth-bg::before { inset: 6% -8% 6% 52%; opacity: 0.10; }
+.auth-bg::after  { inset: 12% 4% 12% 60%; opacity: 0.16; }
+
+.auth-card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: min(760px, 100%);
+  min-height: 380px;
+  border-radius: 22px;
+  overflow: hidden;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.28);
+}
+
+/* Left: the form, on the darker green. */
+.auth-form {
+  background: #1d6b41;
+  padding: 44px 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+.auth-form h2 {
+  color: #fff;
+  font-size: 1.55rem;
+  font-weight: 800;
+  text-align: center;
+  margin: 0 0 22px;
+  letter-spacing: -0.01em;
+}
+.auth-label {
+  color: #cfe8da;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin: 12px 0 6px;
+  display: block;
+}
+.auth-input-wrap { position: relative; }
+.auth-input {
+  width: 100%;
+  background: #17603a;
+  border: 1.5px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
+  padding: 11px 38px 11px 14px;
+  color: #fff;
+  font-size: 0.88rem;
+  font-weight: 600;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.auth-input::placeholder { color: rgba(255, 255, 255, 0.55); font-weight: 500; }
+.auth-input:focus {
+  outline: none;
+  border-color: #9fd9bb;
+  box-shadow: 0 0 0 3px rgba(159, 217, 187, 0.22);
+}
+.auth-peek {
+  position: absolute;
+  right: 8px; top: 50%;
+  transform: translateY(-50%);
+  background: none; border: 0; cursor: pointer;
+  color: rgba(255, 255, 255, 0.7);
+  padding: 4px; display: flex;
+}
+.auth-peek:hover { color: #fff; }
+.auth-peek svg { width: 17px; height: 17px; }
+
+.auth-btn {
+  margin-top: 22px;
+  width: 100%;
+  background: #fdf6ec;
+  color: #1d6b41;
+  border: 0;
+  border-radius: 9px;
+  padding: 12px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  transition: transform 0.12s, box-shadow 0.15s, opacity 0.15s;
+}
+.auth-btn:hover:not(:disabled) { box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22); transform: translateY(-1px); }
+.auth-btn:disabled { opacity: 0.65; cursor: not-allowed; }
+.auth-btn svg { width: 16px; height: 16px; }
+
+.auth-error {
+  display: none;
+  margin-top: 14px;
+  background: rgba(220, 38, 38, 0.16);
+  border: 1px solid rgba(255, 190, 190, 0.5);
+  color: #ffe3e3;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Right: the university mark, on cream. */
+.auth-brand {
+  background: #fdf8ef;
+  padding: 40px 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 14px;
+}
+.auth-brand img { width: 118px; height: 118px; object-fit: contain; }
+.auth-brand h1 {
+  color: #1d6b41;
+  font-size: 1.42rem;
+  font-weight: 800;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.auth-brand p {
+  color: #4b7a60;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+/* Stacked on a phone: the mark on top, the form beneath it, and the
+   decorative bands removed so nothing competes with the form. */
+@media (max-width: 720px) {
+  .auth-card { grid-template-columns: 1fr; min-height: 0; width: min(420px, 100%); }
+  .auth-brand { order: -1; padding: 30px 24px 22px; gap: 10px; }
+  .auth-brand img { width: 84px; height: 84px; }
+  .auth-brand h1 { font-size: 1.2rem; }
+  .auth-form { padding: 30px 26px 34px; }
+  .auth-bg::before, .auth-bg::after { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-btn { transition: none; }
+  .auth-btn:hover:not(:disabled) { transform: none; }
+}
