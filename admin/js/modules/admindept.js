@@ -22,6 +22,15 @@ window.refreshDeptConfig = function() {
 // Add new department — saved directly into the departments store → syncs to Firestore
 window.addDepartment = function(code, name, short, desc, icon, color) {
     code = code.toUpperCase();
+
+    // Creating a code clears any tombstone for it, so a department deleted and
+    // later re-created is not silently dropped by the loader.
+    try {
+        const tomb = JSON.parse(localStorage.getItem('deletedDepts') || '[]');
+        const kept = tomb.filter(function (c) { return c !== code; });
+        if (kept.length !== tomb.length) localStorage.setItem('deletedDepts', JSON.stringify(kept));
+    } catch (e) {}
+
     const depts = getDepartments();
     const newCfg = {
         name: name,
@@ -65,6 +74,18 @@ window.removeDepartment = function(code) {
     if (!depts[code]) { showToast('Department not found.', 'error'); return; }
     delete depts[code];
     setData('departments', depts);
+
+    // Record the deletion. loadFromFirebase() re-uploads any local-only custom
+    // department, because that is normally one created moments ago whose write
+    // has not landed yet. A department deleted from Firestore looks identical
+    // from the loader's side, so without this marker the next page load put it
+    // straight back - which is exactly why NEWS kept returning.
+    try {
+        const tomb = JSON.parse(localStorage.getItem('deletedDepts') || '[]');
+        if (tomb.indexOf(code) === -1) tomb.push(code);
+        localStorage.setItem('deletedDepts', JSON.stringify(tomb));
+    } catch (e) { /* the Firestore delete below still stands */ }
+
     // *** FIX: delete from Firestore so it does not reappear on page reload ***
     if (typeof db !== 'undefined') {
         db.collection('departments').doc(code).delete()

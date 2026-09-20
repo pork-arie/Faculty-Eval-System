@@ -338,10 +338,22 @@ window.syncCollectionToFirestore = async function(key, value) {
     if (key === 'departments') {
         try {
             const batch = db.batch();
+            const keep  = new Set(Object.keys(value || {}).map(String));
             Object.entries(value || {}).forEach(([code, cfg]) => {
                 batch.set(db.collection('departments').doc(code), { code, ...cfg });
             });
+
+            // Same resurrection bug as everywhere else in this function: only
+            // the remaining departments were written, so a deleted one kept its
+            // document and came back on the next page load.
+            const existing = await db.collection('departments').get();
+            let removed = 0;
+            existing.forEach(doc => {
+                if (!keep.has(doc.id)) { batch.delete(doc.ref); removed++; }
+            });
+
             await batch.commit();
+            if (removed) console.log('🗑 Removed', removed, 'deleted department(s)');
             console.log('✅ Synced departments to Firestore');
         } catch(e) { console.warn('Firestore sync error (departments):', e.message); }
         return;
@@ -353,17 +365,31 @@ window.syncCollectionToFirestore = async function(key, value) {
         try {
             const coursesMap = value || {};
             const entries = Object.entries(coursesMap);
-            if (entries.length > 0) {
-                const batch = db.batch();
-                entries.forEach(([deptCode, list]) => {
-                    batch.set(db.collection('courses').doc(deptCode), {
-                        dept: deptCode,
-                        courses: Array.isArray(list) ? list : []
-                    });
+
+            // No early return on an empty map. Clearing the last department's
+            // courses used to skip the write entirely, so Firestore kept the
+            // old list and the next load restored it.
+            const batch = db.batch();
+            const keep  = new Set(entries.map(([deptCode]) => String(deptCode)));
+            entries.forEach(([deptCode, list]) => {
+                batch.set(db.collection('courses').doc(deptCode), {
+                    dept: deptCode,
+                    courses: Array.isArray(list) ? list : []
                 });
-                await batch.commit();
-                console.log('✅ Synced customCourses to Firestore courses collection:', Object.keys(coursesMap));
-            }
+            });
+
+            // Remove departments dropped from the map, for the same reason the
+            // array branch does: writing only what remains leaves the deleted
+            // document in place, and the next page load brings it back.
+            const existing = await db.collection('courses').get();
+            let removed = 0;
+            existing.forEach(doc => {
+                if (!keep.has(doc.id)) { batch.delete(doc.ref); removed++; }
+            });
+
+            await batch.commit();
+            if (removed) console.log('🗑 Removed', removed, 'department(s) from the courses collection');
+            console.log('✅ Synced customCourses to Firestore courses collection:', Object.keys(coursesMap));
         } catch(e) { console.warn('Firestore sync error (customCourses):', e.message); }
         return;
     }
@@ -392,16 +418,62 @@ window.syncCollectionToFirestore = async function(key, value) {
     try {
         if (Array.isArray(value)) {
             const batch = db.batch();
-            value.forEach(item => { 
+            const keep  = new Set();
+            value.forEach(item => {
                 if (item && item.id) {
+                    keep.add(String(item.id));
                     batch.set(db.collection(col).doc(item.id), item);
                 }
             });
+
+            // DELETE what is no longer in the local copy.
+            //
+            // This sync only ever wrote the items that remain. Removing one
+            // locally left its document untouched in Firestore, and the next
+            // page load pulled every document back down - so a deleted
+            // department or subject reappeared by itself, looking exactly like
+            // a stale cache. It was not: the delete never left the browser.
+            //
+            // Collections that are appended to rather than managed as a whole
+            // are excluded. auditLog and evaluations hold records this browser
+            // has no business removing, and a partial local copy would wipe
+            // everyone else's.
+            const MANAGED_AS_A_WHOLE = ['students', 'teachers', 'subjects',
+                                        'schoolYears', 'customDepartments',
+                                        'questionSets', 'exemptions'];
+            if (MANAGED_AS_A_WHOLE.indexOf(key) !== -1) {
+                const existing = await db.collection(col).get();
+                let removed = 0;
+                existing.forEach(doc => {
+                    if (!keep.has(doc.id)) { batch.delete(doc.ref); removed++; }
+                });
+                if (removed) console.log(`🗑 Removing ${removed} deleted item(s) from ${col}`);
+            }
+
             await batch.commit();
             console.log(`✅ Synced ${value.length} items to ${col}`);
         } else if (value && typeof value === 'object') {
-            await db.collection(col).doc(key).set(value);
-            console.log(`✅ Synced ${key} to ${col}`);
+            // An object keyed by id - customDepartments is stored this way -
+            // needs the same treatment: one document per key, and anything no
+            // longer present must go.
+            const byId = Object.keys(value).every(k => value[k] && typeof value[k] === 'object');
+            if (byId && key === 'customDepartments') {
+                const batch = db.batch();
+                const keep  = new Set(Object.keys(value).map(String));
+                Object.keys(value).forEach(k => batch.set(db.collection(col).doc(k), value[k]));
+
+                const existing = await db.collection(col).get();
+                let removed = 0;
+                existing.forEach(doc => {
+                    if (!keep.has(doc.id)) { batch.delete(doc.ref); removed++; }
+                });
+                await batch.commit();
+                if (removed) console.log(`🗑 Removed ${removed} deleted entry(ies) from ${col}`);
+                console.log(`✅ Synced ${Object.keys(value).length} entries to ${col}`);
+            } else {
+                await db.collection(col).doc(key).set(value);
+                console.log(`✅ Synced ${key} to ${col}`);
+            }
         }
     } catch(e) { 
         console.warn('Firestore sync error:', e.message);
@@ -439,11 +511,26 @@ window.fullSyncToFirebase = async function() {
 window.originalSetData = window.setData;
 // REMOVED duplicate setData() — byte-identical to the copy in admin.js.
 
-// Call full sync after load
+// Call full sync ONLY after a clean load from Firestore.
+//
+// This used to fire on a blind 2-second timer, which races loadFromFirebase()
+// and loses on a slow connection: the pull is still in flight, localStorage
+// still holds the previous session's data, and this pushes that stale copy
+// over the top of Firestore. An unenrolled student reappeared, a deleted
+// department came back - not because the delete failed, but because a later
+// page load re-uploaded the old state and overwrote the correct one.
+//
+// Now that the sync also DELETES documents missing from the local copy, running
+// it on stale data would remove real records, so the guard is not optional.
+// dashboard.html sets _firestoreLoadClean only when every collection loaded.
 setTimeout(() => {
-    if (typeof firebase !== 'undefined' && firebase.firestore) {
-        fullSyncToFirebase();
+    if (typeof firebase === 'undefined' || !firebase.firestore) return;
+    if (window._firestoreLoadClean !== true) {
+        console.warn('Full sync skipped: the load from Firestore was incomplete, '
+                   + 'so the local copy cannot be trusted as the newer one.');
+        return;
     }
+    fullSyncToFirebase();
 }, 2000);
 
 // REMOVED: the saveStudent override that used to live here.
