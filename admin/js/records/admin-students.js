@@ -159,11 +159,23 @@ function openEditStudentModal(id) {
 }
 
 // ===== STUDENT ID FORMAT =====
-// NwSSU student IDs are YY-NNNNN: two-digit entry year, hyphen, five digits,
-// zero-padded. The padding is load-bearing - "22-1745" and "22-01745" are the
-// same person to a human but two different strings to the duplicate check, so
-// one mistyped entry creates a second record that looks identical on screen.
-const STUDENT_ID_RE = /^\d{2}-\d{5}$/;
+// NwSSU uses TWO student ID formats, and both are accepted:
+//
+//   YY-NNNNN       e.g. 24-00001     two-digit year, hyphen, five digits
+//   YYYY-NNNN-N    e.g. 2025-9902-1  four-digit year, four digits, then one or
+//                  or 2025-9902-12   two digits
+//
+// The second was introduced with a registrar update; students on either
+// format are enrolled at the same time, so neither can replace the other.
+//
+// Anything else is rejected. Strict validation is a security measure as well
+// as a data one: the ID becomes the person's sign-in address
+// (<id>@nwssu.app), so only these two exact shapes ever reach Firebase Auth.
+//
+// For YY-NNNNN the zero padding is load-bearing - "22-1745" and "22-01745" are
+// the same person to a human but two different strings to the duplicate
+// check, so one mistyped entry creates a second record that looks identical.
+const STUDENT_ID_RE = /^(?:\d{2}-\d{5}|\d{4}-\d{4}-\d{1,2})$/;
 
 // Repairs the near-misses people actually type, and NOTHING else.
 //
@@ -174,9 +186,19 @@ const STUDENT_ID_RE = /^\d{2}-\d{5}$/;
 // old-format ID) so they are left alone and allowed to fail validation instead.
 function normalizeStudentId(raw) {
   const v = String(raw || '').trim();
-  const m = v.match(/^(\d{2})\s*[-\u2013\u2014_ ]\s*(\d{1,5})$/);
-  if (!m) return v;
-  return m[1] + '-' + m[2].padStart(5, '0');
+  const SEP = '\\s*[-\\u2013\\u2014_ ]\\s*';     // hyphen, en/em dash, underscore or space
+
+  // YYYY-NNNN-N. Checked FIRST: its opening "20" would otherwise be read as the
+  // two-digit year of the old format. No padding - the parts are fixed-length,
+  // so only the separators are repaired ("2025 9902 1", "2025\u20139902\u20131").
+  const n = v.match(new RegExp('^(\\d{4})' + SEP + '(\\d{4})' + SEP + '(\\d{1,2})$'));
+  if (n) return n[1] + '-' + n[2] + '-' + n[3];
+
+  // YY-NNNNN, with the zero padding repaired ("22-1745" -> "22-01745").
+  const m = v.match(new RegExp('^(\\d{2})' + SEP + '(\\d{1,5})$'));
+  if (m) return m[1] + '-' + m[2].padStart(5, '0');
+
+  return v;                                      // left alone, allowed to fail validation
 }
 
 function saveStudent() {
@@ -220,7 +242,7 @@ function saveStudent() {
     : null;
   const sidUnchanged = priorSid != null && sid === priorSid;
   if (!sidUnchanged && !STUDENT_ID_RE.test(sid)) {
-    showToast(`Student ID must look like 22-01745 (year, dash, 5 digits). Got "${sid}".`, 'error');
+    showToast(`Student ID must look like 24-00001, 2025-9902-1 or 2025-9902-12. Got "${sid}".`, 'error');
     return;
   }
   if (editStudentId) {

@@ -422,7 +422,15 @@ window.syncCollectionToFirestore = async function(key, value) {
             value.forEach(item => {
                 if (item && item.id) {
                     keep.add(String(item.id));
-                    batch.set(db.collection(col).doc(item.id), item);
+                    // Merge for student and teacher records: a copy that arrives
+                    // without its password (it never reaches localStorage) must
+                    // not erase the one stored here. A password that IS present -
+                    // a real change - still overwrites.
+                    if (key === 'students' || key === 'teachers') {
+                        batch.set(db.collection(col).doc(item.id), item, { merge: true });
+                    } else {
+                        batch.set(db.collection(col).doc(item.id), item);
+                    }
                 }
             });
 
@@ -495,6 +503,24 @@ window.fullSyncToFirebase = async function() {
     const keys = ['students', 'teachers', 'subjects', 'evaluations', 'schoolYears', 'auditLog', 'evalPeriod', 'finalReports', 'customDepartments', 'customCourses', 'questionSets', 'developmentPlans', 'exemptions', 'reportSignatories'];
     
     for (const key of keys) {
+        // Students and teachers are stored WITHOUT their passwords (see
+        // admin-core.js). Pushing that stored copy would overwrite every record
+        // in Firestore without its password, and sign-in would fall back to each
+        // person's ID - resetting everyone at once. Read them through getData(),
+        // which puts the in-memory passwords back, and only once those passwords
+        // have actually been loaded this session.
+        if (key === 'students' || key === 'teachers') {
+            if (!window._pwVaultReady || !window._pwVaultReady[key]) {
+                console.warn(`Full sync skipped ${key}: passwords not loaded this session.`);
+                continue;
+            }
+            try {
+                await syncCollectionToFirestore(key, getData(key, []));
+            } catch(e) {
+                console.warn(`Failed to sync ${key}:`, e);
+            }
+            continue;
+        }
         const data = localStorage.getItem(key);
         if (data) {
             try {

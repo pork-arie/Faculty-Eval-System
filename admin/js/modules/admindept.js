@@ -24,12 +24,17 @@ window.addDepartment = function(code, name, short, desc, icon, color) {
     code = code.toUpperCase();
 
     // Creating a code clears any tombstone for it, so a department deleted and
-    // later re-created is not silently dropped by the loader.
+    // later re-created is not silently dropped by the loader. Both copies go:
+    // the local one and the shared one in Firestore.
     try {
         const tomb = JSON.parse(localStorage.getItem('deletedDepts') || '[]');
         const kept = tomb.filter(function (c) { return c !== code; });
         if (kept.length !== tomb.length) localStorage.setItem('deletedDepts', JSON.stringify(kept));
     } catch (e) {}
+    if (typeof db !== 'undefined') {
+        db.collection('deletedDepts').doc(code).delete()
+          .catch(function () { /* nothing recorded for this code - fine */ });
+    }
 
     const depts = getDepartments();
     const newCfg = {
@@ -75,6 +80,18 @@ window.removeDepartment = function(code) {
     delete depts[code];
     setData('departments', depts);
 
+    // Its COURSES go too. They were left behind - in localStorage under
+    // customCourses and in Firestore as courses/<code> - so a deleted
+    // department's programmes still turned up in course lists and imports.
+    try {
+        const cc = getData('customCourses', {});
+        if (cc && cc[code]) { delete cc[code]; setData('customCourses', cc); }
+    } catch (e) { /* the Firestore delete below still stands */ }
+    if (typeof db !== 'undefined') {
+        db.collection('courses').doc(code).delete()
+          .catch(function () { /* no courses recorded for this code - fine */ });
+    }
+
     // Record the deletion. loadFromFirebase() re-uploads any local-only custom
     // department, because that is normally one created moments ago whose write
     // has not landed yet. A department deleted from Firestore looks identical
@@ -86,11 +103,22 @@ window.removeDepartment = function(code) {
         localStorage.setItem('deletedDepts', JSON.stringify(tomb));
     } catch (e) { /* the Firestore delete below still stands */ }
 
-    // *** FIX: delete from Firestore so it does not reappear on page reload ***
     if (typeof db !== 'undefined') {
         db.collection('departments').doc(code).delete()
           .then(function() { console.log('Dept deleted from Firestore:', code); })
           .catch(function(e) { console.error('Firestore dept delete error:', e); });
+
+        // A TOMBSTONE IN FIRESTORE, not just in this browser.
+        //
+        // The local marker above only stops THIS browser re-uploading the
+        // department. Any other machine still holding it in localStorage puts
+        // it straight back on its next load - which is why a deleted
+        // department kept returning to the database after signing in again.
+        // A tombstone every device can read closes that.
+        db.collection('deletedDepts').doc(code).set({
+            code: code,
+            deletedAt: new Date().toISOString()
+        }).catch(function(e) { console.warn('Could not record the deletion:', e.message); });
     }
     refreshDeptConfig();
     // Also refresh the main dept cards page if visible
@@ -109,10 +137,13 @@ window.deleteDeptSafe = function(code) {
 
     const teachers = getData('teachers', []).filter(t => !t.deleted && (t.dept || '').toUpperCase() === code);
     const subjects = getData('subjects', []).filter(s => (s.dept || '').toUpperCase() === code);
+    // Students were not counted, so the warning could read "0 teachers and 0
+    // subjects" for a department that still had a whole class enrolled in it.
+    const students = getData('students', []).filter(s => !s.deleted && (s.dept || '').toUpperCase() === code);
 
     let msg = 'Delete the department "' + cfg.name + '" (' + code + ')?';
-    if (teachers.length || subjects.length) {
-        msg += ' Warning: ' + teachers.length + ' teacher(s) and ' + subjects.length +
+    if (teachers.length || subjects.length || students.length) {
+        msg += ' Warning: ' + students.length + ' student(s), ' + teachers.length + ' teacher(s) and ' + subjects.length +
                ' subject(s) are still assigned to it. They will not be deleted, but will show as ' +
                'unassigned until you move them to another department.';
     }

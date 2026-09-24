@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>NwSSU — Student Evaluation Portal</title>
+<title>NwSSU-Student Evaluation Portal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
 
@@ -22,95 +22,100 @@
 <!-- ============================================================
      LOGIN PAGE
      ------------------------------------------------------------
-     This page signs the person in and nothing else. On success
-     auth.js sends them to dashboard.html, which is where the app
-     itself lives. Splitting the two means the browser never has
-     to parse 360 lines of app markup just to show a login form,
-     and a failed login can never leave half an app on screen.
+     Signs the person in and nothing else; auth.js then sends them
+     to dashboard.html. Designed to match the Android app's sign-in
+     so a student sees the same screen on either.
+
+     Both screens here sit inside a real <form>. Browsers warn when a
+     password field has none, and without one password managers
+     cannot offer to save or fill the login. onsubmit replaces the
+     per-field Enter handlers - a form submits on Enter already.
+
+     Element ids are unchanged, so auth.js needs no edits:
+       loginSid  loginPass  loginPwPeek  loginBtn  loginError
+       pwGate  pwGateNew  pwGateConfirm  pwGateBtn  pwGateError
      ============================================================ -->
-<!-- ============================================================
-     FORCED PASSWORD CHANGE
-     Shown between login and the app when the account still has its default
-     password (the person's own ID). Reuses the login page's own classes so it
-     needs no new CSS. See needsPasswordChange() in user.js.
-     ============================================================ -->
-<!-- Shares the login page's shell so the two full-page states look identical. -->
-<div id="pwGate" style="display:none;">
-  <div class="login-shell">
-    <div class="login-brand">
-      <div class="login-logo"><img src="../nwssu_logo.jpg" alt="NwSSU"/></div>
-      <h1 class="login-title">Choose a password</h1>
-      <p class="login-subtitle">Your account still uses your ID number as its password.</p>
+
+<!-- Forced password change. Shown between login and the app while the
+     account still uses its ID number as its password. -->
+<div id="pwGate" class="lg-bg" style="display:none;">
+  <div class="lg-card">
+    <div class="lg-mark">
+      <img src="icons/NWSSU-LOGO.jpg" alt="Northwest Samar State University"/>
+      <h1>Choose a password</h1>
+      <p>Your account still uses your ID number as its password.</p>
     </div>
 
-    <div class="login-card">
-      <label class="field-label" for="pwGateNew">NEW PASSWORD</label>
-      <div class="input-wrap">
-        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
-        <input class="form-control" type="password" id="pwGateNew" placeholder="At least 6 characters" autocomplete="new-password"/>
+    <form onsubmit="event.preventDefault(); submitNewPassword();">
+      <!-- Chrome asks for a username field in any form that sets a password,
+           so a password manager can save the NEW password under the right
+           account. Hidden from view; auth.js fills it with the ID number. -->
+      <input type="text" id="pwGateUser" name="username" autocomplete="username"
+             hidden readonly aria-hidden="true" tabindex="-1"/>
+      <label class="lg-label" for="pwGateNew">NEW PASSWORD:</label>
+      <div class="lg-field">
+        <input class="lg-input" type="password" id="pwGateNew"
+               placeholder="At least 6 characters" autocomplete="new-password"/>
       </div>
 
-      <label class="field-label" for="pwGateConfirm">CONFIRM PASSWORD</label>
-      <div class="input-wrap">
-        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
-        <input class="form-control" type="password" id="pwGateConfirm" placeholder="Type it again" autocomplete="new-password"
-               onkeydown="if(event.key==='Enter')submitNewPassword()"/>
+      <label class="lg-label" for="pwGateConfirm">CONFIRM PASSWORD:</label>
+      <div class="lg-field">
+        <input class="lg-input" type="password" id="pwGateConfirm"
+               placeholder="Type it again" autocomplete="new-password"/>
       </div>
 
-      <button class="btn-login" id="pwGateBtn" onclick="submitNewPassword()">Set new password</button>
-      <div class="error-msg" id="pwGateError" style="display:none;"></div>
-    </div>
+      <button class="lg-btn" id="pwGateBtn" type="submit">Set new password</button>
+      <div class="lg-error" id="pwGateError"></div>
+    </form>
 
-    <p class="login-foot">A private password keeps someone else from submitting in your name.</p>
+    <p class="lg-foot">A private password keeps someone else from submitting in your name.</p>
   </div>
 </div>
 
-<div id="loginPage" class="auth-bg">
-  <div class="auth-card">
+<!-- Sign in -->
+<div id="loginPage" class="lg-bg">
+  <div class="lg-card">
+    <div class="lg-mark">
+      <img src="../icons/NWSSU-LOGO.jpg" alt="Northwest Samar State University"/>
+      <h1>Faculty Evaluation</h1>
+      <span class="lg-beta">BETA</span>
+    </div>
 
-    <!-- Form. Element ids are unchanged so auth.js keeps working:
-         loginSid, loginPass, loginPwPeek, loginBtn, loginError. -->
-    <div class="auth-form">
-      <h2>Sign In</h2>
-
-      <label class="auth-label" for="loginSid">ID Number</label>
-      <div class="auth-input-wrap">
-        <input class="auth-input" type="text" id="loginSid" placeholder="Enter your ID"
-               autocomplete="username" onkeydown="if(event.key==='Enter') doLogin()"/>
+    <form onsubmit="event.preventDefault(); doLogin();">
+      <label class="lg-label" for="loginSid">ID NUMBER:</label>
+      <div class="lg-field">
+        <input class="lg-input" type="text" id="loginSid"
+               placeholder="Enter your ID" autocomplete="username"/>
       </div>
 
-      <label class="auth-label" for="loginPass">Password</label>
-      <div class="auth-input-wrap">
-        <input class="auth-input" type="password" id="loginPass" placeholder="Enter password"
-               autocomplete="current-password" onkeydown="if(event.key==='Enter') doLogin()"/>
-        <button type="button" class="auth-peek" id="loginPwPeek" onclick="toggleLoginPw()" aria-label="Show password">
+      <label class="lg-label" for="loginPass">PASSWORD:</label>
+      <div class="lg-field">
+        <input class="lg-input" type="password" id="loginPass"
+               placeholder="Enter Password" autocomplete="current-password"/>
+        <button type="button" class="lg-peek" id="loginPwPeek"
+                onclick="toggleLoginPw()" aria-label="Show password">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
       </div>
 
-      <button class="auth-btn" id="loginBtn" onclick="doLogin()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-        Sign in
-      </button>
+      <button class="lg-btn" id="loginBtn" type="submit">Sign in</button>
+      <div class="lg-error" id="loginError">Invalid ID or password. Please try again.</div>
+    </form>
 
-      <div class="auth-error" id="loginError">Invalid ID or password. Please try again.</div>
-    </div>
-
-    <!-- University mark -->
-    <div class="auth-brand">
-      <img src="../nwssu_logo.jpg" alt="Northwest Samar State University"/>
-      <h1>Faculty Evaluation</h1>
-      <p>Sign in with your registered ID</p>
-    </div>
-
+    <!-- Agreement by signing in. Opens in a new tab so a half-typed login is
+         not lost by reading the terms. -->
+    <p class="lg-terms">
+      By signing in, you agree to the
+      <a href="terms.html" target="_blank" rel="noopener">Terms of Use</a>.
+      This is a beta system for capstone testing.
+    </p>
   </div>
 </div>
 
 <div id="toastContainer"></div>
 
 <!-- core.js declares the Firebase clients and shared state; auth.js owns
-     sign-in and the forced password change. app.js is NOT loaded here -
-     nothing on this page needs it. -->
+     sign-in and the forced password change. app.js is NOT loaded here. -->
 <script src="js/core.js"></script>
 <script src="js/auth.js"></script>
 </body>

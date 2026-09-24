@@ -5,25 +5,15 @@ service cloud.firestore {
     function signedIn() {
       return request.auth != null;
     }
+    function signedInId() {
+      return request.auth.token.email.split('@')[0].split('\\.')[0];
+    }
+
     function isAdmin() {
       return signedIn()
         && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    // ------------------------------------------------------------------
-    // OWN-RECORD WRITES
-    //
-    // The password a person types is the `password` field on their roster
-    // record - that is the credential both clients check on every sign-in.
-    // So a person must be able to write that one field on their OWN record
-    // when they change their password, and clear their own forceReset flag.
-    // Everything else on students/teachers stays admin-only.
-    // ------------------------------------------------------------------
-    // The local part is the person's ID. It may carry a ".r2" suffix: when a
-    // legacy Auth account is locked (a password nobody remembers, which no
-    // client can reset), the app provisions a second account at <id>.r2 and
-    // uses that from then on. Strip the suffix so that person can still change
-    // their own password. IDs never contain a dot, so this is unambiguous.
     function ownsRecord(rec) {
       return signedIn()
         && request.auth.token.email is string
@@ -56,13 +46,17 @@ service cloud.firestore {
     match /customDepartments/{doc} { allow read: if signedIn(); allow write: if isAdmin(); }
     match /customCourses/{doc}     { allow read: if signedIn(); allow write: if isAdmin(); }
     match /departments/{doc}       { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /deletedDepts/{doc}      { allow read: if signedIn(); allow write: if isAdmin(); }
     match /courses/{doc}           { allow read: if signedIn(); allow write: if isAdmin(); }
     match /schoolYears/{doc}       { allow read: if signedIn(); allow write: if isAdmin(); }
     match /settings/{doc}          { allow read: if signedIn(); allow write: if isAdmin(); }
     match /subjects/{doc}          { allow read: if signedIn(); allow write: if isAdmin(); }
 
     match /students/{doc} {
-      allow read:           if signedIn();
+      allow read:           if isAdmin()
+                            || (signedIn()
+                                && request.auth.token.email is string
+                                && resource.data.sid == signedInId());
       allow create, delete: if isAdmin();
       allow update:         if isAdmin()
                             || (ownsRecord(resource.data) && changesOwnPasswordOnly());
@@ -74,23 +68,6 @@ service cloud.firestore {
                             || (ownsRecord(resource.data) && changesOwnTeacherPasswordOnly());
     }
 
-    // ------------------------------------------------------------------
-    // OWNING AN EVALUATION WITHOUT MATCHING evaluatorUid
-    //
-    // Evaluations are keyed by evaluatorUid, which is fine until the person's
-    // Auth account is REPLACED - which is what the .r2 fallback does when a
-    // legacy login is locked. The new account has a new uid, so their own past
-    // submissions become unreadable to them and every finished subject reads
-    // "Pending" again.
-    //
-    // The roster record is the stable identity: claimUid writes the current uid
-    // onto students/{id} (or teachers/{id}) at every login. So a person owns an
-    // evaluation when the roster document it points at carries THEIR uid, even
-    // if the evaluation itself still carries an older one. That lets both
-    // clients silently repoint their own records at sign-in, with no admin step.
-    //
-    // exists() guards the get(): a lookup on a deleted roster document would
-    // otherwise error and deny the whole rule.
     function rosterUidFor(id, isSupervisor) {
       return isSupervisor
         ? (exists(/databases/$(database)/documents/teachers/$(id))
@@ -112,17 +89,10 @@ service cloud.firestore {
                     || ownsEvaluation(resource.data);
       allow create: if signedIn()
                     && request.resource.data.evaluatorUid == request.auth.uid;
-      // Both clients build a DETERMINISTIC document id, so a second submission
-      // for the same subject/term is an UPDATE, not a create. A student or
-      // supervisor may overwrite only their own record, and only if it stays
-      // theirs afterwards.
       allow update: if isAdmin()
                     || (signedIn()
                         && resource.data.evaluatorUid == request.auth.uid
                         && request.resource.data.evaluatorUid == request.auth.uid)
-                    // Re-pointing an own record onto the current uid. Nothing
-                    // else may change in the same write, so this cannot be used
-                    // to alter a rating or move a record to someone else.
                     || (ownsEvaluation(resource.data)
                         && request.resource.data.diff(resource.data)
                              .affectedKeys().hasOnly(['evaluatorUid'])
@@ -140,8 +110,6 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // create is open because the entries that matter most have no signed-in
-    // user behind them: a FAILED login. Append-only so nobody rewrites history.
     match /loginLogs/{doc} {
       allow read:   if isAdmin();
       allow create: if true;

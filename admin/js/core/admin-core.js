@@ -6,23 +6,85 @@ if (!sessionStorage.getItem('adminLoggedIn')) {
 }
 
 // Reads localStorage. Firestore is loaded once at boot (dashboard.html).
-window.getData = function(key, defaultValue = []) {
-    const data = localStorage.getItem(key);
-    if (data) {
-        try {
-            return JSON.parse(data);
-        } catch(e) {
-            return defaultValue;
-        }
-    }
-    return defaultValue;
+// ============================================================
+// PASSWORDS NEVER TOUCH localStorage
+// ------------------------------------------------------------
+// The dashboard mirrors students and teachers into localStorage
+// for speed. Those records carry the `password` field - the
+// credential people sign in with - so every student's and
+// supervisor's password used to sit in plain text under
+// DevTools > Application, readable by anyone at the admin's
+// machine or by any script that ever ran on the page.
+//
+// Now the password is held IN MEMORY for this session only, in
+// _pwVault, and stripped from everything written to storage.
+// getData() puts it back on the records it returns, so every
+// screen that reads t.password or s.password works unchanged.
+// Firestore still receives the full record, so sign-in is
+// unaffected. Closing the tab forgets every password.
+// ============================================================
+const _PW_KEYS = ['students', 'teachers'];
+window._pwVault = { students: {}, teachers: {} };
+// Set once a collection's passwords have come from Firestore this session.
+// Until then, a save could see a record with no password and reset it.
+window._pwVaultReady = { students: false, teachers: false };
+
+// Record the passwords from `list` into the vault; return a copy without them.
+window._stripPasswords = function (key, list) {
+    if (_PW_KEYS.indexOf(key) === -1 || !Array.isArray(list)) return list;
+    return list.map(function (rec) {
+        if (!rec || typeof rec !== 'object') return rec;
+        if (rec.id && typeof rec.password === 'string') window._pwVault[key][rec.id] = rec.password;
+        if (!('password' in rec)) return rec;
+        const copy = Object.assign({}, rec);
+        delete copy.password;
+        return copy;
+    });
 };
 
-// Writes localStorage, then mirrors to Firestore.
+window.getData = function(key, defaultValue = []) {
+    const data = localStorage.getItem(key);
+    if (!data) return defaultValue;
+    let parsed;
+    try { parsed = JSON.parse(data); } catch (e) { return defaultValue; }
+
+    // Old copies written before this fix still hold passwords. Take them into
+    // the vault and rewrite the stored copy clean, once.
+    if (_PW_KEYS.indexOf(key) !== -1 && Array.isArray(parsed) && parsed.some(r => r && 'password' in r)) {
+        const clean = window._stripPasswords(key, parsed);
+        try { localStorage.setItem(key, JSON.stringify(clean)); } catch (e) {}
+    }
+    if (_PW_KEYS.indexOf(key) === -1 || !Array.isArray(parsed)) return parsed;
+
+    // Put the in-memory passwords back on what callers get.
+    const vault = window._pwVault[key];
+    return parsed.map(function (rec) {
+        if (rec && rec.id && vault[rec.id] !== undefined && !('password' in rec)) {
+            return Object.assign({}, rec, { password: vault[rec.id] });
+        }
+        return rec;
+    });
+};
+
 window.setData = function(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
+    // Refuse to save students/teachers before their passwords are known. A
+    // record read without its password looks like it has none, and several
+    // save paths then default it to the person's ID - quietly resetting a
+    // real password. Better to stop and say so.
+    if (_PW_KEYS.indexOf(key) !== -1 && !window._pwVaultReady[key]) {
+        console.warn('Save of ' + key + ' blocked: passwords not loaded from Firestore yet.');
+        // Silent during start-up: some start-up code saves before the first
+        // load has finished, and it re-runs once the data is in. Only warn
+        // once a load has actually been tried and failed.
+        if (window._firestoreLoadAttempted && typeof showToast === 'function') {
+            showToast('Could not load the current ' + key + ' from the database yet. ' +
+                      'Click the status badge to refresh, then try again.', 'warning');
+        }
+        return;
+    }
+    localStorage.setItem(key, JSON.stringify(window._stripPasswords(key, value)));
     if (typeof syncCollectionToFirestore === 'function') {
-        syncCollectionToFirestore(key, value);
+        syncCollectionToFirestore(key, value);          // Firestore keeps the full record
     }
 };
 
@@ -243,28 +305,54 @@ const SKEL_TARGETS = {
   feedbackList:               () => _skelList(4)
 };
 
+// Containers overwritten by a FORCED skeleton, with what they held before.
+// clearStuckSkeletons() puts back any that the page's redraw did not replace.
+window._skelRestore = [];
+
 window.showSkeleton = function (force) {
   try {
+    // Only the page you are LOOKING AT. A forced refresh used to fill every
+    // page's containers, but only the open page is redrawn afterwards - so the
+    // others kept their placeholders until you visited them.
+    const page = document.querySelector('.page.active');
+    if (!page) return;
+    if (force) window._skelRestore = [];
+
+    const fill = (el, html) => {
+      if (force) window._skelRestore.push({ el: el, html: el.innerHTML });
+      el.innerHTML = html;
+    };
+
     // Named containers first - these are the panels that are not tables.
     Object.keys(SKEL_TARGETS).forEach(id => {
       const el = document.getElementById(id);
-      if (!el) return;
+      if (!el || !page.contains(el)) return;
       if (!force && el.children.length) return;   // never cover real content
-      el.innerHTML = SKEL_TARGETS[id]();
+      fill(el, SKEL_TARGETS[id]());
     });
-
-    const page = document.querySelector('.page.active');
-    if (!page) return;
 
     page.querySelectorAll('table').forEach(tbl => {
       const body = tbl.querySelector('tbody');
       if (!body) return;
       if (!force && body.children.length) return;   // never cover real rows
       const cols = tbl.querySelectorAll('thead th').length || 4;
-      body.innerHTML = _skelRows(cols, 6);
+      fill(body, _skelRows(cols, 6));
     });
   } catch (e) {
     // Purely cosmetic. A failure here must never stop the data load.
     console.warn('Skeleton render skipped:', e && e.message);
   }
+};
+
+// After a forced refresh: any container STILL showing placeholders was not
+// redrawn by its page - the department filter pills are the usual one, since
+// they are built once rather than on every refresh. Put back what it held.
+// Anything the redraw did replace is left alone.
+window.clearStuckSkeletons = function () {
+  try {
+    (window._skelRestore || []).forEach(r => {
+      if (r.el && r.el.querySelector('.skel')) r.el.innerHTML = r.html;
+    });
+  } catch (e) { /* cosmetic */ }
+  window._skelRestore = [];
 };

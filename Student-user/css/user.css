@@ -45,29 +45,12 @@ body {
    and a translucent "glass" card. The previous version was a white card on a
    near-black page, which matched nothing else in the system.
    ============================================================================ */
-#pwGate,
-#loginPage {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 28px 20px;
-  position: relative;
-  overflow: hidden;
-  /* The app uses Brush.verticalGradient(Forest -> Emerald). Same two stops. */
-  background: linear-gradient(180deg, var(--forest) 0%, var(--emerald) 100%);
-}
-
-/* A soft off-centre glow keeps the large flat gradient from looking like a
-   default page background, without introducing another colour. */
-#pwGate::before,
-#loginPage::before {
-  content: '';
-  position: fixed; inset: 0; pointer-events: none;
-  background:
-    radial-gradient(ellipse 70% 55% at 20% 0%,   rgba(110,231,183,0.20) 0%, transparent 62%),
-    radial-gradient(ellipse 60% 50% at 85% 100%, rgba(4,61,46,0.45)     0%, transparent 60%);
-}
+/* The #pwGate / #loginPage rules that used to live here were REMOVED.
+   As id selectors they outranked every class on the page, so they
+   overrode the login design: their background replaced the flat green
+   and their ::before (position:fixed; inset:0) replaced the top-left
+   wedge with a radial glow. Both screens are styled by .lg-bg now -
+   see LOGIN at the end of this file. */
 
 .login-shell {
   position: relative; z-index: 2;
@@ -901,177 +884,420 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 @media (max-width: 520px) {
   .subject-picker { grid-template-columns: 1fr; }
 }
+
 /* ============================================================
-   LOGIN — split card
+   LOGIN
    ------------------------------------------------------------
-   Deep green field, two angled white bands behind, and a card in
-   two halves: the form on the left, the university mark on the
-   right. The old centred card's classes are kept below this so
-   the forced-password-change screen still renders.
+   Matches the Android app's sign-in: a green field with two pale
+   diagonal wedges, and one white card holding the seal and the
+   form. The same classes dress the forced-password screen, so the
+   two full-page states look like one flow.
+
+   Replaces the earlier two-panel card. The web and the app now
+   greet a student with the same screen.
    ============================================================ */
-.auth-bg {
+.lg-bg {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #17603a;   /* the login's own green - deliberately lighter than --forest (#064e3b) */
-  padding: 24px;
+  padding: 32px 20px;
+  background: #17603a;
   position: relative;
   overflow: hidden;
 }
 
-/* Two skewed bands. Purely decorative, so they are hidden from
-   assistive tech and dropped entirely on small screens where the
-   card fills the width anyway. */
-.auth-bg::before,
-.auth-bg::after {
+/* The two wedges. Drawn with clip-path on pseudo-elements, so they are
+   pure decoration: no extra markup, never focusable, never read aloud. */
+.lg-bg::before,
+.lg-bg::after {
   content: '';
   position: absolute;
-  background: #ffffff;
-  transform: skewX(-12deg);
+  background: #d9dedb;
   pointer-events: none;
 }
-.auth-bg::before { inset: 6% -8% 6% 52%; opacity: 0.10; }
-.auth-bg::after  { inset: 12% 4% 12% 60%; opacity: 0.16; }
+.lg-bg::before { top: 0; left: 0;  width: 46%; height: 42%; clip-path: polygon(0 0, 100% 0, 0 100%); }
+.lg-bg::after  { bottom: 0; right: 0; width: 46%; height: 42%; clip-path: polygon(100% 100%, 0 100%, 100% 0); }
 
-.auth-card {
+.lg-card {
   position: relative;
   z-index: 1;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  width: min(760px, 100%);
-  min-height: 380px;
-  border-radius: 22px;
-  overflow: hidden;
-  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.28);
+  width: min(400px, 100%);
+  background: #ffffff;
+  border-radius: 28px;
+  padding: 34px 30px 32px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
 }
 
-/* Left: the form, on the darker green. */
-.auth-form {
-  background: #1d6b41;
-  padding: 44px 40px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 4px;
+.lg-mark { text-align: center; margin-bottom: 26px; }
+.lg-mark img {
+  width: 104px;
+  height: 104px;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto 12px;
 }
-.auth-form h2 {
-  color: #fff;
-  font-size: 1.55rem;
+.lg-mark h1 {
+  margin: 0;
+  color: #15603a;
+  font-size: 1.45rem;
   font-weight: 800;
-  text-align: center;
-  margin: 0 0 22px;
   letter-spacing: -0.01em;
 }
-.auth-label {
-  color: #cfe8da;
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  margin: 12px 0 6px;
-  display: block;
+.lg-mark p {
+  margin: 6px 0 0;
+  color: #5b6b63;
+  font-size: 0.8rem;
 }
-.auth-input-wrap { position: relative; }
-.auth-input {
+
+.lg-label {
+  display: block;
+  color: #15603a;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin: 0 0 6px;
+}
+.lg-field { position: relative; margin-bottom: 16px; }
+.lg-input {
   width: 100%;
-  background: #17603a;
-  border: 1.5px solid rgba(255, 255, 255, 0.16);
-  border-radius: 9px;
-  padding: 11px 38px 11px 14px;
-  color: #fff;
-  font-size: 0.88rem;
-  font-weight: 600;
+  box-sizing: border-box;
+  background: #f1f5f3;
+  border: 1.5px solid transparent;
+  border-radius: 10px;
+  padding: 13px 44px 13px 14px;
   font-family: inherit;
+  font-size: 0.9rem;
+  color: #17342a;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
-.auth-input::placeholder { color: rgba(255, 255, 255, 0.55); font-weight: 500; }
-.auth-input:focus {
+.lg-input::placeholder { color: #9aa5a0; }
+.lg-input:focus {
   outline: none;
-  border-color: #9fd9bb;
-  box-shadow: 0 0 0 3px rgba(159, 217, 187, 0.22);
+  border-color: #15603a;
+  box-shadow: 0 0 0 3px rgba(21, 96, 58, 0.16);
 }
-.auth-peek {
+
+.lg-peek {
   position: absolute;
-  right: 8px; top: 50%;
+  right: 8px;
+  top: 50%;
   transform: translateY(-50%);
-  background: none; border: 0; cursor: pointer;
-  color: rgba(255, 255, 255, 0.7);
-  padding: 4px; display: flex;
-}
-.auth-peek:hover { color: #fff; }
-.auth-peek svg { width: 17px; height: 17px; }
-
-.auth-btn {
-  margin-top: 22px;
-  width: 100%;
-  background: #fdf6ec;
-  color: #1d6b41;
+  background: none;
   border: 0;
-  border-radius: 9px;
-  padding: 12px;
-  font-size: 0.92rem;
-  font-weight: 700;
-  font-family: inherit;
+  padding: 6px;
   cursor: pointer;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  transition: transform 0.12s, box-shadow 0.15s, opacity 0.15s;
-}
-.auth-btn:hover:not(:disabled) { box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22); transform: translateY(-1px); }
-.auth-btn:disabled { opacity: 0.65; cursor: not-allowed; }
-.auth-btn svg { width: 16px; height: 16px; }
-
-.auth-error {
-  display: none;
-  margin-top: 14px;
-  background: rgba(220, 38, 38, 0.16);
-  border: 1px solid rgba(255, 190, 190, 0.5);
-  color: #ffe3e3;
-  border-radius: 8px;
-  padding: 9px 12px;
-  font-size: 0.76rem;
-  font-weight: 600;
-  text-align: center;
-}
-
-/* Right: the university mark, on cream. */
-.auth-brand {
-  background: #fdf8ef;
-  padding: 40px 34px;
+  color: #5b6b63;
   display: flex;
-  flex-direction: column;
+  border-radius: 6px;
+}
+.lg-peek:hover { color: #15603a; }
+.lg-peek:focus-visible { outline: 2px solid #15603a; outline-offset: 1px; }
+.lg-peek svg { width: 19px; height: 19px; }
+
+.lg-btn {
+  width: 100%;
+  margin-top: 10px;
+  background: #15603a;
+  color: #ffffff;
+  border: 0;
+  border-radius: 10px;
+  padding: 14px;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
   align-items: center;
   justify-content: center;
-  text-align: center;
-  gap: 14px;
+  gap: 8px;
+  box-shadow: 0 6px 16px rgba(21, 96, 58, 0.28);
+  transition: background 0.15s, transform 0.12s, opacity 0.15s;
 }
-.auth-brand img { width: 118px; height: 118px; object-fit: contain; }
-.auth-brand h1 {
-  color: #1d6b41;
-  font-size: 1.42rem;
-  font-weight: 800;
-  margin: 0;
-  letter-spacing: -0.01em;
-}
-.auth-brand p {
-  color: #4b7a60;
-  font-size: 0.78rem;
+.lg-btn:hover:not(:disabled) { background: #114f30; transform: translateY(-1px); }
+.lg-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.lg-btn svg { width: 17px; height: 17px; }
+
+.lg-error {
+  display: none;
+  margin-top: 14px;
+  background: #fee2e2;
+  color: #991b1b;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.8rem;
   font-weight: 600;
-  margin: 0;
+  text-align: center;
 }
 
-/* Stacked on a phone: the mark on top, the form beneath it, and the
-   decorative bands removed so nothing competes with the form. */
-@media (max-width: 720px) {
-  .auth-card { grid-template-columns: 1fr; min-height: 0; width: min(420px, 100%); }
-  .auth-brand { order: -1; padding: 30px 24px 22px; gap: 10px; }
-  .auth-brand img { width: 84px; height: 84px; }
-  .auth-brand h1 { font-size: 1.2rem; }
-  .auth-form { padding: 30px 26px 34px; }
-  .auth-bg::before, .auth-bg::after { display: none; }
+.lg-foot {
+  margin: 18px 0 0;
+  text-align: center;
+  color: #6b7a72;
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+/* Small phones: tighter card, smaller seal, wedges pulled in. */
+@media (max-width: 420px) {
+  .lg-card { padding: 28px 22px 26px; border-radius: 24px; }
+  .lg-mark img { width: 86px; height: 86px; }
+  .lg-mark h1 { font-size: 1.25rem; }
+  .lg-bg::before, .lg-bg::after { width: 60%; height: 30%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .auth-btn { transition: none; }
-  .auth-btn:hover:not(:disabled) { transform: none; }
+  .lg-btn, .lg-input { transition: none; }
+  .lg-btn:hover:not(:disabled) { transform: none; }
 }
+
+/* ============================================================
+   MOBILE DRAWER
+   ------------------------------------------------------------
+   The root fix is the first rule. initApp() sets #app to
+   display:flex, which lays its children out in a ROW. On a phone
+   the mobile header becomes visible and was one of those row
+   items, so it got a full-height column of its own beside the
+   page - the tall white strip with the menu centred in it.
+   Stacking #app vertically on small screens puts the header on
+   top where it belongs. On desktop the sidebar is position:fixed
+   and the header is hidden, so the row layout is unaffected.
+   ============================================================ */
+@media (max-width: 768px) {
+  #app { flex-direction: column; }
+
+  /* --- top bar ---------------------------------------------------- */
+  .mobile-header {
+    height: 58px;
+    padding: 0 10px;
+    padding-top: env(safe-area-inset-top, 0px);
+    box-sizing: content-box;
+    background: var(--forest);
+    box-shadow: 0 1px 0 var(--border, #e5e7eb), 0 4px 14px rgba(15, 23, 42, 0.05);
+  }
+  .mobile-menu-btn {
+    width: 44px; height: 44px;           /* comfortable thumb target */
+    border-radius: 12px;
+    transition: background 0.15s;
+    color: white;
+  }
+  .mobile-menu-btn:hover,
+  .mobile-menu-btn:focus-visible { background: rgba(21, 96, 58, 0.08); outline: none; }
+  .mobile-title {
+    font-size: 0.92rem; font-weight: 800; color: var(--forest, #064e3b);
+    letter-spacing: -0.01em;
+    /* One line, always: on a narrow phone it wrapped and pushed the bar taller. */
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    flex: 1; text-align: center; min-width: 0; padding: 0 8px;
+    color: white;
+  }
+  .mobile-avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--forest, #064e3b); color: #fff;border:solid white 2px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.74rem; font-weight: 700; margin-right: 4px;
+  }
+
+  /* --- the drawer ------------------------------------------------- */
+  .sidebar {
+    width: min(290px, 86vw);
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 0.28s;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .sidebar.open {
+    transform: translateX(0);
+    box-shadow: 12px 0 40px rgba(0, 0, 0, 0.32);
+  }
+
+  /* Bigger rows: the drawer is used with a thumb, not a cursor. */
+  .sidebar .nav-item { min-height: 48px; padding-top: 12px; padding-bottom: 12px; }
+
+  /* Close button inside the drawer - the overlay alone is not obvious. */
+  .drawer-close {
+    display: flex;
+    position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: 10px;
+    width: 38px; height: 38px; border-radius: 10px;
+    align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, 0.10); color: #fff;
+    border: 0; cursor: pointer;
+  }
+  .drawer-close:hover,
+  .drawer-close:focus-visible { background: rgba(255, 255, 255, 0.2); outline: none; }
+
+  /* --- the dimmed backdrop ---------------------------------------- */
+  /* Faded rather than switched, so it arrives with the drawer instead
+     of snapping in a frame ahead of it. */
+  .overlay-bg {
+    display: block;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.28s, visibility 0.28s;
+  }
+  .overlay-bg.open { opacity: 1; visibility: visible; }
+}
+
+/* Hidden on desktop, where the sidebar is always visible. */
+.drawer-close { display: none; }
+
+/* The page behind an open drawer must not scroll along with it. */
+body.drawer-open { overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .overlay-bg { transition: none !important; }
+}
+
+/* ============================================================
+   YOUR SUBMITTED RATINGS
+   ------------------------------------------------------------
+   Opened from My Evaluations and My Feedback. A full-screen sheet
+   on a phone - the same shape as the app's screen - and a centred
+   panel on a wider screen.
+   ============================================================ */
+.sv-clickable { cursor: pointer; transition: background 0.15s; border-radius: 10px; }
+.sv-clickable:hover { background: rgba(5, 150, 105, 0.05); }
+.sv-clickable:focus-visible { outline: 2px solid var(--emerald, #059669); outline-offset: 2px; }
+.history-item.sv-clickable { align-items: center; }
+.sv-chevron { color: var(--muted, #64748b); flex-shrink: 0; margin-left: 4px; }
+.sv-hint { font-size: 0.7rem; color: var(--emerald, #059669); font-weight: 600; margin-top: 8px; }
+
+.sv-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(2, 6, 23, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  opacity: 0; visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+}
+.sv-overlay.open { opacity: 1; visibility: visible; }
+
+.sv-sheet {
+  background: var(--bg, #f1f5f9);
+  width: min(620px, 100%);
+  max-height: 100%;
+  border-radius: 18px;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
+}
+.sv-loading { padding: 48px; text-align: center; color: var(--muted, #64748b); }
+
+.sv-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 12px;
+  background: var(--white, #fff);
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  flex-shrink: 0;
+}
+.sv-back {
+  width: 42px; height: 42px; border-radius: 10px;
+  border: 0; background: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink, #0f172a);
+}
+.sv-back:hover, .sv-back:focus-visible { background: rgba(5, 150, 105, 0.08); outline: none; }
+.sv-title { font-size: 1.05rem; font-weight: 700; color: var(--ink, #0f172a); }
+
+.sv-body { overflow-y: auto; padding: 16px 18px 28px; }
+
+.sv-summary {
+  background: var(--white, #fff);
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+.sv-subject { font-weight: 700; font-size: 0.92rem; color: var(--ink, #0f172a); }
+.sv-teacher { font-size: 0.8rem; color: var(--muted, #64748b); margin-top: 2px; }
+.sv-date    { font-size: 0.74rem; color: var(--muted, #64748b); margin-top: 8px; }
+.sv-overall { font-size: 1.15rem; font-weight: 800; color: var(--emerald, #059669); margin-top: 4px; }
+.sv-remark  { font-size: 0.74rem; font-weight: 600; color: var(--muted, #64748b); }
+
+.sv-sec {
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--emerald, #059669);
+  margin: 16px 2px 4px;
+}
+.sv-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+.sv-q { flex: 1; font-size: 0.86rem; line-height: 1.5; color: var(--slate, #1e293b); }
+.sv-badge {
+  min-width: 40px; height: 34px; border-radius: 9px;
+  background: var(--emerald, #059669); color: #fff;
+  font-weight: 800; font-size: 0.95rem;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+.sv-comment-label { font-size: 0.76rem; font-weight: 700; color: var(--ink, #0f172a); margin: 18px 2px 6px; }
+.sv-comment {
+  background: var(--white, #fff);
+  border-left: 3px solid var(--emerald, #059669);
+  border-radius: 0 10px 10px 0;
+  padding: 12px 14px;
+  font-size: 0.86rem; line-height: 1.6; color: var(--slate, #1e293b);
+  white-space: pre-wrap;
+}
+.sv-none { color: var(--muted, #64748b); font-style: italic; }
+
+/* Phones: full screen, like the app. */
+@media (max-width: 768px) {
+  .sv-overlay { padding: 0; }
+  .sv-sheet { width: 100%; height: 100%; max-height: none; border-radius: 0; }
+  .sv-bar { padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
+  .sv-body { padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sv-overlay, .sv-clickable { transition: none; }
+}
+
+/* ============================================================
+   LOADING SKELETONS - shapes
+   The shimmer itself is the existing .skeleton class; these only
+   give each placeholder the size of the thing it stands in for,
+   so the page does not jump when the real content arrives.
+   ============================================================ */
+.sk-line   { display: block; margin: 0 0 8px; }
+.sk-num    { display: inline-block; width: 46px; height: 30px; border-radius: 8px; vertical-align: middle; }
+.sk-stack  { padding: 4px 0; }
+.sk-stack .sk-line:nth-child(even) { margin-bottom: 14px; }
+
+.sk-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px;
+  margin-bottom: 10px;
+  background: var(--white, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 14px;
+}
+.sk-avatar { width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0; }
+.sk-lines  { flex: 1; min-width: 0; }
+.sk-lines .sk-line:last-child { margin-bottom: 0; }
+.sk-pill   { width: 74px; height: 26px; border-radius: 999px; flex-shrink: 0; }
+
+.sk-block  { padding: 16px 0; border-bottom: 1px solid var(--border, #e2e8f0); }
+.sk-quote  { display: block; height: 54px; border-radius: 0 10px 10px 0; margin-top: 6px; }
+
+@media (max-width: 420px) {
+  .sk-pill { width: 56px; }
+}
+
+/* Beta tag and terms line on the login card. */
+.lg-beta {
+  display: inline-block; margin-top: 8px;
+  background: #fef3c7; color: #92400e;
+  font-size: 0.66rem; font-weight: 800; letter-spacing: 0.08em;
+  padding: 3px 10px; border-radius: 999px;
+}
+.lg-terms {
+  margin: 16px 0 0; text-align: center;
+  font-size: 0.72rem; line-height: 1.55; color: #6b7a72;
+}
+.lg-terms a { color: #15603a; font-weight: 700; text-decoration: none; }
+.lg-terms a:hover { text-decoration: underline; }

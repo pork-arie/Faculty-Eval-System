@@ -767,7 +767,12 @@ async function saveTeacher() {
     if (facultyType === 'supervisor') {
       // Use the password field value if provided, otherwise default to TID
       newTeacher.password = pwFieldVal || tid;
-      addAudit('Add Supervisor', `Added: ${name} (${tid}) — login password: ${newTeacher.password}`);
+      // The password is deliberately NOT written to the audit log. The log is
+      // stored in Firestore and mirrored to localStorage, so a password put
+      // here would be readable long after the account was created, by anyone
+      // who can read the log. The toast below still shows it once, to the
+      // admin who just created the account and has to pass it on.
+      addAudit('Add Supervisor', `Added: ${name} (${tid})`);
       showToast(`Supervisor added! Login password: ${newTeacher.password}`, 'success');
     } else {
       addAudit('Add Teacher', `Added: ${name} (${tid})`);

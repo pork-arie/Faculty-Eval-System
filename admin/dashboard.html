@@ -39,6 +39,16 @@ window.firebaseConfig = window.firebaseConfig || {
 try {
   firebase.initializeApp(window.firebaseConfig);
   window.db     = firebase.firestore();
+
+  // Campus and office networks often break Firestore's default streaming
+  // transport; reads hang instead of failing and the dashboard keeps showing
+  // its cached copy. Detect that and fall back to long polling. Must run
+  // before any read or write.
+  try {
+    window.db.settings({ experimentalAutoDetectLongPolling: true, merge: true });
+  } catch (e) {
+    console.warn('Could not set the Firestore transport option:', e && e.message);
+  }
   window.fbAuth = firebase.auth();
   db = window.db; fbAuth = window.fbAuth;
 } catch (e) {
@@ -81,17 +91,10 @@ fbAuth.onAuthStateChanged(async (user) => {
     return;
   }
   sessionStorage.removeItem('_dashRetried');
-
-  // Three outcomes, not two.
-  //
-  //   'yes'     the admins document exists, or we created it
-  //   'no'      Firestore actively refused - this account is not an admin
-  //   'unknown' we could not reach Firestore at all
-  //
-  // 'unknown' used to be treated as 'no', so a momentary network drop signed
-  // the admin out mid-session. onAuthStateChanged also fires on every hourly
-  // token refresh, so one blip at the wrong moment ended the session with no
-  // explanation. A failure to CHECK is not a failure to QUALIFY.
+  // Three outcomes, not two. 'unknown' - Firestore could not be reached - used
+  // to be treated as a refusal, so a brief network drop signed the admin out
+  // mid-session. onAuthStateChanged also fires on the hourly token refresh, so
+  // one blip at that moment ended the session with no explanation.
   let verdict = 'unknown';
   try {
     const ref = db.collection('admins').doc(user.uid);
@@ -103,7 +106,6 @@ fbAuth.onAuthStateChanged(async (user) => {
         await ref.set({ role: 'admin', email: user.email || '', createdAt: new Date().toISOString() }, { merge: true });
         verdict = 'yes';
       } catch (writeErr) {
-        // permission-denied here is a real answer: the rules say no.
         verdict = (writeErr && writeErr.code === 'permission-denied') ? 'no' : 'unknown';
         console.warn('Could not create admins doc:', writeErr && writeErr.message);
       }
@@ -118,10 +120,7 @@ fbAuth.onAuthStateChanged(async (user) => {
     window.location.replace('../index.html');
     return;
   }
-
   if (verdict === 'unknown') {
-    // Stay signed in on what we already verified this session, and say so.
-    // Only a session that was NEVER verified is turned away.
     if (!window._adminVerified) {
       _dashFatal('Could not reach Firestore to confirm your administrator account.<br><br>'
         + 'This is usually a network problem rather than a permissions one. '
@@ -129,7 +128,7 @@ fbAuth.onAuthStateChanged(async (user) => {
         + '<a href="../index.html" style="color:#3fb950;">&#8592; Back to login</a>');
       return;
     }
-    console.warn('Admin check skipped this time (offline); keeping the session that was already verified.');
+    console.warn('Admin check skipped this time (offline); keeping the verified session.');
   } else {
     window._adminVerified = true;
   }
@@ -209,6 +208,27 @@ async function syncCollectionToFirestore(key, val) {
   } catch(e) { console.warn('Firestore sync error:', e.message); }
 }
 
+
+// ============================================================
+// LEGACY CREDENTIAL PURGE
+// ------------------------------------------------------------
+// An older version of this site stored the admin username and
+// password in localStorage under 'adminCreds'. Nothing reads it
+// any more - sign-in goes through Firebase Auth - but the value
+// stays in the browser of every machine that ever loaded that
+// version, in plain text, visible under DevTools > Application.
+//
+// Removing it here clears it from those machines the next time
+// anyone opens the site. Safe to keep indefinitely: on a browser
+// that never had it, this does nothing.
+// ============================================================
+(function purgeLegacyCredentials() {
+  ['adminCreds', 'adminUser', 'adminPassword', 'currentAdmin'].forEach(function (k) {
+    try { if (localStorage.getItem(k) !== null) { localStorage.removeItem(k); console.warn('Removed legacy credential key:', k); } }
+    catch (e) {}
+  });
+})();
+
 let _staleCollections = [];
 
 // Whether the last pull from Firestore was COMPLETE.
@@ -222,6 +242,9 @@ async function loadFromFirebase() {
   updateFirebaseStatus('loading');
   _staleCollections = [];
   window._firestoreLoadClean = false;   // re-earned on every load
+  // Placeholders while the fetch is in flight. Only fills EMPTY containers,
+  // so a warm cache still shows real data instantly.
+  if (typeof showSkeleton === 'function') showSkeleton();
   try {
     const collections = ['students','teachers','subjects','evaluations','schoolYears','auditLog'];
     for (const col of collections) {
@@ -230,7 +253,13 @@ async function loadFromFirebase() {
       // loop, so every collection after it in this list was never loaded at all.
       let snap;
       try {
-        snap = await db.collection(col).get();
+        // A blocked network can leave a read pending forever. Without a ceiling
+        // the badge stays on "Connecting..." and stale data is never reported.
+        snap = await Promise.race([
+          db.collection(col).get(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('timed out after 10s')), 10000))
+        ]);
       } catch (e) {
         console.warn('Could not load "' + col + '" from Firestore:', e.code || e.message,
                      '— keeping whatever is already in localStorage.');
@@ -247,7 +276,14 @@ async function loadFromFirebase() {
           if (col === 'teachers' && !data.facultyType) data.facultyType = 'regular';
           return data;
         });
-        localStorage.setItem(col, JSON.stringify(docs));
+        // Students and teachers carry passwords. They go into the in-memory
+        // vault (admin-core.js); only a stripped copy is written to storage.
+        if ((col === 'students' || col === 'teachers') && typeof _stripPasswords === 'function') {
+          localStorage.setItem(col, JSON.stringify(_stripPasswords(col, docs)));
+          if (window._pwVaultReady) window._pwVaultReady[col] = true;
+        } else {
+          localStorage.setItem(col, JSON.stringify(docs));
+        }
       }
     }
     const evalPeriodDoc = await db.collection('settings').doc('evalPeriod').get();
@@ -257,14 +293,37 @@ async function loadFromFirebase() {
     // FIX: Load customCourses from Firestore 'courses' collection on startup
     // so all clients (admin + students) always get the latest courses.
     const coursesSnap = await db.collection('courses').get();
+
+    // A deleted department's courses must stay deleted too. Read the shared
+    // tombstones here, so a courses document re-uploaded by a device holding an
+    // old copy is dropped - and removed from Firestore - rather than loaded.
+    const deadDepts = new Set();
+    try {
+      (await db.collection('deletedDepts').get()).forEach(t => deadDepts.add(t.id));
+    } catch (e) { console.warn('Could not read the deleted-department list:', e.message); }
+
     if (!coursesSnap.empty) {
       const customCourses = {};
       coursesSnap.docs.forEach(d => {
+        if (deadDepts.has(d.id)) {
+          d.ref.delete().catch(() => {});      // a stray copy - clean it up
+          return;
+        }
         const data = d.data();
         customCourses[d.id] = Array.isArray(data.courses) ? data.courses : [];
       });
       localStorage.setItem('customCourses', JSON.stringify(customCourses));
       if (typeof reloadCoursesByDept === 'function') reloadCoursesByDept();
+    } else if (deadDepts.size) {
+      // Firestore holds no courses at all, so nothing above overwrote this
+      // browser's copy. Strip deleted departments from it anyway - otherwise
+      // the next course edit here would sync them straight back up.
+      try {
+        const local = JSON.parse(localStorage.getItem('customCourses') || '{}');
+        let changed = false;
+        deadDepts.forEach(code => { if (local[code]) { delete local[code]; changed = true; } });
+        if (changed) localStorage.setItem('customCourses', JSON.stringify(local));
+      } catch (e) {}
     }
 
     // Load all departments from Firestore into localStorage
@@ -319,8 +378,23 @@ async function loadFromFirebase() {
       // removeDepartment() now records the code, so the two cases can be told
       // apart: a tombstoned code is dropped, anything else is re-synced as
       // before.
+      // Tombstones from BOTH places: this browser's own list, and the shared
+      // one in Firestore that every device can see. The local list alone only
+      // stopped the machine that did the deleting; another machine still
+      // holding the department re-uploaded it here on its next load.
       let tombstones = [];
       try { tombstones = JSON.parse(localStorage.getItem('deletedDepts') || '[]'); } catch (e) {}
+      try {
+        const tombSnap = await db.collection('deletedDepts').get();
+        tombSnap.forEach(t => { if (tombstones.indexOf(t.id) === -1) tombstones.push(t.id); });
+      } catch (e) {
+        console.warn('Could not read the deleted-department list:', e.message);
+      }
+
+      // A tombstoned department is dropped even if Firestore still has the
+      // document - another device may have re-uploaded it before this fix
+      // reached it.
+      tombstones.forEach(code => { delete deptsFromDB[code]; });
 
       Object.entries(localDepts).forEach(([code, cfg]) => {
         if (!deptsFromDB[code] && cfg.isCustom) {
@@ -336,13 +410,11 @@ async function loadFromFirebase() {
         }
       });
 
-      // Once Firestore no longer has the document AND it is gone locally, the
-      // tombstone has done its job and would otherwise block re-creating a
-      // department with the same code later.
-      const stillNeeded = tombstones.filter(code => deptsFromDB[code] || localDepts[code]);
-      if (stillNeeded.length !== tombstones.length) {
-        try { localStorage.setItem('deletedDepts', JSON.stringify(stillNeeded)); } catch (e) {}
-      }
+      // The local list is no longer cleaned up here. It used to be dropped as
+      // soon as the department was gone from both sides, which left nothing to
+      // stop a second device re-uploading it later. The Firestore tombstone is
+      // the lasting record now, and addDepartment() removes it if the same code
+      // is ever created again.
 
       localStorage.setItem('departments', JSON.stringify(deptsFromDB));
     } else {
@@ -359,6 +431,11 @@ async function loadFromFirebase() {
 
     // Only a complete pull makes the local copy safe to push back up.
     if (!_staleCollections.length) window._firestoreLoadClean = true;
+    window._firestoreLoadAttempted = true;
+    // Stamp the time of a CLEAN pull only, so a partial load never looks fresh.
+    if (!_staleCollections.length) {
+      try { localStorage.setItem('_lastSync', new Date().toISOString()); } catch (e) {}
+    }
     updateFirebaseStatus(_staleCollections.length ? 'stale' : 'connected');
     // Re-run the migration after Firebase data overwrites localStorage.
     // This assigns facultyType to any legacy Firestore records that lack it,
@@ -370,10 +447,25 @@ async function loadFromFirebase() {
     if (typeof renderDeptManagePage === 'function') renderDeptManagePage();
     _rerenderCurrentPage();
   } catch(e) {
+    window._firestoreLoadAttempted = true;
     console.warn('Firebase load failed, using local data:', e.message);
     updateFirebaseStatus('error');
     _rerenderCurrentPage();
   }
+}
+
+// "just now" / "6 minutes ago" / a date - for the badge tooltip.
+function _lastSyncText() {
+  let t;
+  try { t = localStorage.getItem('_lastSync'); } catch (e) {}
+  if (!t) return 'in this session';
+  const mins = Math.round((Date.now() - new Date(t).getTime()) / 60000);
+  if (mins < 1)   return 'just now';
+  if (mins === 1) return '1 minute ago';
+  if (mins < 60)  return mins + ' minutes ago';
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24)   return hrs + (hrs === 1 ? ' hour ago' : ' hours ago');
+  return 'on ' + new Date(t).toLocaleString();
 }
 
 function updateFirebaseStatus(status) {
@@ -381,10 +473,10 @@ function updateFirebaseStatus(status) {
   if (!el) return;
   const cfg = {
     loading:   { icon: '⏳', text: 'Connecting...',  color: '#f59e0b', tip: 'Loading data from Firestore' },
-    connected: { icon: '🔥', text: 'Firebase Live',  color: '#16a34a', tip: 'All data loaded from Firestore. Click to refresh.' },
+    connected: { icon: '🔥', text: 'Firebase Live',  color: '#16a34a', tip: 'All data loaded from Firestore ' + _lastSyncText() + '. Click to refresh.' },
     stale:     { icon: '⚠️', text: 'Data may be old', color: '#d97706',
-                 tip: 'Could not load: ' + _staleCollections.join(', ') + '. Showing the last saved copy. Click to retry.' },
-    error:     { icon: '⚠️', text: 'Offline Mode',   color: '#dc2626', tip: 'No connection. Showing the last saved copy. Click to retry.' }
+                 tip: 'Could not load: ' + _staleCollections.join(', ') + '. Showing the copy saved ' + _lastSyncText() + '. Click to retry.' },
+    error:     { icon: '⚠️', text: 'Offline Mode',   color: '#dc2626', tip: 'No connection. Showing the copy saved ' + _lastSyncText() + '. Click to retry.' }
   };
   const c = cfg[status] || cfg.error;
   // Clickable: a flaky connection at boot used to leave the dashboard showing
@@ -398,7 +490,12 @@ function updateFirebaseStatus(status) {
 // Manual re-pull. Re-renders the page you are actually on afterwards.
 window.refreshFromCloud = async function () {
   showToast('Refreshing from Firestore…', 'info');
+  // Forced: the person asked for this, so show the placeholders even over real
+  // data. Otherwise a refresh on a warm cache looks like nothing happened.
+  if (typeof showSkeleton === 'function') showSkeleton(true);
   await loadFromFirebase();
+  // Put back anything the redraw did not replace (see clearStuckSkeletons).
+  if (typeof clearStuckSkeletons === 'function') clearStuckSkeletons();
   showToast(_staleCollections.length
       ? 'Still could not load: ' + _staleCollections.join(', ')
       : 'Data refreshed.', _staleCollections.length ? 'warning' : 'success');
@@ -1057,7 +1154,7 @@ window.addEventListener('load', () => {
         <div class="modal-header"><h3 id="studentModalTitle">Add Student</h3><button class="modal-close" onclick="closeModal('addStudentModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
         <div class="modal-body">
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ID Number</label><input class="form-control" id="stuId" placeholder="22-01745" inputmode="numeric" maxlength="8"/></div>
+            <div class="form-group"><label class="form-label">ID Number</label><input class="form-control" id="stuId" placeholder="24-00001 or 2025-9902-1" maxlength="12" autocomplete="off" spellcheck="false"/></div>
             <div class="form-group"><label class="form-label">First Name</label><input class="form-control" id="stuFirst" placeholder="Juan"/></div>
           </div>
           <div class="form-row">
@@ -1397,7 +1494,7 @@ window.addEventListener('load', () => {
           <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;margin-bottom:16px;font-size:0.8rem;">
             <strong>CSV Format:</strong> ID Number, Full Name, Year Level, Section, Course, Department, Subject Codes (semicolon-separated)<br>
             <code style="display:block;margin-top:6px;color:#166534;background:#dcfce7;padding:6px 10px;border-radius:4px;">24-00001,Juan dela Cruz,1st Year,A,Bachelor of Science in Information Technology (BSIT),CCIS,CS301;CS302</code>
-            <span style="color:var(--muted);">ID Number must be YY-NNNNN (for example 24-00001) &mdash; rows in any other format are skipped. &nbsp;|&nbsp; Year Level options: 1st Year / 2nd Year / 3rd Year / 4th Year / 5th Year &nbsp;|&nbsp; Course column can be full name or short code</span>
+            <span style="color:var(--muted);">ID Number must be YY-NNNNN (e.g. 24-00001) or YYYY-NNNN-N (e.g. 2025-9902-1 or 2025-9902-12) &mdash; rows in any other format are skipped. &nbsp;|&nbsp; Year Level options: 1st Year / 2nd Year / 3rd Year / 4th Year / 5th Year &nbsp;|&nbsp; Course column can be full name or short code</span>
           </div>
           <div style="border:2px dashed var(--border);border-radius:10px;padding:28px;text-align:center;margin-bottom:14px;cursor:pointer;" onclick="document.getElementById('bulkStudentFile').click()" id="bulkStudentDropZone">
             <svg width="32" height="32" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24" style="margin-bottom:8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -1469,7 +1566,8 @@ window.addEventListener('load', () => {
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="../shared/js/data.js"></script>
+    <!-- shared/js/data.js removed: everything it defined was unused or replaced by
+         the admin scripts below, and it held old demo accounts with plain-text passwords. -->
     <!-- ================================================================
          LOAD ORDER IS LOAD-BEARING. Do not reorder these.
          Later files deliberately redefine functions defined earlier and the

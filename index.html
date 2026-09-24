@@ -67,6 +67,27 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 
 <script>
+
+// ============================================================
+// LEGACY CREDENTIAL PURGE
+// ------------------------------------------------------------
+// An older version of this site stored the admin username and
+// password in localStorage under 'adminCreds'. Nothing reads it
+// any more - sign-in goes through Firebase Auth - but the value
+// stays in the browser of every machine that ever loaded that
+// version, in plain text, visible under DevTools > Application.
+//
+// Removing it here clears it from those machines the next time
+// anyone opens the site. Safe to keep indefinitely: on a browser
+// that never had it, this does nothing.
+// ============================================================
+(function purgeLegacyCredentials() {
+  ['adminCreds', 'adminUser', 'adminPassword', 'currentAdmin'].forEach(function (k) {
+    try { if (localStorage.getItem(k) !== null) { localStorage.removeItem(k); console.warn('Removed legacy credential key:', k); } }
+    catch (e) {}
+  });
+})();
+
 // Config is INLINED here on purpose, so the login page never depends on an
 // external file path loading correctly. (Same project as your dashboard.)
 const firebaseConfig = {

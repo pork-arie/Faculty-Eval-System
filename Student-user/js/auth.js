@@ -33,7 +33,14 @@ function goToDashboard() {
   if (_hop() > 3) { console.error('Redirect loop stopped on the way to the dashboard.'); return; }
   location.replace('dashboard.html');
 }
-function goToLogin() {
+// `reason` is shown on the login page. Every bounce from the dashboard used to
+// be silent, and at least five different causes looked identical from the
+// outside - which is why they could only be diagnosed from the console.
+function goToLogin(reason) {
+  if (reason) {
+    try { sessionStorage.setItem('loginReason', reason); } catch (e) {}
+    console.warn('Returning to the login:', reason);
+  }
   if (_hop() > 3) { console.error('Redirect loop stopped on the way to the login.'); return; }
   location.replace('index.html');
 }
@@ -268,7 +275,10 @@ function showLoginError(msg) {
   err.textContent = msg;
   err.style.display = 'block';
   btn.disabled = false;
-  btn.innerHTML = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign in`;
+  // Plain text, matching the button as the page first renders it. This used to
+  // restore an arrow icon the fresh button never had, so the button changed
+  // shape after the first failed attempt.
+  btn.textContent = 'Sign in';
 }
 
 // Gate when the password is still the issued default.
@@ -290,6 +300,10 @@ function showPasswordGate() {
   if (loginPage) loginPage.style.display = 'none';
   if (appShell)  appShell.style.display  = 'none';
   document.getElementById('pwGate').style.display = 'flex';
+  // The hidden username field, so a password manager files the new password
+  // under this person's ID rather than guessing.
+  const pwUser = document.getElementById('pwGateUser');
+  if (pwUser && currentStudent) pwUser.value = currentStudent.sid || currentStudent.tid || '';
   document.getElementById('pwGateNew').value = '';
   document.getElementById('pwGateConfirm').value = '';
   document.getElementById('pwGateError').style.display = 'none';
@@ -421,7 +435,10 @@ async function restoreSession() {
 
   // No stored session. The login page simply waits for a sign-in; the
   // dashboard has nothing to show and returns to the login.
-  if (!saved) { if (IS_DASHBOARD) goToLogin(); return; }
+  if (!saved) {
+    if (IS_DASHBOARD) goToLogin('No sign-in was found in this browser tab. Please sign in again.');
+    return;
+  }
 
   // Unsubscribe AFTER the promise settles. Calling stop() from inside the
   // callback reads the const before it is assigned if the SDK ever fires
@@ -434,66 +451,166 @@ async function restoreSession() {
   if (typeof stopWatching === 'function') stopWatching();
   if (!user) {
     sessionStorage.removeItem('studentSession');
-    if (IS_DASHBOARD) goToLogin();
+    // The sign-in did not survive the move to the dashboard. The usual cause
+    // is the browser refusing to store it - opening the page as a file, a
+    // private window, or site storage blocked in the browser settings.
+    if (IS_DASHBOARD) goToLogin('Your sign-in was not kept when the dashboard opened. '
+      + 'Open the portal through its web address (not as a file) and make sure '
+      + 'cookies and site storage are allowed.');
     return;
   }
 
-  try {
-    const sess = JSON.parse(saved);
-
-    if (sess.userType === 'supervisor') {
-      const doc = await db.collection('teachers').doc(sess.docId).get();
-      if (doc.exists) {
-        const data = doc.data();
-        if (!data.deleted && data.facultyType === 'supervisor' && (data.status || 'active') === 'active') {
-          currentStudent = { ...data, docId: doc.id, sid: data.tid, userType: 'supervisor' };
-          if (!IS_DASHBOARD) { goToDashboard(); return; }
-          _clearHops();
-          initApp(false);
-          return;
-        }
-      }
-    } else {
-      const doc = await db.collection('students').doc(sess.docId).get();
-      if (doc.exists) {
-        const data = doc.data();
-        if (!data.deleted) {
-          currentStudent = { ...data, docId: doc.id, userType: 'student' };
-          if (!IS_DASHBOARD) { goToDashboard(); return; }
-          // The inactive flag was decided at login and carried across the
-          // redirect, but the record is re-read here so a status changed
-          // since then still wins.
-          _clearHops();
-          initApp(data.status !== 'active');
-          return;
-        }
-      }
-    }
-  } catch (e) {
-    // A genuine fault here is not the same as a stale session. Falling
-    // through would clear a valid login and bounce the person to the
-    // login page with no explanation - which is exactly how the
-    // initApp() race presented. Report it and stop.
-    console.error('Session restore failed:', e);
-    // The stored session MUST be cleared before leaving. index.html also
-    // runs this function: if it still finds a session it sends the person
-    // straight back here, and the two pages bounce each other forever -
-    // which looks exactly like a login that never completes.
-    try {
-      sessionStorage.removeItem('studentSession');
-      sessionStorage.removeItem('studentInactive');
-    } catch (e2) {}
-    if (IS_DASHBOARD) {
-      showToast('Could not load your session. Please sign in again.', 'error');
-      setTimeout(goToLogin, 1500);
-    }
+  let sess;
+  try { sess = JSON.parse(saved); }
+  catch (e) {                                   // corrupt storage: nothing to recover
+    sessionStorage.removeItem('studentSession');
+    if (IS_DASHBOARD) goToLogin('Your saved sign-in was damaged. Please sign in again.');
     return;
+  }
+
+  const isSupervisor = sess.userType === 'supervisor';
+  const read = await _readRosterDoc(isSupervisor ? 'teachers' : 'students', sess.docId);
+
+  // Could not REACH Firestore - a slow or dropped connection, campus wifi,
+  // a timeout. That says nothing about whether the session is valid, so it is
+  // kept, and the person gets a Retry instead of being signed out.
+  //
+  // This used to clear the session and bounce to the login on ANY error, so a
+  // single failed read on a weak connection ended a perfectly good session
+  // with "Could not load your session" - the same mistake as treating a failed
+  // admin check as a refusal.
+  if (read.status === 'unreachable') {
+    console.error('Session restore could not reach Firestore:', read.error);
+    if (IS_DASHBOARD) _showRestoreRetry(read.error);
+    return;                                     // login page: just wait
+  }
+
+  if (read.status === 'ok') {
+    const data = read.doc.data();
+    if (isSupervisor) {
+      if (!data.deleted && data.facultyType === 'supervisor' && (data.status || 'active') === 'active') {
+        currentStudent = { ...data, docId: read.doc.id, sid: data.tid, userType: 'supervisor' };
+        if (!IS_DASHBOARD) { goToDashboard(); return; }
+        _hideRestoreRetry();
+        _clearHops();
+        initApp(false);
+        return;
+      }
+    } else if (!data.deleted) {
+      currentStudent = { ...data, docId: read.doc.id, userType: 'student' };
+      if (!IS_DASHBOARD) { goToDashboard(); return; }
+      // The inactive flag was decided at login and carried across the
+      // redirect, but the record is re-read here so a status changed since
+      // then still wins.
+      _hideRestoreRetry();
+      _clearHops();
+      initApp(data.status !== 'active');
+      return;
+    }
+  }
+
+  // Reaching here means Firestore ANSWERED: the record is missing, deleted,
+  // deactivated, or the read was refused. That is a real answer, so the
+  // session is cleared and the person signs in again - see below.
+  if (read.status === 'denied') console.error('Session restore refused by the rules:', read.error);
+
+  // Name the actual reason. Each of these needs a different fix, and the
+  // person can only report what they are told.
+  let why;
+  if (read.status === 'denied')       why = 'The database refused to load your account. Ask the evaluation office to check the Firestore rules.';
+  else if (read.status === 'missing') why = 'Your account record was not found. Ask the evaluation office to check your registration.';
+  else if (read.status === 'ok') {
+    const d = read.doc.data() || {};
+    if (d.deleted)                    why = 'This account has been removed. Contact the evaluation office.';
+    else if (isSupervisor && d.facultyType !== 'supervisor')
+                                      why = 'This account is no longer set up as a supervisor.';
+    else if (isSupervisor)            why = 'This supervisor account is inactive. Contact the evaluation office.';
   }
 
   // The stored session no longer matches a usable record.
   sessionStorage.removeItem('studentSession');
   try { sessionStorage.removeItem('studentInactive'); } catch (e) {}
-  if (IS_DASHBOARD) goToLogin();
+  if (IS_DASHBOARD) goToLogin(why || 'Your account could not be loaded. Please sign in again.');
+}
+
+// On the login page: show why the dashboard sent the person back, once.
+(function showLoginReason() {
+  if (IS_DASHBOARD) return;
+  let reason = null;
+  try { reason = sessionStorage.getItem('loginReason'); sessionStorage.removeItem('loginReason'); } catch (e) {}
+  if (!reason) return;
+  const show = function () {
+    const err = document.getElementById('loginError');
+    if (!err) return;
+    err.textContent = reason;
+    err.style.display = 'block';
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show);
+  else show();
+})();
+
+
+// Read one roster document, distinguishing "Firestore said no" from "Firestore
+// could not be reached". Retries twice with a short pause, and gives each try a
+// ceiling so a hanging connection cannot stall the dashboard indefinitely.
+//
+//   { status: 'ok',          doc }     the record exists
+//   { status: 'missing' }              Firestore answered: no such record
+//   { status: 'denied',      error }   the rules refused the read
+//   { status: 'unreachable', error }   no answer at all - network, timeout
+async function _readRosterDoc(collection, docId) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const doc = await Promise.race([
+        db.collection(collection).doc(docId).get(),
+        new Promise((_, reject) => setTimeout(
+          () => reject(Object.assign(new Error('timed out after 10s'), { code: 'deadline-exceeded' })), 10000))
+      ]);
+      return doc.exists ? { status: 'ok', doc: doc } : { status: 'missing' };
+    } catch (e) {
+      lastErr = e;
+      if (e && e.code === 'permission-denied') return { status: 'denied', error: e };
+      if (attempt < 2) await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
+    }
+  }
+  return { status: 'unreachable', error: lastErr };
+}
+
+// Full-page "cannot reach the server" state, with Retry. Built here rather than
+// in dashboard.html so the dashboard markup does not have to change.
+function _showRestoreRetry(err) {
+  let box = document.getElementById('restoreRetry');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'restoreRetry';
+    box.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
+      'background:#17603a;z-index:9999;padding:24px;font-family:inherit;';
+    document.body.appendChild(box);
+  }
+  const detail = err && (err.code || err.message) ? String(err.code || err.message) : 'no response';
+  box.innerHTML =
+    '<div style="background:#fff;border-radius:22px;padding:30px 26px;max-width:380px;width:100%;' +
+      'text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.28);">' +
+      '<div style="font-size:1.15rem;font-weight:800;color:#15603a;margin-bottom:8px;">Can\u2019t reach the server</div>' +
+      '<div style="font-size:.86rem;color:#475569;line-height:1.55;margin-bottom:6px;">' +
+        'You are still signed in. Your connection may be slow or blocked \u2014 check it and try again.</div>' +
+      '<div style="font-size:.72rem;color:#94a3b8;margin-bottom:20px;">Detail: ' + escapeHtml(detail) + '</div>' +
+      '<button type="button" id="restoreRetryBtn" style="width:100%;background:#15603a;color:#fff;border:0;' +
+        'border-radius:10px;padding:13px;font-weight:700;font-size:.95rem;cursor:pointer;font-family:inherit;">Retry</button>' +
+      '<button type="button" id="restoreSignOutBtn" style="width:100%;background:none;color:#64748b;border:0;' +
+        'padding:12px;font-size:.82rem;cursor:pointer;margin-top:6px;font-family:inherit;">Sign out instead</button>' +
+    '</div>';
+  document.getElementById('restoreRetryBtn').onclick = function () {
+    this.disabled = true; this.textContent = 'Retrying\u2026';
+    restoreSession();
+  };
+  document.getElementById('restoreSignOutBtn').onclick = function () { doLogout(); };
+}
+
+function _hideRestoreRetry() {
+  const box = document.getElementById('restoreRetry');
+  if (box) box.remove();
 }
 
 // Run only once every script on the page has parsed.

@@ -153,6 +153,11 @@ let _studentDeptFilter = '';
 
 window.renderStudents = function(search) {
     if (search !== undefined) _studentSearchQuery = search;
+    // Rebuild the department pills on EVERY redraw, not just when the page
+    // opens. Every change to students - delete, add, edit, bulk import - ends
+    // here, so the counts now update the moment it happens, and a department
+    // whose last student is removed loses its pill without a reload.
+    buildStudentDeptFilterBar();
     const query = _studentSearchQuery;
     const deptFilter = _studentDeptFilter;
 
@@ -248,20 +253,28 @@ window.buildStudentDeptFilterBar = function() {
     const counts = {};
     allStudents.forEach(s => { counts[s.dept || 'UNASSIGNED'] = (counts[s.dept || 'UNASSIGNED'] || 0) + 1; });
 
-    let html = `<button class="student-dept-filter-btn active" data-dept="" onclick="filterStudentsByDept('')">
+    // If the department being viewed just lost its last student, its pill is
+    // about to disappear - fall back to All rather than leave the table empty
+    // under a filter that no longer has a button.
+    if (_studentDeptFilter && !counts[_studentDeptFilter]) _studentDeptFilter = '';
+    // The pills are rebuilt on every redraw now, so the highlighted one must
+    // follow the current filter instead of always resetting to All.
+    const on = code => (_studentDeptFilter === code ? ' active' : '');
+
+    let html = `<button class="student-dept-filter-btn${on('')}" data-dept="" onclick="filterStudentsByDept('')">
         All <span class="dept-filter-count">${allStudents.length}</span>
     </button>`;
 
     Object.entries(DEPT_CONFIG).forEach(([code, cfg]) => {
         if (counts[code]) {
-            html += `<button class="student-dept-filter-btn" data-dept="${code}" onclick="filterStudentsByDept('${code}')">
+            html += `<button class="student-dept-filter-btn${on(code)}" data-dept="${code}" onclick="filterStudentsByDept('${code}')">
                 ${escapeHtml(cfg.short)} <span class="dept-filter-count">${counts[code]}</span>
             </button>`;
         }
     });
 
     if (counts['UNASSIGNED']) {
-        html += `<button class="student-dept-filter-btn" data-dept="UNASSIGNED" onclick="filterStudentsByDept('UNASSIGNED')">
+        html += `<button class="student-dept-filter-btn${on('UNASSIGNED')}" data-dept="UNASSIGNED" onclick="filterStudentsByDept('UNASSIGNED')">
             No Dept <span class="dept-filter-count">${counts['UNASSIGNED']}</span>
         </button>`;
     }

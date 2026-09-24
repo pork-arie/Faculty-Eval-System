@@ -1,14 +1,59 @@
 // app.js - dashboard, evaluation screens, feedback, profile, supervisor SEF.
 
+// ============================================================
+// LOADING SKELETONS
+// ------------------------------------------------------------
+// Each page fetches from Firestore when it opens. On a slow
+// connection that used to leave blank space, stray "—" dashes,
+// or the previous page's data until the new data arrived.
+// These fill each container with placeholders shaped like the
+// real content, and the render function writes over them.
+// ============================================================
+function _skLine(w, h) {
+  return '<span class="skeleton sk-line" style="width:' + (w || '100%') + ';height:' + (h || 12) + 'px;"></span>';
+}
+function _skCard() {
+  return '<div class="sk-card">' +
+           '<span class="skeleton sk-avatar"></span>' +
+           '<div class="sk-lines">' + _skLine('38%', 10) + _skLine('70%', 14) + _skLine('46%', 10) + '</div>' +
+           '<span class="skeleton sk-pill"></span>' +
+         '</div>';
+}
+function _skFill(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+}
+
+function showSkeleton(page) {
+  if (page === 'dashboard') {
+    ['dashTotalSubjects', 'dashDone', 'dashPending'].forEach(id =>
+      _skFill(id, '<span class="skeleton sk-num"></span>'));
+    _skFill('dashPeriodInfo', '<div class="sk-stack">' +
+      _skLine('30%', 10) + _skLine('55%', 16) + _skLine('30%', 10) + _skLine('45%', 16) +
+      _skLine('28%', 10) + _skLine('50%', 16) + '</div>');
+    _skFill('dashSubjectList', _skCard() + _skCard() + _skCard());
+  }
+  if (page === 'evaluate') _skFill('subjectPicker', _skCard() + _skCard() + _skCard());
+  if (page === 'history')  _skFill('historyList',   _skCard() + _skCard() + _skCard());
+  if (page === 'feedback') _skFill('feedbackList',
+    ['', ''].map(() => '<div class="sk-block">' + _skLine('45%', 14) + _skLine('30%', 10) +
+                       '<span class="skeleton sk-quote"></span></div>').join(''));
+}
+
 // Boot after login: load the published questions, then the data.
 async function initApp(isInactive = false) {
   // The forced password change is handled on index.html, before the redirect
   // here. If an account somehow reaches the dashboard still needing it, send
   // it back rather than letting it through - the gate markup is not on this
   // page.
-  if (needsPasswordChange(currentStudent)) { goToLogin(); return; }
+  if (needsPasswordChange(currentStudent)) { goToLogin('Please set a new password before continuing - sign in again to do it.'); return; }
 
   document.getElementById('app').style.display = 'flex';
+
+  // Placeholders go up the moment the app is visible. Nothing below renders
+  // until the question sets have loaded, so on a slow connection the page
+  // otherwise sat on its bare markup - stray dashes - for that whole wait.
+  if (currentStudent && currentStudent.userType !== 'supervisor') showSkeleton('dashboard');
 
   await loadPublishedQuestions();
 
@@ -18,6 +63,7 @@ async function initApp(isInactive = false) {
     ? currentStudent.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
     : (isSupervisor ? 'SV' : 'S');
   document.getElementById('sidebarAvatar').textContent = initials;
+  { const mAv = document.getElementById('mobileAvatar'); if (mAv) mAv.textContent = document.getElementById('sidebarAvatar').textContent; }
   document.getElementById('sidebarName').textContent   = currentStudent.name || '—';
   document.getElementById('sidebarDept').textContent   = isSupervisor
     ? `Supervisor · ${currentStudent.dept || 'No department'}`
@@ -357,19 +403,61 @@ function showPage(id) {
   if (id === 'profile')   renderProfile();
 }
 
-function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
-  document.getElementById('overlayBg').classList.toggle('open');
+// ============================================================
+// MOBILE DRAWER
+// ------------------------------------------------------------
+// One place sets the open/closed state, so the drawer, the
+// backdrop, the page scroll lock and the menu button's
+// aria-expanded can never disagree with each other.
+// ============================================================
+function _setSidebar(open) {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('overlayBg');
+  const btn     = document.getElementById('mobileMenuBtn');
+  if (!sidebar) return;
+
+  sidebar.classList.toggle('open', open);
+  if (overlay) overlay.classList.toggle('open', open);
+  // Stop the page behind the drawer scrolling under a thumb.
+  document.body.classList.toggle('drawer-open', open);
+  if (btn) {
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+  }
+
+  if (open) {
+    // Move focus into the drawer so keyboard and screen-reader users land in
+    // the menu they just opened, not behind it.
+    const first = sidebar.querySelector('.nav-item.active') || sidebar.querySelector('.nav-item');
+    if (first) { if (!first.hasAttribute('tabindex')) first.setAttribute('tabindex', '0'); first.focus({ preventScroll: true }); }
+  } else if (btn && sidebar.contains(document.activeElement)) {
+    // ...and back to the button that opened it when it closes.
+    btn.focus({ preventScroll: true });
+  }
 }
 
-function closeSidebar() {
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('overlayBg').classList.remove('open');
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  _setSidebar(!(sidebar && sidebar.classList.contains('open')));
 }
+
+function closeSidebar() { _setSidebar(false); }
+
+// Escape closes it, as every drawer on the web does.
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && document.body.classList.contains('drawer-open')) closeSidebar();
+});
+
+// Rotating the phone or widening the window past the mobile breakpoint would
+// otherwise leave the scroll lock and backdrop on with no drawer to close.
+window.addEventListener('resize', function () {
+  if (window.innerWidth > 768 && document.body.classList.contains('drawer-open')) closeSidebar();
+});
 
 // Subject cards, evaluation period, and progress counts.
 async function renderDashboard() {
   if (currentStudent && currentStudent.userType === 'supervisor') return;
+  showSkeleton('dashboard');
   await loadStudentData();
 
   const hour = new Date().getHours();
@@ -488,6 +576,7 @@ async function ensureSubjectTeacherNames() {
 }
 async function renderEvaluate() {
   if (currentStudent && currentStudent.userType === 'supervisor') return;
+  showSkeleton('evaluate');
   await ensureSubjectTeacherNames();
 
   const picker = document.getElementById('subjectPicker');
@@ -523,7 +612,7 @@ async function renderEvaluate() {
   } else {
     document.getElementById('evalBanner').innerHTML = `
       <div class="status-banner open">
-        📝 Evaluation is currently open. Please rate your teachers honestly.
+         Evaluation is currently open. Please rate your teachers honestly.
       </div>`;
   }
 
@@ -718,6 +807,7 @@ function closeResult() {
 }
 
 async function renderHistory() {
+  showSkeleton('history');
   await loadStudentData();
   document.getElementById('historyCount').textContent = `${myEvals.length} record${myEvals.length !== 1 ? 's' : ''}`;
 
@@ -728,6 +818,11 @@ async function renderHistory() {
 
   const subMap = {};
   mySubjects.forEach(s => subMap[s.docId] = s);
+  // Subjects evaluated but no longer enrolled in are not in mySubjects, so
+  // they showed as "Unknown Subject". Look them up.
+  await Promise.all(myEvals
+    .filter(ev => ev.subjectId && !subMap[ev.subjectId])
+    .map(async ev => { const sub = await _subjectFor(ev.subjectId); if (sub) subMap[ev.subjectId] = sub; }));
 
   const sorted = [...myEvals].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
@@ -737,25 +832,180 @@ async function renderHistory() {
         const sub = subMap[ev.subjectId];
         const dateStr = new Date(ev.timestamp).toLocaleDateString('en-PH', { year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
         const remarks = getRemarks(ev.totalScore);
+        const key = escapeHtml(ev.docId || ev.id || '');
         return `
-          <div class="history-item">
+          <div class="history-item sv-clickable" role="button" tabindex="0"
+               onclick="openSubmissionView('${key}')" onkeydown="_svKey(event,'${key}')"
+               aria-label="View your ratings for ${escapeHtml(sub ? sub.name : 'this subject')}">
             <div class="history-dot">📝</div>
             <div style="flex:1;">
-              <div class="history-subject">${sub ? sub.name : 'Unknown Subject'}</div>
-              <div class="history-teacher">${sub ? sub.code : '—'}</div>
+              <div class="history-subject">${escapeHtml(sub ? sub.name : 'Unknown Subject')}</div>
+              <div class="history-teacher">${escapeHtml(sub ? sub.code : '—')}</div>
               <div class="history-date">${dateStr}</div>
             </div>
             <div style="text-align:right; flex-shrink:0;">
               <div class="score-pill">${ev.totalScore}%</div>
               <div style="font-size:0.68rem; color:var(--muted); margin-top:4px;">${remarks}</div>
             </div>
+            <svg class="sv-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>
           </div>`;
       }).join('')}
     </div>`;
 }
 
+
+// ============================================================
+// YOUR SUBMITTED RATINGS
+// ------------------------------------------------------------
+// The web counterpart of the app's ViewSubmissionScreen. Opened
+// from My Evaluations or My Feedback; read-only, since an
+// evaluation is final once sent.
+//
+// Everything comes from Firestore - the record in myEvals was
+// loaded from the database, and the subject, teacher and question
+// wording are fetched from it when not already on hand.
+// ============================================================
+
+// Subjects the student has evaluated but is no longer enrolled in are not in
+// mySubjects. Fetch them rather than labelling the row "Unknown Subject".
+const _subjectCache = {};
+async function _subjectFor(subjectId) {
+  const known = mySubjects.find(s => s.docId === subjectId);
+  if (known) return known;
+  if (_subjectCache[subjectId] !== undefined) return _subjectCache[subjectId];
+  try {
+    const d = await db.collection('subjects').doc(subjectId).get();
+    _subjectCache[subjectId] = d.exists ? Object.assign({ docId: d.id }, d.data()) : null;
+  } catch (e) { _subjectCache[subjectId] = null; }
+  return _subjectCache[subjectId];
+}
+
+const _teacherCache = {};
+async function _teacherName(teacherId) {
+  if (!teacherId) return '';
+  if (_teacherCache[teacherId] !== undefined) return _teacherCache[teacherId];
+  try {
+    const d = await db.collection('teachers').doc(teacherId).get();
+    _teacherCache[teacherId] = d.exists ? (d.data().name || '') : '';
+  } catch (e) { _teacherCache[teacherId] = ''; }
+  return _teacherCache[teacherId];
+}
+
+// The questions as they were WORDED WHEN ANSWERED. A later published version
+// may reword an item; showing the current wording beside an old rating would
+// misrepresent what the student actually rated.
+const _qsetCache = {};
+async function _questionsFor(ev) {
+  const fallback = Instrument.set;
+  const id = ev.questionSetId;
+  if (!id || id === Instrument.setId) return fallback;
+  if (_qsetCache[id]) return _qsetCache[id];
+  try {
+    const d = await db.collection('questionSets').doc(id).get();
+    const qs = d.exists && Array.isArray(d.data().questions) ? d.data().questions : fallback;
+    _qsetCache[id] = qs;
+    return qs;
+  } catch (e) { return fallback; }
+}
+
+async function openSubmissionView(evId) {
+  // Loaded records carry docId; one submitted this session carries id.
+  const ev = myEvals.find(e => (e.docId || e.id) === evId);
+  if (!ev) { showToast('That evaluation could not be found. Please refresh.', 'error'); return; }
+
+  let box = document.getElementById('submissionView');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'submissionView';
+    box.className = 'sv-overlay';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-label', 'Your submitted ratings');
+    document.body.appendChild(box);
+  }
+  box.innerHTML = '<div class="sv-sheet"><div class="sv-loading">Loading\u2026</div></div>';
+  box.classList.add('open');
+  document.body.classList.add('drawer-open');          // same scroll lock as the drawer
+
+  const [sub, questions] = await Promise.all([_subjectFor(ev.subjectId), _questionsFor(ev)]);
+  const teacher = (sub && sub.teacherName) || await _teacherName(ev.teacherId || (sub && sub.teacherId));
+
+  // Same rule as the app: the score saved at submission, recomputed only if
+  // missing - dividing by the items actually answered.
+  const ratings = ev.ratings || {};
+  const answered = Object.values(ratings).map(Number).filter(n => !isNaN(n));
+  const overall = (Number(ev.totalScore) > 0)
+    ? Number(ev.totalScore)
+    : (answered.length ? Math.round(answered.reduce((a, b) => a + b, 0) / (answered.length * 5) * 10000) / 100 : 0);
+
+  const dateStr = ev.timestamp
+    ? new Date(ev.timestamp).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
+    : '\u2014';
+
+  let lastSec = null;
+  const rows = questions.map(q => {
+    let head = '';
+    if (q.sec && q.sec !== lastSec && typeof SECTIONS !== 'undefined' && SECTIONS[q.sec]) {
+      head = '<div class="sv-sec">' + escapeHtml(SECTIONS[q.sec]) + '</div>';
+      lastSec = q.sec;
+    }
+    const r = ratings[q.id];
+    return head + '<div class="sv-row"><div class="sv-q">' + escapeHtml(q.text) + '</div>' +
+      '<div class="sv-badge">' + (r == null ? '\u2013' : escapeHtml(String(r))) + '</div></div>';
+  }).join('');
+
+  box.innerHTML =
+    '<div class="sv-sheet">' +
+      '<div class="sv-bar">' +
+        '<button type="button" class="sv-back" id="svClose" aria-label="Back">' +
+          '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>' +
+        '</button>' +
+        '<div class="sv-title">Your Submitted Ratings</div>' +
+      '</div>' +
+      '<div class="sv-body">' +
+        '<div class="sv-summary">' +
+          '<div class="sv-subject">' + escapeHtml(sub ? (sub.code + ' \u2014 ' + sub.name) : 'Subject') + '</div>' +
+          (teacher ? '<div class="sv-teacher">' + escapeHtml(teacher) + '</div>' : '') +
+          '<div class="sv-date">Submitted ' + escapeHtml(dateStr) + '</div>' +
+          '<div class="sv-overall">Overall Rating: ' + overall.toFixed(2) + '%</div>' +
+          '<div class="sv-remark">' + escapeHtml(getRemarks(overall)) + '</div>' +
+        '</div>' +
+        rows +
+        '<div class="sv-comment-label">Your Comment</div>' +
+        '<div class="sv-comment">' + (ev.comment && ev.comment.trim() ? escapeHtml(ev.comment.trim()) : '<span class="sv-none">(none)</span>') + '</div>' +
+      '</div>' +
+    '</div>';
+
+  const close = document.getElementById('svClose');
+  close.onclick = closeSubmissionView;
+  close.focus({ preventScroll: true });
+}
+
+function closeSubmissionView() {
+  const box = document.getElementById('submissionView');
+  if (box) box.classList.remove('open');
+  document.body.classList.remove('drawer-open');
+}
+
+// Escape and a tap on the dimmed edge both close it, like the drawer.
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') {
+    const box = document.getElementById('submissionView');
+    if (box && box.classList.contains('open')) closeSubmissionView();
+  }
+});
+document.addEventListener('click', function (e) {
+  if (e.target && e.target.id === 'submissionView') closeSubmissionView();
+});
+
+// Row click / Enter / Space -> open the ratings. Shared by both lists.
+function _svKey(e, id) {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSubmissionView(id); }
+}
+
 // Own submitted ratings and comments.
 async function renderFeedback() {
+  showSkeleton('feedback');
   await loadStudentData();
 
   const banner    = document.getElementById('feedbackNoticeBanner');
@@ -804,7 +1054,7 @@ async function renderFeedback() {
     banner.style.display = 'block';
     banner.innerHTML = `
       <div style="background:#fef3c7; border:1px solid #fcd34d; border-radius:10px; padding:12px 16px; margin-bottom:16px; font-size:0.8rem; color:#92400e; display:flex; align-items:center; gap:10px;">
-        <span style="font-size:1rem;">⏳</span>
+        <span style="font-size:1rem;"></span>
         <span>The evaluation period is still <strong>open</strong>. Comments are shown here for your reference but faculty cannot see them yet.</span>
       </div>`;
   } else {
@@ -835,13 +1085,17 @@ async function renderFeedback() {
     const score       = ev.totalScore ?? '—';
     const scoreColor  = score >= 90 ? '#16a34a' : score >= 75 ? '#2563eb' : score >= 60 ? '#d97706' : '#dc2626';
 
+    const key = escapeHtml(ev.docId || ev.id || '');
     return `
-      <div style="padding:16px 0; border-bottom:1px solid var(--border);">
+      <div class="sv-clickable" role="button" tabindex="0"
+           onclick="openSubmissionView('${key}')" onkeydown="_svKey(event,'${key}')"
+           aria-label="View your full ratings for ${escapeHtml(subjectName)}"
+           style="padding:16px 0; border-bottom:1px solid var(--border);">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
           <div>
-            <div style="font-weight:700; font-size:0.88rem;">${subjectName}</div>
-            <div style="font-size:0.72rem; color:var(--muted); font-family:'JetBrains Mono',monospace; margin-top:2px;">${subjectCode} · ${teacherName}</div>
-            <div style="font-size:0.7rem; color:var(--muted); margin-top:2px;">📅 ${dateStr}</div>
+            <div style="font-weight:700; font-size:0.88rem;">${escapeHtml(subjectName)}</div>
+            <div style="font-size:0.72rem; color:var(--muted); font-family:'JetBrains Mono',monospace; margin-top:2px;">${escapeHtml(subjectCode)} · ${escapeHtml(teacherName)}</div>
+            <div style="font-size:0.7rem; color:var(--muted); margin-top:2px;"> ${dateStr}</div>
           </div>
           <div style="text-align:right; flex-shrink:0;">
             <div style="font-size:1.3rem; font-weight:800; color:${scoreColor}; line-height:1;">${score}%</div>
@@ -852,6 +1106,7 @@ async function renderFeedback() {
           <div style="font-size:0.7rem; font-weight:700; color:var(--emerald); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:5px;">Your Comment</div>
           <div style="font-size:0.83rem; color:var(--slate); line-height:1.6; font-style:italic;">"${escapeHtml(ev.comment.trim())}"</div>
         </div>
+        <div class="sv-hint">Tap to see all your ratings</div>
       </div>`;
   }).join('') + '<div style="height:4px;"></div>';
 }
