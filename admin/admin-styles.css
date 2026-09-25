@@ -2131,3 +2131,66 @@ body::before {
 @media (prefers-reduced-motion: reduce) {
   .skel { animation: none; }
 }
+
+/* ===== Multiple teachers per subject: the chosen list ===== */
+.tp-chosen + .tp-chosen { margin-top: 8px; }
+.tp-secs { margin-top: 7px; }
+.tp-secs-label { display: block; font-size: 0.72rem; color: var(--muted, #64748b);
+                 font-weight: 700; margin-bottom: 5px; }
+.tp-sec-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* One chip per section, per teacher: each teacher on a subject can take a
+   different set. "All students" is selected when none are. */
+.tp-sec { font-size: 0.74rem; font-weight: 600; cursor: pointer;
+          padding: 4px 11px; border-radius: 999px;
+          border: 1px solid var(--border, #e2e8f0);
+          background: #fff; color: var(--muted, #64748b); transition: all .12s; }
+.tp-sec:hover { border-color: var(--primary, #059669); color: var(--primary, #059669); }
+.tp-sec.is-on { background: var(--primary, #059669); border-color: var(--primary, #059669);
+                color: #fff; }
+
+/* ===== Subjects table: the teacher cell opens Teachers & Sections ===== */
+.tcell { cursor: pointer; border-radius: 8px; transition: background .12s; }
+.tcell:hover, .tcell:focus-visible { background: #f0fdf4; outline: none; }
+.tcell:hover .tcell-names, .tcell:focus-visible .tcell-names { color: var(--primary, #059669); }
+.tcell-names { display: block; line-height: 1.45; }
+/* Only the first two names are listed; the rest are counted, so one subject
+   with six teachers stays one row high. */
+.tcell-more { display: inline-block; margin-top: 3px; font-size: 0.7rem; font-weight: 700;
+              color: var(--primary, #059669); background: #ecfdf5;
+              padding: 1px 7px; border-radius: 999px; }
+.tcell-none { color: var(--muted, #64748b); font-style: italic; font-size: 0.78rem; }
+
+/* ===== Subjects table: MULTIPLE tag ===== */
+.tcell-multi { display: inline-block; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em;
+               color: var(--primary, #059669); background: #ecfdf5;
+               border: 1px solid #a7f3d0; padding: 2px 9px; border-radius: 999px; }
+.tcell-count { display: block; margin-top: 3px; font-size: 0.7rem; color: var(--muted, #64748b); }
+
+/* ===== Who teaches this subject ===== */
+.tl-summary { display: flex; gap: 18px; font-size: 0.78rem; color: var(--muted, #64748b);
+              padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border, #e2e8f0); }
+.tl-summary strong { color: var(--ink, #0f172a); font-size: 0.95rem; }
+/* One button per teacher, not a stack of text. */
+.tl-card { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+           padding: 12px 14px; margin-bottom: 8px; cursor: pointer;
+           background: #fff; border: 1px solid var(--border, #e2e8f0); border-radius: 12px;
+           transition: all .12s; }
+.tl-card:hover { border-color: var(--primary, #059669); background: #f0fdf4;
+                 transform: translateY(-1px); }
+.tl-avatar { flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%;
+             display: flex; align-items: center; justify-content: center;
+             background: linear-gradient(135deg, #064e3b, #059669); color: #fff;
+             font-weight: 700; font-size: 0.95rem; }
+.tl-main { flex: 1; min-width: 0; }
+.tl-name { display: block; font-weight: 700; font-size: 0.88rem; color: var(--ink, #0f172a); }
+.tl-meta { display: block; font-size: 0.72rem; color: var(--muted, #64748b); margin-top: 1px; }
+.tl-secs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.tl-sec { font-size: 0.68rem; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+          background: #ecfdf5; color: #047857; }
+.tl-sec-all { background: #f1f5f9; color: #64748b; }
+.tl-right { flex-shrink: 0; text-align: right; }
+.tl-roll { display: block; font-size: 0.74rem; font-weight: 700; color: var(--ink, #0f172a); }
+.tl-go { display: block; font-size: 0.7rem; color: var(--primary, #059669); margin-top: 3px; }
+.tl-empty { padding: 24px; text-align: center; color: var(--muted, #64748b); font-size: 0.84rem; }
+/* The teacher opened from the list, so the right card is obvious. */
+.tp-chosen.is-focus { box-shadow: 0 0 0 2px var(--primary, #059669); }

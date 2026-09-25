@@ -313,7 +313,7 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
   document.getElementById('deptTeacherCount').textContent = regularTeachers.length;
   document.getElementById('deptTeachersTbody').innerHTML = regularTeachers.length
     ? regularTeachers.map(t => {
-        const tSubs = getData('subjects', []).filter(s => s.teacherId === t.id);
+        const tSubs = getData('subjects', []).filter(s => subjectHasTeacher(s, t.id));
         const tEvals = allEvals.filter(e => tSubs.some(s => s.id === e.subjectId));
         const setSc = calculateWeightedSETRating(t.id);
         const sefEvs = getData('evaluations', []).filter(e => e.teacherId === t.id && e.evaluatorType === 'supervisor');
@@ -378,8 +378,17 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
   document.getElementById('deptSubjectsTbody').innerHTML = allSubjects.length
     ? allSubjects.map(sub => {
         const enrolled = (sub.enrolledIds || []).filter(eid => allStudents.find(s => s.id===eid)).length;
-        const teacher = getData('teachers', []).find(t => t.id === sub.teacherId && !t.deleted);
-        const teacherName = teacher ? teacher.name : '<span style="color:var(--danger); font-style:italic;">Unassigned</span>';
+        const liveTeachers = getData('teachers', []).filter(t => !t.deleted);
+        const names = subjectTeacherNames(sub, liveTeachers);
+        // At most two names on this card; the rest become a count. More than
+        // that and one subject pushes the whole card out of shape. The full
+        // list is on View all, where the row opens to show every teacher.
+        const teacherName = names.length
+            ? names.slice(0, 2).map(n => escapeHtml(n)).join('<br>')
+              + (names.length > 2
+                  ? `<span style="color:var(--muted);font-size:0.72rem;">\u2026 +${names.length - 2} more</span>`
+                  : '')
+            : '<span style="color:var(--danger); font-style:italic;">Unassigned</span>';
         return `<tr>
           <td><span style="font-family:\'JetBrains Mono\',monospace;font-weight:700;font-size:0.78rem;">${escapeHtml(sub.code)}</span></td>
           <td style="font-size:0.82rem;">${escapeHtml(sub.name)}</td>
@@ -388,7 +397,7 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
               ? `<span class="badge" style="background:var(--primary-light,#eff6ff);color:var(--primary,#2563eb);font-size:0.68rem;">${escapeHtml(sub.category)}</span>`
               : '<span style="color:var(--muted);font-size:0.72rem;">\u2014</span>'}
           </td>
-          <td style="font-size:0.82rem;">${teacherName}</td>
+          <td style="font-size:0.82rem;" title="${names.length ? escapeHtml(names.join(', ')) : 'No teacher assigned'}">${teacherName}</td>
           <td><span class="badge badge-primary" style="font-size:0.68rem;">${enrolled}</span></td>
         </tr>`;
       }).join('')

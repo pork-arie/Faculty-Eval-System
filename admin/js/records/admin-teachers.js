@@ -213,7 +213,7 @@ window.renderTeachers = function(search = '') {
     </tr>`;
 
     facultyList.forEach(t => {
-      const tSubs = subjects.filter(s => s.teacherId === t.id);
+      const tSubs = subjects.filter(s => subjectHasTeacher(s, t.id));
       html += `
       <tr class="teacher-row dept-group-student-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
         <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
@@ -335,7 +335,7 @@ window.renderSupervisorTable = function(search) {
     </tr>`;
 
     supList.forEach(t => {
-      const tSubs = subjects.filter(s => s.teacherId === t.id);
+      const tSubs = subjects.filter(s => subjectHasTeacher(s, t.id));
       html += `<tr class="teacher-row dept-group-student-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
         <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
         <td><strong>${escapeHtml(t.name)}</strong></td>
@@ -366,7 +366,7 @@ window.toggleTeacherDetails = function(teacherId) {
 
 window.renderTeacherDetailsContent = function(teacherId) {
   const t = getData('teachers', []).find(t => t.id === teacherId);
-  const subjects = getData('subjects', []).filter(s => s.teacherId === teacherId && s.loadType !== 'Overload' && !s.isLabSchool);
+  const subjects = getData('subjects', []).filter(s => subjectHasTeacher(s, teacherId) && s.loadType !== 'Overload' && !s.isLabSchool);
   const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor');
 
   // Same §8.3 computation as every other screen (admin-scoring.js). This block
@@ -829,12 +829,49 @@ function toggleTeacherStatus(id) {
 
 function deleteTeacher(id) {
   const t = getData('teachers', []).find(t => t.id === id);
-  showConfirm('Delete Teacher', `Remove ${t.name}? All evaluation records will be preserved.`, () => {
+
+  // How many subjects they are on, so the warning can say so.
+  const onSubjects = getData('subjects', []).filter(s =>
+      (typeof subjectHasTeacher === 'function') ? subjectHasTeacher(s, id) : s.teacherId === id);
+  const note = onSubjects.length
+      ? ` They are assigned to ${onSubjects.length} subject${onSubjects.length === 1 ? '' : 's'}` +
+        ` (${onSubjects.slice(0, 3).map(s => s.code).join(', ')}${onSubjects.length > 3 ? '…' : ''}),` +
+        ' and will be removed from them.'
+      : '';
+
+  showConfirm('Delete Teacher', `Remove ${t.name}?${note} All evaluation records will be preserved.`, () => {
     const teachers = getData('teachers', []);
     teachers.find(t => t.id === id).deleted = true;
     setData('teachers', teachers);
-    addAudit('Delete Teacher', `Deleted: ${t.name} — records preserved`);
+
+    // Take them off every subject as well. Marking the teacher deleted used to
+    // leave them on the subject, so the subject still counted them - a subject
+    // with two teachers went on showing MULTIPLE after one was deleted, and the
+    // rating lists still expected students to rate someone who no longer exists.
+    if (onSubjects.length) {
+      const subjects = getData('subjects', []);
+      let changed = false;
+      subjects.forEach(sub => {
+        // The RAW list, not subjectTeachers(): that one already hides deleted
+        // teachers, so by this point it would report nothing to remove and the
+        // stale entry would stay in the record for ever.
+        const raw = Array.isArray(sub.teachers) && sub.teachers.length
+            ? sub.teachers
+            : (sub.teacherId ? [{ id: sub.teacherId, sections: [] }] : []);
+        const kept = raw.filter(x => x && x.id !== id);
+        if (kept.length === raw.length) return;          // this subject is unaffected
+        sub.teachers  = kept.map(x => ({ id: x.id, sections: Array.isArray(x.sections) ? x.sections : [] }));
+        sub.teacherId = kept.length ? kept[0].id : '';   // keep the single id in step
+        changed = true;
+      });
+      if (changed) setData('subjects', subjects);
+    }
+
+    addAudit('Delete Teacher', `Deleted: ${t.name} — removed from ${onSubjects.length} subject(s), records preserved`);
     renderTeachers();
-    showToast('Teacher deleted. Records preserved.', 'info');
+    if (typeof renderSubjects === 'function') renderSubjects();
+    showToast(onSubjects.length
+      ? `Teacher deleted and removed from ${onSubjects.length} subject(s). Records preserved.`
+      : 'Teacher deleted. Records preserved.', 'info');
   });
 }

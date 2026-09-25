@@ -21,13 +21,17 @@ window.showAnnexDReport = function(teacherId) {
     const sefScore = sefAgg2.count ? sefAgg2.average.toFixed(2) : '—';
 
 
-    const subjects = getData('subjects', []).filter(s => s.teacherId === teacherId && s.loadType !== 'Overload' && !s.isLabSchool);
+    const subjects = getData('subjects', []).filter(s => subjectHasTeacher(s, teacherId) && s.loadType !== 'Overload' && !s.isLabSchool);
     const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor');
     const students = getData('students', []).filter(s => !s.deleted);
 
     const classBreakdown = subjects.map(sub => {
-        const classEvals = evals.filter(e => e.subjectId === sub.id);
-        const enrolledCount = (sub.enrolledIds||[]).filter(id => students.find(s => s.id === id)).length;
+        // This teacher's ratings and students only - a subject may have several.
+        const classEvals = evals.filter(e => e.subjectId === sub.id && evalBelongsTo(e, sub, teacherId));
+        const enrolledCount = (sub.enrolledIds||[]).filter(id => {
+            const st = students.find(s => s.id === id);
+            return st && teacherTeachesStudent(sub, teacherId, st);
+        }).length;
         const avgScore = classEvals.length > 0 ? classEvals.reduce((a,b) => a + b.totalScore, 0) / classEvals.length : 0;
         return { sub, enrolledCount, evalCount: classEvals.length, avgScore: avgScore.toFixed(2), percentage: Math.min(100, avgScore).toFixed(2) };
     });
@@ -183,19 +187,32 @@ function _annexPrintHtml(sourceEl) {
 // must be able to chase non-respondents (evaluation is mandatory, CMO 8.1)
 // without being able to read what any named student wrote (6.10).
 // ============================================================
-window.annexSectionRoster = function (subjectId, sectionLabel) {
+// teacherId is optional. From a teacher's Annex C it narrows the roster to that
+// teacher's students and ratings; from Submission Tracking (no teacherId) it
+// covers every teacher the subject has.
+window.annexSectionRoster = function (subjectId, sectionLabel, teacherId) {
   const sub = getData('subjects', []).find(x => x.id === subjectId);
   if (!sub) { showToast('Subject not found.', 'error'); return; }
 
   const students = getData('students', []).filter(s => !s.deleted);
   const inTerm   = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : () => true;
 
-  // Same scoping as the row itself: this subject, student evaluations, this term.
+  const focus = (teacherId && subjectHasTeacher(sub, teacherId)) ? teacherId : null;
+  const tIds  = focus ? [focus] : subjectTeacherIds(sub);
+
+  // Same scoping as the row itself: this subject, student evaluations, this
+  // term - and the teacher(s) in view.
   const evals = getData('evaluations', []).filter(e =>
       e.subjectId === subjectId &&
       e.evaluatorType !== 'supervisor' &&
-      (!e.teacherId || e.teacherId === sub.teacherId) &&
+      tIds.some(tid => evalBelongsTo(e, sub, tid)) &&
       inTerm(e));
+
+  // For each student: which of the teachers in view teach them, and how many
+  // ratings each of those got. One rating PER TEACHER is normal now, so a
+  // duplicate means two ratings for the SAME teacher.
+  const ratingsFor = (st, tid) => evals.filter(e => e.studentId === st.id && evalBelongsTo(e, sub, tid)).length;
+  const owedTo     = st => tIds.filter(tid => teacherTeachesStudent(sub, tid, st));
 
   // A row labelled "BSIT 1A, BSIT 1B" is an unrated class - one row covering
   // every section. Accept any of the listed labels in that case.
@@ -207,6 +224,7 @@ window.annexSectionRoster = function (subjectId, sectionLabel) {
       .map(id => students.find(s => s.id === id))
       .filter(Boolean)
       .filter(inSection)
+      .filter(st => owedTo(st).length > 0)          // only students the teacher(s) teach
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
 
   // Count submissions per student so a second copy is visible rather than just
@@ -214,8 +232,10 @@ window.annexSectionRoster = function (subjectId, sectionLabel) {
   const countFor = {};
   evals.forEach(e => { if (e.studentId) countFor[e.studentId] = (countFor[e.studentId] || 0) + 1; });
 
-  const submitted = roster.filter(s => (countFor[s.id] || 0) > 0).length;
-  const dupes     = roster.filter(s => (countFor[s.id] || 0) > 1);
+  const doneFor   = st => owedTo(st).filter(tid => ratingsFor(st, tid) > 0).length;
+  const isDup     = st => owedTo(st).some(tid => ratingsFor(st, tid) > 1);
+  const submitted = roster.filter(st => doneFor(st) === owedTo(st).length).length;
+  const dupes     = roster.filter(isDup);
 
   // Submissions made BY this section, so the counts match the row that was
   // clicked rather than the whole subject.
@@ -230,15 +250,19 @@ window.annexSectionRoster = function (subjectId, sectionLabel) {
   const strays = Object.keys(countFor).filter(id => !subjectIds.has(id));
 
   const rows = roster.map(s => {
-    const n   = countFor[s.id] || 0;
-    const dup = n > 1;
+    const n     = countFor[s.id] || 0;
+    const dup   = isDup(s);
+    const owed  = owedTo(s).length;
+    const done  = doneFor(s);
     return `<tr${dup ? ' style="background:#fef2f2;"' : ''}>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;font-family:monospace;font-size:0.8rem;">${escapeHtml(s.sid || '')}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(s.name || '')}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;">
-          ${n === 0
+          ${done === 0
             ? '<span style="color:#b45309;">Not yet</span>'
-            : '<span style="color:#15803d;">Submitted</span>'}
+            : done < owed
+              ? `<span style="color:#b45309;">${done} of ${owed} teachers</span>`
+              : '<span style="color:#15803d;">Submitted</span>'}
         </td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;font-weight:${dup ? '700' : '400'};color:${dup ? '#b91c1c' : 'inherit'};">
           ${n}${dup ? ' &#9888; duplicate' : ''}
@@ -470,7 +494,7 @@ window.buildAnnexCContent = function(teacherId) {
     // links can break and both produce an empty-looking table, so they are
     // measured apart here and reported distinctly further down.
     const allSubjects = getData('subjects', []);
-    const assigned = allSubjects.filter(s => s.teacherId === teacherId);
+    const assigned = allSubjects.filter(s => subjectHasTeacher(s, teacherId));
     const excluded = assigned.filter(s => s.loadType === 'Overload' || s.isLabSchool);
     const subjects = assigned.filter(s => s.loadType !== 'Overload' && !s.isLabSchool);
     const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor' && inTerm(e));
@@ -676,7 +700,7 @@ window.buildAnnexCContent = function(teacherId) {
                     <td style="padding:5px;border:1px solid #ccc;font-style:italic;font-size:0.78rem;word-break:break-word;">${escapeHtml(cr.sub.code)}</td>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;word-break:break-word;">${escapeHtml(cr.yearSection)}</td>
                     <td style="padding:5px;border:1px solid #ccc;text-align:center;font-size:0.78rem;cursor:pointer;"
-                        onclick="annexSectionRoster('${cr.sub.id}', &quot;${String(cr.yearSection).replace(/"/g, '')}&quot;)"
+                        onclick="annexSectionRoster('${cr.sub.id}', &quot;${String(cr.yearSection).replace(/"/g, '')}&quot;, '${teacherId}')"
                         title="Click to see who has submitted in this section">
                         <span>${cr.count}</span>
                         <span class="annex-noprint" style="color:#3f6f5b;font-size:0.7rem;margin-left:3px;">&#9432;</span>

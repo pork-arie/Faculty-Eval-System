@@ -515,7 +515,13 @@ function _rerenderCurrentPage() {
     supervisor: 'renderSupervisorList', rptViewAll: 'renderRptViewAll',
     dept: 'renderDeptPage', deptManage: 'renderDeptManagePage'
   }[page];
-  if (fn && typeof window[fn] === 'function') { try { window[fn](); return; } catch (e) {} }
+  // renderDeptPage needs the department code to redraw. Clicking Firebase
+  // Live on a department page called it with none, so the page could not
+  // rebuild and only a full browser reload worked. The open department is
+  // on window.currentDept (set by showDeptPage).
+  const arg = (page === 'dept') ? window.currentDept : undefined;
+  if (page === 'dept' && !arg) { if (typeof renderDashboard === 'function') renderDashboard(); return; }
+  if (fn && typeof window[fn] === 'function') { try { window[fn](arg); return; } catch (e) {} }
   if (typeof renderDashboard === 'function') renderDashboard();
 }
 
@@ -1382,6 +1388,57 @@ window.addEventListener('load', () => {
           </div>
         </div>
         <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('addSubjectModal')">Cancel</button><button class="btn btn-primary" id="saveSubjectBtn" onclick="saveSubject()">Add Subject</button></div>
+      </div>
+    </div>
+
+    <!-- WHO TEACHES THIS SUBJECT - the list behind the MULTIPLE tag. Each
+         teacher is a button showing their sections and how many students they
+         rate; enrolment is here too, since the two jobs go together. -->
+    <div class="modal-overlay" id="subjectTeacherListModal">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <h3>Teachers of this Subject</h3>
+          <button class="modal-close" onclick="closeModal('subjectTeacherListModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:0.82rem;color:var(--muted);margin-bottom:12px;">
+            Subject: <strong id="tlSubjectName"></strong>
+          </p>
+          <div id="teacherListBody"></div>
+        </div>
+        <div class="modal-footer" style="justify-content:space-between;">
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost" onclick="tlEnroll()">Enroll students</button>
+            <button class="btn btn-ghost" onclick="tlManageTeachers()">Add or remove teachers</button>
+          </div>
+          <button class="btn btn-primary" onclick="closeModal('subjectTeacherListModal')">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Teachers & sections for ONE subject. Separate from Edit Subject because
+         sections only exist once students are enrolled: you enrol first, then
+         come here to say which teacher takes which section. -->
+    <div class="modal-overlay" id="subjectTeachersModal">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <h3>Teachers &amp; Sections</h3>
+          <button class="modal-close" onclick="closeModal('subjectTeachersModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:0.82rem;color:var(--muted);margin-bottom:6px;">
+            Subject: <strong id="stSubjectName"></strong>
+          </p>
+          <p style="font-size:0.78rem;color:var(--muted);margin-bottom:14px;">
+            Tap a teacher to add or remove them. Tick the sections a teacher takes;
+            leave all unticked and every student in the subject rates them.
+          </p>
+          <div id="teacherPicker2" class="tp-wrap"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('subjectTeachersModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveSubjectTeachers()">Save</button>
+        </div>
       </div>
     </div>
 

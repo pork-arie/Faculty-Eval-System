@@ -72,7 +72,7 @@ function viewTeacherReport(teacherId) {
   const rating = calculateFinalRating(teacherId);
   const subjects = getData('subjects', []);
   const evals = getData('evaluations', []);
-  const tSubs = subjects.filter(s => s.teacherId === teacherId);
+  const tSubs = subjects.filter(s => subjectHasTeacher(s, teacherId));
   const tEvals = evals.filter(e => tSubs.some(s => s.id === e.subjectId) && e.evaluatorType !== 'supervisor');
   
   document.getElementById('reportModalTitle').textContent = `Report: ${t.name}`;

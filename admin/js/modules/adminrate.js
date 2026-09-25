@@ -116,9 +116,23 @@ function _tpTeachers() {
     return getData('teachers', []).filter(t => !t.deleted && t.status !== 'archived');
 }
 
-window.populateTeacherSelect = function(selectedId = '') {
-    const hidden = document.getElementById('subTeacher');
-    if (hidden) hidden.value = selectedId || '';
+// The teachers chosen for the subject being edited: [{ id, sections: [] }].
+// Several can be chosen - see MULTIPLE TEACHERS PER SUBJECT in admin-scoring.js.
+window._tpChosen = [];
+
+// Accepts the subject being edited, a single teacher id (older callers), or
+// nothing for a new subject.
+window.populateTeacherSelect = function(arg) {
+    // Default to the form's own picker unless the standalone modal set its own.
+    if (!window._tpHost) window._tpHost = 'teacherPicker';
+    if (arg && typeof arg === 'object') {
+        _tpChosen = (typeof subjectTeachers === 'function') ? subjectTeachers(arg) : [];
+    } else if (arg) {
+        _tpChosen = [{ id: arg, sections: [] }];
+    } else {
+        _tpChosen = [];
+    }
+    _tpSyncHidden();
     // Start on "All" so out-of-department faculty are visible without the admin
     // having to know they are being hidden. The subject's own department is
     // still sorted to the top, and the pills narrow it on demand.
@@ -130,18 +144,75 @@ window.populateTeacherSelect = function(selectedId = '') {
 window.tpSetDept = function(dept) { _tpDept = dept; renderTeacherPicker(); };
 window.tpSetSearch = function(q)  { _tpSearch = q;  renderTeacherPicker(true); };
 
-window.tpSelect = function(id) {
+// The hidden field still carries ONE id - the first teacher - for any older
+// code that reads it. saveSubject() reads _tpChosen for the full list.
+function _tpSyncHidden() {
     const hidden = document.getElementById('subTeacher');
-    if (hidden) hidden.value = id;
+    if (hidden) hidden.value = _tpChosen.length ? _tpChosen[0].id : '';
+}
+
+// Tapping a teacher adds them, or removes them if already chosen.
+window.tpSelect = function(id) {
+    if (!id) { _tpChosen = []; }
+    else if (_tpChosen.some(t => t.id === id)) { _tpChosen = _tpChosen.filter(t => t.id !== id); }
+    else { _tpChosen.push({ id: id, sections: [] }); }
+    _tpSyncHidden();
     renderTeacherPicker();
 };
 
+window.tpRemove = function(id) {
+    _tpChosen = _tpChosen.filter(t => t.id !== id);
+    _tpSyncHidden();
+    renderTeacherPicker();
+};
+
+// Tick or untick a section for one teacher. No sections ticked means the
+// teacher is rated by every student in the subject.
+window.tpToggleSection = function(id, label) {
+    const t = _tpChosen.find(x => x.id === id);
+    if (!t) return;
+    const i = t.sections.indexOf(label);
+    if (i === -1) t.sections.push(label); else t.sections.splice(i, 1);
+    renderTeacherPicker();
+};
+
+// "All students" - clears this teacher's sections, so they are rated by
+// everyone in the subject. Untick the last section and it comes back on by
+// itself, so there is no state where a teacher is rated by nobody.
+window.tpAllSections = function(id) {
+    const t = _tpChosen.find(x => x.id === id);
+    if (!t) return;
+    t.sections = [];
+    renderTeacherPicker();
+};
+
+// The sections actually present in the subject being edited, from the
+// students enrolled in it. A brand-new subject has none yet.
+function _tpSubjectSections() {
+    const editingId = window._tpSubjectId
+        || ((typeof editSubjectId !== 'undefined') ? editSubjectId : null);
+    if (!editingId || typeof _sectionLabel !== 'function') return [];
+    const sub = getData('subjects', []).find(x => x.id === editingId);
+    if (!sub) return [];
+    const byId = {};
+    getData('students', []).filter(x => !x.deleted).forEach(x => { byId[x.id] = x; });
+    const set = new Set();
+    (sub.enrolledIds || []).forEach(id => { if (byId[id]) set.add(_sectionLabel(byId[id])); });
+    return Array.from(set).filter(l => l && l !== '\u2014').sort();
+}
+
 window.renderTeacherPicker = function(keepFocus) {
-    const host = document.getElementById('teacherPicker');
+    // Either host: the Add/Edit Subject form, or the standalone
+    // Teachers & Sections modal. _tpHost says which one is open.
+    const host = document.getElementById(window._tpHost || 'teacherPicker');
     if (!host) return;
 
-    const selectedId = (document.getElementById('subTeacher') || {}).value || '';
-    const subDept    = (document.getElementById('subDept') || {}).value || '';
+    const chosenIds  = _tpChosen.map(t => t.id);
+    // From the form when it is open; from the subject itself in the standalone
+    // modal, where there is no department dropdown.
+    const subDept    = window._tpSubDept !== undefined
+        ? window._tpSubDept
+        : ((document.getElementById('subDept') || {}).value || '');
     const all        = _tpTeachers();
 
     // Counts drive the pills, so an empty department is never offered.
@@ -160,8 +231,12 @@ window.renderTeacherPicker = function(keepFocus) {
     subjects.forEach(x => {
         // Don't count the subject currently being edited - reassigning it would
         // otherwise make its own teacher look busier than they are.
-        if (editingId && x.id === editingId) return;
-        if (x.teacherId) loadOf[x.teacherId] = (loadOf[x.teacherId] || 0) + 1;
+        const skipId = window._tpSubjectId
+            || ((typeof editSubjectId !== 'undefined') ? editSubjectId : null);
+        if (skipId && x.id === skipId) return;
+        const ids = (typeof subjectTeacherIds === 'function') ? subjectTeacherIds(x)
+                  : (x.teacherId ? [x.teacherId] : []);
+        ids.forEach(id => { loadOf[id] = (loadOf[id] || 0) + 1; });
     });
 
     const q = _tpSearch.trim().toLowerCase();
@@ -183,7 +258,41 @@ window.renderTeacherPicker = function(keepFocus) {
             return String(a.name).localeCompare(String(b.name)); // then alphabetical
         });
 
-    const chosen = all.find(t => t.id === selectedId);
+    const sections = _tpSubjectSections();
+    const chosenRows = _tpChosen.map(c => {
+        const t = all.find(x => x.id === c.id) || { id: c.id, name: '(removed teacher)', tid: '', dept: '' };
+        // Who rates this teacher, stated plainly, then the choices as chips.
+        // Each teacher has their own row of chips: two teachers on one subject
+        // can take completely different sections.
+        const chosenSecs = c.sections.filter(l => sections.indexOf(l) !== -1);
+        const summary = chosenSecs.length
+            ? 'Rated by ' + chosenSecs.map(escapeHtml).join(', ')
+            : 'Rated by all students in this subject';
+        const chip = (label, on, onclick) =>
+            `<button type="button" class="tp-sec${on ? ' is-on' : ''}" onclick="${onclick}">`
+            + `${escapeHtml(label)}</button>`;
+        const secHtml = sections.length
+            ? `<div class="tp-secs">
+                 <span class="tp-secs-label">${summary}</span>
+                 <span class="tp-sec-chips">
+                   ${chip('All students', chosenSecs.length === 0, `tpAllSections('${t.id}')`)}
+                   ${sections.map(l => chip(l, c.sections.indexOf(l) !== -1,
+                       `tpToggleSection('${t.id}', '${escapeHtml(l).replace(/'/g, "&#39;")}')`)).join('')}
+                 </span>
+               </div>`
+            : `<div class="tp-secs"><span class="tp-secs-label">Rated by all students
+                 \u2014 enrol students first to split this subject by section.</span></div>`;
+        return `<div class="tp-chosen${window._tpFocusTeacher === t.id ? ' is-focus' : ''}">
+            <div>
+              <strong>${escapeHtml(t.name)}</strong>
+              <span class="tp-tid">${escapeHtml(t.tid || '')}</span>
+              ${t.dept ? `<span class="dept-tag-inline">${escapeHtml(t.dept)}</span>` : ''}
+              ${t.dept && subDept && t.dept !== subDept ? '<span class="tp-outside">outside this department</span>' : ''}
+              ${secHtml}
+            </div>
+            <button type="button" class="tp-clear" onclick="tpRemove('${t.id}')" title="Remove">&#10005;</button>
+          </div>`;
+    }).join('');
 
     // Same classes as the Teachers page filter bar (.student-dept-filter-btn /
     // .dept-filter-count) so both bars stay visually identical by construction,
@@ -200,18 +309,7 @@ window.renderTeacherPicker = function(keepFocus) {
 
     host.innerHTML = `
       <div class="tp-selected">
-        ${chosen
-          ? `<div class="tp-chosen">
-               <div>
-                 <strong>${escapeHtml(chosen.name)}</strong>
-                 <span class="tp-tid">${escapeHtml(chosen.tid)}</span>
-                 ${chosen.dept ? `<span class="dept-tag-inline">${escapeHtml(chosen.dept)}</span>` : ''}
-                 ${chosen.dept && subDept && chosen.dept !== subDept
-                    ? '<span class="tp-outside">outside this department</span>' : ''}
-               </div>
-               <button type="button" class="tp-clear" onclick="tpSelect('')" title="Clear">&#10005;</button>
-             </div>`
-          : '<div class="tp-empty">No teacher assigned yet \u2014 pick one below.</div>'}
+        ${chosenRows || '<div class="tp-empty">No teacher assigned yet \u2014 pick one or more below.</div>'}
       </div>
 
       <input type="text" id="tpSearchInput" class="form-control tp-search"
@@ -225,7 +323,7 @@ window.renderTeacherPicker = function(keepFocus) {
 
       <div class="tp-list">
         ${list.length ? list.map(t => `
-          <button type="button" class="tp-item${t.id === selectedId ? ' selected' : ''}"
+          <button type="button" class="tp-item${chosenIds.indexOf(t.id) !== -1 ? ' selected' : ''}"
                   onclick="tpSelect('${t.id}')">
             <span class="tp-avatar">${escapeHtml((t.name || '?').charAt(0).toUpperCase())}</span>
             <span class="tp-info">
@@ -237,7 +335,7 @@ window.renderTeacherPicker = function(keepFocus) {
             ${(loadOf[t.id] || 0) === 0
                 ? '<span class="tp-load free">No subjects yet</span>'
                 : `<span class="tp-load">${loadOf[t.id]} class${loadOf[t.id] === 1 ? '' : 'es'}</span>`}
-            ${t.id === selectedId ? '<span class="tp-check">\u2713</span>' : ''}
+            ${chosenIds.indexOf(t.id) !== -1 ? '<span class="tp-check">\u2713</span>' : ''}
           </button>`).join('')
         : '<div class="tp-none">No faculty match that search.</div>'}
       </div>`;
@@ -268,11 +366,166 @@ document.addEventListener('DOMContentLoaded', function() {
 // category field, the deptRole reset on demote, and the pushTeacherToCloud call.
 // admin.js's saveTeacher is now the only definition.
 
+// ============================================================
+// TEACHERS & SECTIONS - one subject, on its own
+// ------------------------------------------------------------
+// Assigning sections needs the students to be enrolled first, and
+// enrolment happens after the subject is created. Having this on
+// the row means: add subject -> enrol students -> assign each
+// teacher their sections, without reopening the whole form.
+// ============================================================
+window.openSubjectTeachersModal = function (subId) {
+    const sub = getData('subjects', []).find(s => s.id === subId);
+    if (!sub) { showToast('Subject not found.', 'error'); return; }
+
+    window._tpSubjectId = subId;              // which subject the picker is for
+    if (window._tpFocusTeacher === undefined) window._tpFocusTeacher = null;
+    window._tpHost      = 'teacherPicker2';   // render into this modal
+    window._tpSubDept   = sub.dept || '';
+
+    const label = document.getElementById('stSubjectName');
+    if (label) label.textContent = (sub.code || '') + ' \u2014 ' + (sub.name || '');
+
+    populateTeacherSelect(sub);
+    openModal('subjectTeachersModal');
+};
+
+// ============================================================
+// WHO TEACHES THIS SUBJECT
+// ------------------------------------------------------------
+// The list behind the MULTIPLE tag. Every teacher is a button
+// showing the sections they take; pressing one opens their
+// section chips. Enrol students is here too, because the two
+// jobs belong together: you enrol a section, then say which
+// teacher takes it.
+// ============================================================
+window.openSubjectTeacherList = function (subId) {
+    const sub = getData('subjects', []).find(s => s.id === subId);
+    if (!sub) { showToast('Subject not found.', 'error'); return; }
+    window._tlSubjectId = subId;
+
+    const label = document.getElementById('tlSubjectName');
+    if (label) label.textContent = (sub.code || '') + ' \u2014 ' + (sub.name || '');
+    renderSubjectTeacherList();
+    openModal('subjectTeacherListModal');
+};
+
+function renderSubjectTeacherList() {
+    const host = document.getElementById('teacherListBody');
+    if (!host) return;
+    const subId = window._tlSubjectId;
+    const sub = getData('subjects', []).find(s => s.id === subId);
+    if (!sub) { host.innerHTML = ''; return; }
+
+    const all      = getData('teachers', []).filter(t => !t.deleted);
+    const students = getData('students', []).filter(s => !s.deleted);
+    const list     = (typeof subjectTeachers === 'function') ? subjectTeachers(sub) : [];
+
+    // How many students each teacher actually rates - the point of the sections.
+    const roll = (t) => (sub.enrolledIds || []).filter(id => {
+        const st = students.find(x => x.id === id);
+        return st && (typeof teacherTeachesStudent === 'function'
+            ? teacherTeachesStudent(sub, t.id, st) : true);
+    }).length;
+
+    const enrolled = (sub.enrolledIds || []).filter(id => students.find(x => x.id === id)).length;
+
+    host.innerHTML = `
+      <div class="tl-summary">
+        <span><strong>${list.length}</strong> teacher${list.length === 1 ? '' : 's'}</span>
+        <span><strong>${enrolled}</strong> student${enrolled === 1 ? '' : 's'} enrolled</span>
+      </div>
+      ${list.length ? list.map(t => {
+        const info = all.find(x => x.id === t.id) || { name: '(removed teacher)', tid: '', dept: '' };
+        const secs = t.sections.length
+            ? t.sections.map(x => `<span class="tl-sec">${escapeHtml(x)}</span>`).join('')
+            : '<span class="tl-sec tl-sec-all">All sections</span>';
+        const n = roll(t);
+        return `
+          <button type="button" class="tl-card" onclick="tlEditTeacher('${t.id}')">
+            <span class="tl-avatar">${escapeHtml((info.name || '?').trim().charAt(0).toUpperCase())}</span>
+            <span class="tl-main">
+              <span class="tl-name">${escapeHtml(info.name)}</span>
+              <span class="tl-meta">${escapeHtml(info.tid || '')}${info.dept ? ' \u00b7 ' + escapeHtml(info.dept) : ''}</span>
+              <span class="tl-secs">${secs}</span>
+            </span>
+            <span class="tl-right">
+              <span class="tl-roll">${n} student${n === 1 ? '' : 's'}</span>
+              <span class="tl-go">Edit sections \u203a</span>
+            </span>
+          </button>`;
+      }).join('') : '<div class="tl-empty">No teachers assigned to this subject yet.</div>'}
+    `;
+}
+
+// Straight to the section chips, with this teacher first.
+window.tlEditTeacher = function (teacherId) {
+    const subId = window._tlSubjectId;
+    closeModal('subjectTeacherListModal');
+    openSubjectTeachersModal(subId);
+    window._tpFocusTeacher = teacherId;
+    renderTeacherPicker();
+};
+
+// Enrol students for the subject being viewed.
+window.tlEnroll = function () {
+    const subId = window._tlSubjectId;
+    closeModal('subjectTeacherListModal');
+    if (typeof openEnrollModal === 'function') openEnrollModal(subId);
+};
+
+// Assign or remove teachers for the subject being viewed.
+window.tlManageTeachers = function () {
+    const subId = window._tlSubjectId;
+    closeModal('subjectTeacherListModal');
+    openSubjectTeachersModal(subId);
+};
+
+window.saveSubjectTeachers = function () {
+    const subId = window._tpSubjectId;
+    const subjects = getData('subjects', []);
+    const idx = subjects.findIndex(s => s.id === subId);
+    if (idx === -1) { showToast('Subject not found.', 'error'); return; }
+
+    const teachers = _tpChosen.map(t => ({ id: t.id, sections: t.sections.slice() }));
+    subjects[idx].teachers  = teachers;
+    // Kept in step with the first teacher, for any code reading a single id.
+    subjects[idx].teacherId = teachers.length ? teachers[0].id : '';
+    setData('subjects', subjects);
+
+    addAudit('Edit Subject', `Teachers updated on ${subjects[idx].code}: ${teachers.length} assigned`);
+    showToast(teachers.length ? 'Teachers saved.' : 'All teachers removed from this subject.', 'success');
+
+    closeModal('subjectTeachersModal');
+    _tpResetHost();
+    renderSubjects();
+    // Came from the teacher list: show it again with the change applied.
+    if (window._tlSubjectId === subId) { renderSubjectTeacherList(); openModal('subjectTeacherListModal'); }
+};
+
+// Back to the Add/Edit Subject form, so opening it next still works.
+function _tpResetHost() {
+    window._tpFocusTeacher = null;
+    window._tpSubjectId = null;
+    window._tpHost      = 'teacherPicker';
+    window._tpSubDept   = undefined;
+}
+
+// Cancel or the X: same reset, without saving.
+document.addEventListener('click', function (e) {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest('#subjectTeachersModal [onclick*="closeModal"]')) _tpResetHost();
+});
+
 // Patch saveSubject to include dept + category fields
 window.saveSubject = function() {
     const code = document.getElementById('subCode').value.trim();
     const name = document.getElementById('subName').value.trim();
-    const teacherId = document.getElementById('subTeacher').value;
+    // Every chosen teacher, each with the sections they take (none = everyone).
+    const teachers  = _tpChosen.map(t => ({ id: t.id, sections: t.sections.slice() }));
+    // The first teacher, kept for any code that still reads a single teacherId.
+    const teacherId = teachers.length ? teachers[0].id : '';
     const dept = document.getElementById('subDept').value;
     const loadType = document.getElementById('subLoad').value;
     const isLabSchool = document.getElementById('subIsLab').checked;
@@ -288,28 +541,20 @@ window.saveSubject = function() {
 
     if (typeof editSubjectId !== 'undefined' && editSubjectId) {
         const idx = subjects.findIndex(s => s.id === editSubjectId);
-        // BUG FIX: when the teacher changes, reset student evaluations for this subject
-        // so students are not locked out of re-evaluating the new teacher
-        const oldTeacherId = subjects[idx].teacherId;
-        if (oldTeacherId && oldTeacherId !== teacherId) {
-            const evaluations = getData('evaluations', []);
-            const enrolledIds = subjects[idx].enrolledIds || [];
-            const filtered = evaluations.filter(e => !(e.subjectId === editSubjectId && enrolledIds.includes(e.studentId)));
-            const removed = evaluations.length - filtered.length;
-            if (removed > 0) {
-                setData('evaluations', filtered);
-                addAudit('Reset Evaluations', `Teacher changed on ${code} — cleared ${removed} student evaluation(s)`);
-                showToast(`Teacher changed — ${removed} student rating(s) reset.`, 'info');
-            }
-        }
-        Object.assign(subjects[idx], { code, name, teacherId, dept, loadType, isLabSchool, category,
-                                       courses, yearLevel });
+        // REMOVED: changing the teacher used to DELETE the subject's student
+        // evaluations, so students could rate the new teacher. That was needed
+        // only because a student could hold one rating per subject. Ratings are
+        // now kept per teacher, so adding or changing a teacher leaves every
+        // existing rating in place - and each still counts for the teacher it
+        // was given to.
+        Object.assign(subjects[idx], { code, name, teacherId, teachers, dept, loadType, isLabSchool,
+                                       category, courses, yearLevel });
         addAudit('Edit Subject', `Updated: ${name} (${code})`);
         showToast('Subject updated!', 'success');
     } else {
         subjects.push({
             id: 'sub' + Date.now(),
-            code, name, teacherId, dept,
+            code, name, teacherId, teachers, dept,
             loadType, isLabSchool, category,
             courses, yearLevel,
             enrolledIds: []
@@ -709,7 +954,7 @@ if (typeof window.renderTeachers === 'function') {
             </tr>`;
 
             facultyList.forEach(t => {
-                const teacherSubs = subjects.filter(s => s.teacherId === t.id);
+                const teacherSubs = subjects.filter(s => subjectHasTeacher(s, t.id));
                 html += `
                 <tr class="dept-group-student-row teacher-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
                     <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
@@ -779,17 +1024,35 @@ if (typeof window.renderSubjects === 'function') {
               ${escapeHtml(dept)}<span class="dept-group-count">${subs.length} subject${subs.length !== 1 ? 's' : ''}</span>
             </div></td></tr>`;
             subs.forEach(sub => {
-                const teacher = teachers.find(t => t.id === sub.teacherId);
+                // The teacher cell OPENS Teachers & Sections, so a subject with
+                // five teachers is one line you can click rather than a stack of
+                // names pushing every other row out of line.
+                const tIds = (typeof subjectTeacherIds === 'function') ? subjectTeacherIds(sub)
+                           : (sub.teacherId ? [sub.teacherId] : []);
+                const names = tIds.map(id => (teachers.find(t => t.id === id) || {}).name).filter(Boolean);
+                // Several teachers show as one MULTIPLE tag rather than a stack of
+                // names, so every row stays the same height. Click it for the list.
+                const teacherCell = names.length > 1
+                    ? `<span class="tcell-multi">MULTIPLE</span>`
+                      + `<span class="tcell-count">${names.length} teachers</span>`
+                    : names.length === 1
+                      ? `<span class="tcell-names">${escapeHtml(names[0])}</span>`
+                      : '<span class="tcell-none">Not assigned \u2014 click to add</span>';
                 const enrolled = (sub.enrolledIds || []).filter(eid => students.find(s => s.id === eid && !s.deleted)).length;
                 html += `<tr class="dept-group-student-row">
                     <td><span style="font-family:'JetBrains Mono',monospace;font-weight:700;">${escapeHtml(sub.code)}</span></td>
                     <td><strong>${escapeHtml(sub.name)}</strong></td>
                     <td>${escapeHtml(sub.dept || '—')}</td>
                     <td>${escapeHtml(sub.category || '—')}</td>
-                    <td>${teacher ? escapeHtml(teacher.name) : '<span style="color:var(--muted)">Not assigned</span>'}</td>
+                    <td class="tcell" role="button" tabindex="0"
+                        title="${names.length ? escapeHtml(names.join(', ')) + (names.length > 1 ? ' \u2014 click to see each teacher' : ' \u2014 click to manage') : 'Click to assign teachers'}"
+                        onclick="${names.length > 1 ? `openSubjectTeacherList('${sub.id}')` : `openSubjectTeachersModal('${sub.id}')`}"
+                        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${names.length > 1 ? `openSubjectTeacherList('${sub.id}')` : `openSubjectTeachersModal('${sub.id}')`};}"
+                    >${teacherCell}</td>
                     <td><span class="badge badge-primary">${enrolled} student${enrolled !== 1 ? 's' : ''}</span></td>
                     <td><div class="td-actions">
                         <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditSubjectModal('${sub.id}')"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+                        <button class="btn btn-ghost btn-icon btn-sm" onclick="openSubjectTeachersModal('${sub.id}')" title="Teachers &amp; sections"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M12 14l9-5-9-5-9 5 9 5z"/><path d="M12 14l6.16-3.42a12 12 0 01.84 4.42 12 12 0 01-7 1 12 12 0 01-7-1 12 12 0 01.84-4.42L12 14z"/></svg></button>
                         <button class="btn btn-ghost btn-icon btn-sm" onclick="openEnrollModal('${sub.id}')"><svg width="14" height="14" fill="none" stroke="var(--success)" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg></button>
                         <button class="btn btn-ghost btn-icon btn-sm" onclick="deleteSubject('${sub.id}')"><svg width="14" height="14" fill="none" stroke="var(--danger)" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>
                     </div></td>

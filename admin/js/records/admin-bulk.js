@@ -136,7 +136,13 @@ window.importBulkTeachers = function() {
     teachers.push({ id: newId, tid: r.tid, name: r.name, dept: r.dept, facultyType: r.facultyType, status:'active', deleted:false });
     r.subjectCodes.forEach(code => {
       const sub = subjects.find(s => s.code.toLowerCase() === code.toLowerCase());
-      if (sub && !sub.teacherId) sub.teacherId = newId;
+      // Add this teacher to the subject's teachers - a subject can have several.
+      if (sub) {
+        const list = subjectTeachers(sub);
+        if (!list.some(t => t.id === newId)) list.push({ id: newId, sections: [] });
+        sub.teachers = list;
+        if (!sub.teacherId) sub.teacherId = newId;
+      }
     });
     added++;
   });
@@ -242,7 +248,7 @@ window.importBulkSubjects = function() {
       const s = students.find(st => st.sid.toLowerCase() === sid.toLowerCase());
       if (s) { enrolledIds.push(s.id); enrolled++; } else badStudents.push(sid);
     });
-    subjects.push({ id: 'sub'+Date.now()+Math.random().toString(36).slice(2,6), code: r.code, name: r.name, dept: r.dept, category: r.category, loadType: r.loadType||'Regular', isLabSchool: false, teacherId, enrolledIds });
+    subjects.push({ id: 'sub'+Date.now()+Math.random().toString(36).slice(2,6), code: r.code, name: r.name, dept: r.dept, category: r.category, loadType: r.loadType||'Regular', isLabSchool: false, teacherId, teachers: teacherId ? [{ id: teacherId, sections: [] }] : [], enrolledIds });
     existing.add(r.code.toLowerCase());
     added++;
   });

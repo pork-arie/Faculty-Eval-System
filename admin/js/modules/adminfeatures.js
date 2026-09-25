@@ -16,15 +16,28 @@ window.showDeptEnrolledStudents = function(deptCode) {
     const evals = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor' && inTerm(e));
 
     const subjectMap = {};
+    const stById = {};
+    getData('students', []).forEach(s => { stById[s.id] = s; });
     allSubjects.forEach(sub => {
-        const teacher = teachers.find(t => t.id === sub.teacherId);
         (sub.enrolledIds || []).forEach(eid => {
             if (!subjectMap[eid]) subjectMap[eid] = [];
-            subjectMap[eid].push({
-                code: sub.code,
-                name: sub.name,
-                teacher: teacher ? teacher.name : 'No teacher assigned',
-                evaluated: evals.some(e => e.studentId === eid && e.subjectId === sub.id)
+            // One entry per teacher this student actually has in the subject,
+            // each with its own evaluated flag - a subject can have several.
+            const mine = subjectTeacherIds(sub).filter(tid => teacherTeachesStudent(sub, tid, stById[eid]));
+            if (!mine.length) {
+                subjectMap[eid].push({ code: sub.code, name: sub.name,
+                                       teacher: 'No teacher assigned', evaluated: false });
+                return;
+            }
+            mine.forEach(tid => {
+                const teacher = teachers.find(t => t.id === tid);
+                subjectMap[eid].push({
+                    code: sub.code,
+                    name: sub.name,
+                    teacher: teacher ? teacher.name : 'No teacher assigned',
+                    evaluated: evals.some(e => e.studentId === eid && e.subjectId === sub.id
+                                              && evalBelongsTo(e, sub, tid))
+                });
             });
         });
     });
@@ -887,7 +900,7 @@ window._liveFeedbackEvals = function() {
     return getData('evaluations', []).filter(function (e) {
         if (e.evaluatorType === 'supervisor') return false;
         const sub = subjects.find(function (x) { return x.id === e.subjectId; });
-        const tid = (sub ? sub.teacherId : null) || e.teacherId;
+        const tid = e.teacherId || (sub ? sub.teacherId : null);   // the rating's own teacher first
         const t = teachers.find(function (x) { return x.id === tid; });
         return !!t && !t.deleted;
     });
@@ -983,7 +996,7 @@ window._renderFeedbackList = function() {
 
     const filtered = allEvals.filter(ev => {
         const sub = allSubjects.find(s => s.id === ev.subjectId);
-        const teacher = allTeachers.find(t => t.id === (sub ? sub.teacherId : null) || t.id === ev.teacherId);
+        const teacher = allTeachers.find(t => t.id === (ev.teacherId || (sub ? sub.teacherId : null)));
         const dept = sub ? sub.dept : '';
 
         const matchDept = !_feedbackDeptFilter || (dept || '').toUpperCase() === _feedbackDeptFilter.toUpperCase();
@@ -1017,7 +1030,7 @@ window._renderFeedbackList = function() {
     const byTeacher = {};
     filtered.forEach(ev => {
         const sub = allSubjects.find(s => s.id === ev.subjectId);
-        const teacherId = (sub ? sub.teacherId : null) || ev.teacherId;
+        const teacherId = ev.teacherId || (sub ? sub.teacherId : null);
         const teacher = allTeachers.find(t => t.id === teacherId);
         const dept = sub ? sub.dept : 'Unknown';
         const key = teacherId || 'unknown';
@@ -1350,7 +1363,7 @@ window.printOneEvaluation = function(evalId) {
 
     const allSubjects = getData('subjects', []);
     const sub = allSubjects.find(s => s.id === ev.subjectId);
-    const teacher = getData('teachers', []).find(t => t.id === ((sub ? sub.teacherId : null) || ev.teacherId));
+    const teacher = getData('teachers', []).find(t => t.id === (ev.teacherId || (sub ? sub.teacherId : null)));
     const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s));
     const respondentNo = _anonRespondentMap(teacher ? teacher.id : ev.teacherId)[ev.id] || '—';
 
@@ -1678,12 +1691,54 @@ window.showDeptFullList = function(deptCode, type) {
     columns = ['Code', 'Name', 'Teacher', 'Enrolled'];
     rows = allSubjects.map(sub => {
       const enrolled = (sub.enrolledIds || []).filter(eid => allStudents.find(s => s.id === eid)).length;
-      const teacher = allTeachers.find(t => t.id === sub.teacherId);
-      const tName = teacher ? teacher.name : 'Unassigned';
+      const list  = (typeof subjectTeachers === 'function') ? subjectTeachers(sub) : [];
+      const names = subjectTeacherNames(sub, allTeachers);
+      const tName = names.length ? names.join(', ') : 'Unassigned';
+
+      // Several teachers: MANY, and the row opens to show them - the same
+      // drop-down the enrolled-students list uses. Stacking every name made
+      // rows different heights and told you nothing about who teaches whom.
+      const chev = '<svg class="_dfl-chev" width="11" height="11" fill="none" stroke="currentColor" '
+        + 'stroke-width="2.5" viewBox="0 0 24 24" style="vertical-align:-1px;margin-right:7px;'
+        + 'color:var(--muted,#64748b);transition:transform 0.15s;"><polyline points="9 18 15 12 9 6"/></svg>';
+
+      let teacherCell, detail = null;
+      if (names.length > 1) {
+        teacherCell = chev + '<span class="badge" style="background:#ecfdf5;color:#047857;'
+          + 'font-size:0.64rem;font-weight:800;letter-spacing:0.05em;">MANY</span>'
+          + '<span style="color:var(--muted,#64748b);font-size:0.74rem;margin-left:6px;">'
+          + names.length + ' teachers</span>';
+        detail = list.map(t => {
+          const info = allTeachers.find(x => x.id === t.id) || {};
+          const secs = t.sections.length
+            ? t.sections.map(x => '<span class="badge" style="background:#ecfdf5;color:#047857;'
+                + 'font-size:0.62rem;margin-right:4px;">' + esc(x) + '</span>').join('')
+            : '<span style="color:var(--muted,#64748b);font-size:0.72rem;">All sections</span>';
+          // How many students this teacher actually rates in this subject.
+          const roll = (sub.enrolledIds || []).filter(eid => {
+            const st = allStudents.find(x => x.id === eid);
+            return st && (typeof teacherTeachesStudent === 'function'
+              ? teacherTeachesStudent(sub, t.id, st) : true);
+          }).length;
+          return '<div style="display:flex;gap:12px;align-items:center;padding:5px 0;'
+            + 'border-bottom:1px solid var(--border,#e2e8f0);">'
+            + '<span style="flex:1;font-size:0.8rem;font-weight:600;">' + esc(info.name || '(removed teacher)') + '</span>'
+            + '<span style="min-width:170px;">' + secs + '</span>'
+            + '<span style="font-size:0.74rem;color:var(--muted,#64748b);min-width:74px;text-align:right;">'
+            + roll + ' student' + (roll === 1 ? '' : 's') + '</span>'
+            + '</div>';
+        }).join('');
+      } else {
+        teacherCell = names.length ? esc(names[0])
+                    : '<em style="color:var(--danger,#dc2626);">Unassigned</em>';
+      }
+
       return {
+        id: sub.id,
         s: ((sub.code || '') + ' ' + (sub.name || '') + ' ' + tName).toLowerCase(),
-        cells: [mono(sub.code), esc(sub.name), (teacher ? esc(tName) : '<em style="color:var(--danger,#dc2626);">Unassigned</em>'), pill(enrolled + '', '#2563eb')],
-        plain: [sub.code || '', sub.name || '', tName, enrolled]
+        cells: [mono(sub.code), esc(sub.name), teacherCell, pill(enrolled + '', '#2563eb')],
+        plain: [sub.code || '', sub.name || '', tName, enrolled],
+        detail: detail
       };
     });
   } else { // enrolled
@@ -1698,12 +1753,16 @@ window.showDeptFullList = function(deptCode, type) {
         const st = allStudents.find(s => s.id === eid);
         if (!st) return;
         if (!map[eid]) map[eid] = { st: st, subs: [] };
-        const tch = allTeachers.find(t => t.id === sub.teacherId);
-        const ev = termEvals.find(e => e.studentId === eid && e.subjectId === sub.id);
-        map[eid].subs.push({
-          code: sub.code, name: sub.name || '',
-          teacher: tch ? tch.name : 'Unassigned',
-          done: !!ev
+        const mine = subjectTeacherIds(sub).filter(tid => teacherTeachesStudent(sub, tid, st));
+        (mine.length ? mine : ['']).forEach(tid => {
+          const tch = allTeachers.find(t => t.id === tid);
+          const ev = tid && termEvals.find(e => e.studentId === eid && e.subjectId === sub.id
+                                                && evalBelongsTo(e, sub, tid));
+          map[eid].subs.push({
+            code: sub.code, name: sub.name || '',
+            teacher: tch ? tch.name : 'Unassigned',
+            done: !!ev
+          });
         });
       });
     });
@@ -1758,7 +1817,10 @@ window.showDeptFullList = function(deptCode, type) {
   const headHtml = '<tr>' + columns.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr>';
   const bodyHtml = rows.length
     ? rows.map(r => {
-        const open = r.detail ? ' onclick="_dflToggle(\'' + r.id + '\')" style="cursor:pointer;" title="Show this student\'s subjects and evaluation status"' : '';
+        // The tooltip follows the list being shown, not always students.
+        const openTip = (type === 'subjects') ? 'Show each teacher and the sections they take'
+                                             : 'Show this student\'s subjects and evaluation status';
+        const open = r.detail ? ' onclick="_dflToggle(\'' + r.id + '\')" style="cursor:pointer;" title="' + openTip + '"' : '';
         const click = r.onclick ? ' onclick="' + r.onclick + '" style="cursor:pointer;" title="Open report"' : open;
         return '<tr data-s="' + r.s + '"' + click + '>'
           + r.cells.map(c => '<td>' + c + '</td>').join('') + '</tr>'

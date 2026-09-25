@@ -56,6 +56,85 @@ function _sectionLabel(st) {
 }
 
 // One Annex C row per section. Rows always sum to the class total.
+// ============================================================
+// MULTIPLE TEACHERS PER SUBJECT
+// ------------------------------------------------------------
+// A subject can have several teachers, the way schools actually
+// run one course across sections or with a lecture and a lab.
+//
+//   sub.teachers = [ { id: 'tch1', sections: ['BSIT 1A'] },
+//                    { id: 'tch2', sections: ['BSIT 1B'] },
+//                    { id: 'tch3', sections: [] } ]
+//
+// A teacher WITH sections is rated only by students in those
+// sections (the course split across sections). A teacher with
+// NO sections is rated by every student in the subject (team
+// teaching - lecture and lab).
+//
+// Older subjects only have the single `teacherId`. They keep
+// working unchanged: subjectTeachers() treats that as a list of
+// one teacher who teaches everyone. `teacherId` is also kept in
+// step with the FIRST teacher on every save, so any code not yet
+// moved over still sees a sensible value.
+// ============================================================
+window.subjectTeachers = function (sub) {
+    // Deleted teachers are dropped here, in the one place every screen and
+    // report reads the list from. Deleting a teacher now takes them off each
+    // subject, but a subject saved before that still holds them - this keeps
+    // those subjects correct without anyone having to re-save them.
+    let live = null;
+    try {
+        if (typeof getData === 'function') {
+            live = new Set(getData('teachers', []).filter(t => !t.deleted).map(t => t.id));
+        }
+    } catch (e) { live = null; }          // can't tell? then keep everyone
+    const alive = id => !live || live.has(id);
+
+    if (sub && Array.isArray(sub.teachers) && sub.teachers.length) {
+        const seen = new Set();
+        const list = sub.teachers
+            .filter(t => t && t.id && alive(t.id) && !seen.has(t.id) && seen.add(t.id))
+            .map(t => ({ id: t.id, sections: Array.isArray(t.sections) ? t.sections.filter(Boolean) : [] }));
+        if (list.length) return list;
+        // Every teacher on the list is gone: fall through to teacherId, which
+        // may still name someone who exists.
+    }
+    return (sub && sub.teacherId && alive(sub.teacherId)) ? [{ id: sub.teacherId, sections: [] }] : [];
+};
+
+window.subjectTeacherIds = function (sub) {
+    return subjectTeachers(sub).map(t => t.id);
+};
+
+// Is this faculty member one of the subject's teachers?
+window.subjectHasTeacher = function (sub, teacherId) {
+    return !!teacherId && subjectTeacherIds(sub).indexOf(teacherId) !== -1;
+};
+
+// Every teacher's name for a subject, for tables and lists.
+window.subjectTeacherNames = function (sub, teachers) {
+    const all = teachers || getData('teachers', []);
+    return subjectTeacherIds(sub)
+        .map(id => (all.find(t => t.id === id) || {}).name)
+        .filter(Boolean);
+};
+
+// Which teacher an evaluation belongs to. New ratings record it; very old ones
+// may not, and those go to the subject's FIRST teacher - never to all of them,
+// or one rating would be counted once per teacher.
+window.evalBelongsTo = function (e, sub, teacherId) {
+    if (e.teacherId) return e.teacherId === teacherId;
+    return !!sub && (subjectTeacherIds(sub)[0] === teacherId);
+};
+
+// Does this teacher teach this student in this subject?
+window.teacherTeachesStudent = function (sub, teacherId, student) {
+    const t = subjectTeachers(sub).find(x => x.id === teacherId);
+    if (!t) return false;
+    if (!t.sections.length) return true;                 // teaches everyone
+    return !!student && t.sections.indexOf(_sectionLabel(student)) !== -1;
+};
+
 function _setSectionRows(sub, classEvals, students) {
     const byId = {};
     students.forEach(s => { byId[s.id] = s; });
@@ -63,7 +142,14 @@ function _setSectionRows(sub, classEvals, students) {
 
     const scores = {};
     classEvals.forEach(e => {
-        const label = _sectionLabel(byId[e.studentId]);
+        // Skip an evaluation whose student is no longer on file - deleted, or
+        // moved out of this class. `students` is already the non-deleted list,
+        // so a missing byId entry means the student is gone. Without this, that
+        // rating fell into the blank "\u2014" section, showed as a phantom row
+        // on Annex C, and was counted into the TOTAL.
+        const st = byId[e.studentId];
+        if (!st) return;
+        const label = _sectionLabel(st);
         (scores[label] = scores[label] || []).push(parseFloat(e.totalScore) || 0);
     });
 
@@ -120,20 +206,30 @@ window.computeWeightedSET = function(facultyId, termFilter) {
                  : ((typeof annexEvalInTerm === 'function') ? annexEvalInTerm : () => true);
 
     const students = getData('students', []).filter(s => !s.deleted);
+    const byStudent = {};
+    students.forEach(s => { byStudent[s.id] = s; });
     const subjects = getData('subjects', []).filter(s =>
-        s.teacherId === facultyId &&
+        subjectHasTeacher(s, facultyId) &&  // any of the subject's teachers
         s.loadType !== 'Overload' &&        // §4.3 — overload excluded
         !s.isLabSchool                      // §8.5 — lab school excluded
     );
 
     const evals = getData('evaluations', []).filter(e =>
         e.evaluatorType !== 'supervisor' &&
-        (!e.teacherId || e.teacherId === facultyId) &&
         inTerm(e)
     );
 
-    const classes = subjects.map((sub, idx) => {
-        const classEvals = evals.filter(e => e.subjectId === sub.id);
+    const classes = subjects.map((fullSub, idx) => {
+        // THIS teacher's part of the subject: only the students they teach.
+        // A teacher split to one section is weighed against that section alone;
+        // a teacher with no sections set teaches - and is weighed against -
+        // everyone enrolled.
+        const sub = Object.assign({}, fullSub, {
+            enrolledIds: (fullSub.enrolledIds || []).filter(id =>
+                teacherTeachesStudent(fullSub, facultyId, byStudent[id]))
+        });
+        const classEvals = evals.filter(e =>
+            e.subjectId === fullSub.id && evalBelongsTo(e, fullSub, facultyId));
         const enrolledCount = (sub.enrolledIds || [])
             .filter(id => students.some(s => s.id === id))
             .filter(id => (typeof isStudentExempted === 'function')

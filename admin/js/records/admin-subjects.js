@@ -161,6 +161,8 @@ function openAddSubjectModal() {
   setSubCourses([]);
   document.getElementById('subLoad').value = 'Regular';
   document.getElementById('subIsLab').checked = false;
+  // The form's own picker, whatever the Teachers & Sections modal last used.
+  window._tpHost = 'teacherPicker'; window._tpSubjectId = null; window._tpSubDept = undefined;
   populateTeacherSelect();
   openModal('addSubjectModal');
 }
@@ -178,7 +180,10 @@ function openEditSubjectModal(id) {
   setSubCourses(sub.courses || []);
   document.getElementById('subLoad').value = sub.loadType || 'Regular';
   document.getElementById('subIsLab').checked = sub.isLabSchool || false;
-  populateTeacherSelect(sub.teacherId);
+  // The whole subject, so every assigned teacher and their sections load -
+  // not just the first teacherId.
+  window._tpHost = 'teacherPicker'; window._tpSubjectId = null; window._tpSubDept = undefined;
+  populateTeacherSelect(sub);
   openModal('addSubjectModal');
 }
 

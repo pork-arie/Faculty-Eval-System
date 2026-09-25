@@ -267,7 +267,7 @@ window.getTeacherOverallRating = function(teacherId) {
     const classRatings = agg.classes;          // same field names the CSV export reads
     const overallSET   = agg.overallSET;
     const subjects     = getData('subjects', []).filter(s =>
-        s.teacherId === teacherId && s.loadType !== 'Overload' && !s.isLabSchool);
+        subjectHasTeacher(s, teacherId) && s.loadType !== 'Overload' && !s.isLabSchool);
     const evalCount    = agg.classes.reduce((n, c) => n + c.evalCount, 0);
 
     // SEF rating (already 0-100 from saveSEFRating formula).

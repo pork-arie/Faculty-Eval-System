@@ -110,10 +110,11 @@ function renderTrackingRows() {
       const dept = sub.dept || 'UNASSIGNED';
       if (window._trackDept && dept !== window._trackDept) return false;
       if (!q) return true;
-      const t = teachers.find(x => x.id === sub.teacherId);
+      // Search every teacher on the subject, not just the first.
+      const tNames = subjectTeacherNames(sub, teachers).join(' ').toLowerCase();
       return (sub.code || '').toLowerCase().includes(q)
           || (sub.name || '').toLowerCase().includes(q)
-          || (t && (t.name || '').toLowerCase().includes(q));
+          || tNames.includes(q);
     })
     .sort((a, b) => {
       const da = a.dept || 'UNASSIGNED', db = b.dept || 'UNASSIGNED';
@@ -138,11 +139,21 @@ function renderTrackingRows() {
       lastDept = dept;
     }
 
-    const enrolled  = (sub.enrolledIds || []).filter(eid => students.find(s => s.id === eid)).length;
-    const submitted = evals.filter(e => e.subjectId === sub.id && e.evaluatorType !== 'supervisor').length;
-    const pending   = Math.max(0, enrolled - submitted);
-    const pct       = enrolled ? Math.round((submitted / enrolled) * 100) : 0;
-    const teacher   = teachers.find(t => t.id === sub.teacherId);
+    const enrolledSt = (sub.enrolledIds || []).map(eid => students.find(s => s.id === eid)).filter(Boolean);
+    const enrolled   = enrolledSt.length;
+    // With several teachers a student owes one rating PER teacher they have, so
+    // progress is measured against ratings expected, not students enrolled.
+    // Measuring against students let "submitted" pass the enrolment - pending
+    // going negative and progress past 100% - as soon as a subject had two.
+    const tIds      = subjectTeacherIds(sub);
+    const expected  = tIds.reduce((n, tid) =>
+        n + enrolledSt.filter(st => teacherTeachesStudent(sub, tid, st)).length, 0);
+    const submitted = evals.filter(e => e.subjectId === sub.id && e.evaluatorType !== 'supervisor'
+        && enrolledSt.some(st => st.id === e.studentId)
+        && tIds.some(tid => evalBelongsTo(e, sub, tid))).length;
+    const pending   = Math.max(0, expected - submitted);
+    const pct       = expected ? Math.min(100, Math.round((submitted / expected) * 100)) : 0;
+    const teacherNames = subjectTeacherNames(sub, teachers);
 
     // Whole row opens the roster. annexSectionRoster with a blank section label
     // covers every section of the subject - the same view Annex C column (3)
@@ -150,7 +161,7 @@ function renderTrackingRows() {
     html += `<tr style="cursor:pointer;" title="Click to see who has submitted"
                  onclick="annexSectionRoster('${sub.id}', &quot;&quot;)">
       <td><strong>${escapeHtml(sub.code)}</strong> - ${escapeHtml(sub.name)}</td>
-      <td>${escapeHtml(teacher ? teacher.name : '—')}</td>
+      <td>${teacherNames.length ? teacherNames.map(n => escapeHtml(n)).join('<br>') : '—'}</td>
       <td>${enrolled}</td>
       <td><span class="badge badge-success">${submitted}</span></td>
       <td><span class="badge badge-warning">${pending}</span></td>
@@ -191,7 +202,7 @@ function _buildTeacherEvalData() {
 
     return teachers.map(teacher => {
         const teacherSubjects = subjects.filter(s =>
-            s.teacherId === teacher.id && s.loadType !== 'Overload' && !s.isLabSchool
+            subjectHasTeacher(s, teacher.id) && s.loadType !== 'Overload' && !s.isLabSchool
         );
         // §8.3 maths comes from computeWeightedSET (admin-scoring.js) — the same
         // function Annex C, Annex D and the FER use. This block used to repeat it
