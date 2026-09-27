@@ -201,7 +201,14 @@ function normalizeStudentId(raw) {
   return v;                                      // left alone, allowed to fail validation
 }
 
-function saveStudent() {
+// Set while a save is waiting on the database, so a double-click on
+// "Add Student" cannot create the same student twice.
+let _savingStudent = false;
+
+async function saveStudent() {
+  if (_savingStudent) return;
+  // Captured now: the modal stays open while the database check runs.
+  const editingId = editStudentId;
   const sid = normalizeStudentId(document.getElementById('stuId').value);
   // Write the normalized value back so the field shows what was actually saved.
   document.getElementById('stuId').value = sid;
@@ -232,86 +239,138 @@ function saveStudent() {
   // adopted keep ids like 2021001, and blocking those would mean you could not
   // fix a legacy student's section without first changing their ID - which would
   // break their login, since the app matches on sid exactly.
-  //
-  // This block sat ABOVE `const students` and referenced it, which is a temporal
-  // dead zone: editing an existing student threw "Cannot access 'students'
-  // before initialization" and Save Changes did nothing. Adding a student was
-  // unaffected because the ternary short-circuits when editStudentId is null.
-  const priorSid = editStudentId
-    ? (students.find(s => s.id === editStudentId) || {}).sid
+  const priorSid = editingId
+    ? (students.find(s => s.id === editingId) || {}).sid
     : null;
   const sidUnchanged = priorSid != null && sid === priorSid;
   if (!sidUnchanged && !STUDENT_ID_RE.test(sid)) {
     showToast(`Student ID must look like 24-00001, 2025-9902-1 or 2025-9902-12. Got "${sid}".`, 'error');
     return;
   }
-  if (editStudentId) {
-    // The duplicate check used to live only on the add path, so editing an
-    // existing student's ID to one already taken went straight through.
-    // Excludes the record being edited - otherwise saving without changing
-    // the ID would collide with itself.
-    if (students.find(s => s.sid === sid && !s.deleted && s.id !== editStudentId)) {
-      showToast('Another student already uses that ID.', 'error'); return;
-    }
-    const idx = students.findIndex(s => s.id === editStudentId);
-    // Never let a blank course overwrite one already on the record. The course
-    // <select> is filled from the chosen department, so it can come back empty
-    // for reasons that have nothing to do with the course itself - a department
-    // with no registered courses, or a course registered elsewhere. Clearing a
-    // course is done by changing it, not by saving an empty dropdown.
-    const edits = { sid, name, year, section, dept };
-    if (course) edits.course = course;
-    Object.assign(students[idx], edits, nameFields);
-    addAudit('Edit Student', `Updated: ${name} (${sid})`);
-    // The password box on the EDIT form used to write students[idx].password and
-    // say "Student updated!". For an existing account that field is not the
-    // credential - Firebase Auth is - so the change did nothing and the student
-    // carried on with their old password. Typing one here now starts a real
-    // reset through the same path as the Reset Password button.
-    if (pass) {
-      setData('students', students);
-      showToast('Student updated. Starting password reset\u2026', 'info');
-      closeModal('addStudentModal');
-      resetLoginPassword('student', students[idx], pass);
-      if (typeof renderStudents === 'function') renderStudents();
-      return;
-    }
-    showToast('Student updated!', 'success');
-  } else {
-    if (students.find(s => s.sid === sid && !s.deleted)) { showToast('ID already exists.', 'error'); return; }
-    // forceReset TRUE on every new student. The default password is their own
-    // student ID (password: pass||sid), which is printed on their ID card and
-    // used as the username - so until they change it, anyone who knows the ID
-    // can sign in as them and submit evaluations in their name. The portal and
-    // the app now refuse to go any further until the password is changed.
-    students.push(Object.assign({ id: 'stu'+Date.now(), sid, name, course, year, section, dept, password: pass||sid, status:'active', forceReset:true, deleted:false }, nameFields));
-    addAudit('Add Student', `Added: ${name} (${sid})`);
-    showToast('Student added!', 'success');
+
+  // Quick check against this browser's copy first - no database call needed
+  // for the common mistake.
+  if (students.find(s => s.sid === sid && !s.deleted && s.id !== editingId)) {
+    showToast(editingId ? 'Another student already uses that ID.' : 'ID already exists.', 'error');
+    return;
   }
-  setData('students', students);
-  closeModal('addStudentModal');
-  renderStudents();
+
+  _savingStudent = true;
+  try {
+    // Then ask the DATABASE. This browser's copy cannot see a student another
+    // laptop added a minute ago, and it may still hold records that were
+    // deleted elsewhere. Skipped when editing without changing the ID.
+    let matches = [];
+    if (!sidUnchanged) {
+      try {
+        matches = await findRosterRecords('students', 'sid', sid);
+      } catch (e) {
+        console.error('Duplicate check failed:', e);
+        showToast('Could not check the database for this ID. Check your connection and try again.', 'error');
+        return;
+      }
+      if (matches.some(m => !m.deleted && m.id !== editingId)) {
+        showToast('That ID is already in use (it may have just been added on another computer). ' +
+                  'Refresh the list to see it.', 'error');
+        return;
+      }
+    }
+
+    let changes;
+    if (editingId) {
+      const idx = students.findIndex(s => s.id === editingId);
+      if (idx === -1) { showToast('Student not found. Refresh and try again.', 'error'); return; }
+      const before = cloneRecord(students[idx]);
+      // Never let a blank course overwrite one already on the record. The course
+      // <select> is filled from the chosen department, so it can come back empty
+      // for reasons that have nothing to do with the course itself - a department
+      // with no registered courses, or a course registered elsewhere. Clearing a
+      // course is done by changing it, not by saving an empty dropdown.
+      const edits = { sid, name, year, section, dept };
+      if (course) edits.course = course;
+      Object.assign(students[idx], edits, nameFields);
+      addAudit('Edit Student', `Updated: ${name} (${sid})`);
+      // A password typed on the EDIT form goes through the proper reset path.
+      if (pass) {
+        await commitRecords('students', students, [{ before, after: students[idx] }]);
+        showToast('Student updated. Starting password reset\u2026', 'info');
+        closeModal('addStudentModal');
+        await resetLoginPassword('student', students[idx], pass);
+        if (typeof renderStudents === 'function') renderStudents(_studentSearchText());
+        return;
+      }
+      changes = [{ before, after: students[idx] }];
+      showToast('Student updated!', 'success');
+    } else {
+      // A deleted student with this ID is left exactly as it is - deleted, with
+      // its old evaluations. This creates a completely NEW person with a new
+      // document, so none of the old record's data carries over. Login and
+      // evaluation history go by the live record (see auth.js, app.js and
+      // AuthRepository), so the old one no longer gets in the way.
+      //
+      // forceReset TRUE on every new student. The default password is their
+      // own student ID, which is printed on their ID card and used as the
+      // username - so until they change it, anyone who knows the ID can sign in
+      // as them. The portal and the app refuse to go further until it changes.
+      const rec = Object.assign({ id: 'stu' + Date.now(), sid, name, course, year, section, dept,
+                                  password: pass || sid, status: 'active', forceReset: true, deleted: false },
+                                nameFields);
+      students.push(rec);
+      changes = [{ before: null, after: rec }];
+      const hadDeleted = matches.some(m => m.deleted);
+      addAudit('Add Student', `Added: ${name} (${sid})` + (hadDeleted ? ' - new record; the deleted one with this ID stays archived' : ''));
+      showToast(hadDeleted ? 'Student added as a new record. The deleted student with this ID stays archived.'
+                           : 'Student added!', 'success');
+    }
+    await commitRecords('students', students, changes);
+    closeModal('addStudentModal');
+    renderStudents(_studentSearchText());
+  } finally {
+    _savingStudent = false;
+  }
+}
+
+// What is typed in the Students search box, so a redraw keeps the filter.
+function _studentSearchText() {
+  const el = document.getElementById('studentSearchInput');
+  return el ? el.value : '';
 }
 
 function toggleStudentStatus(id) {
   const students = getData('students', []);
   const idx = students.findIndex(s => s.id === id);
+  if (idx === -1) return;
+  const before = cloneRecord(students[idx]);
   students[idx].status = students[idx].status === 'active' ? 'inactive' : 'active';
-  setData('students', students);
+  // Writes only `status` on only this student - see commitRecords (admin-core.js).
+  commitRecords('students', students, [{ before, after: students[idx] }]);
   addAudit(students[idx].status==='active'?'Activate Student':'Deactivate Student', `${students[idx].name}`);
-  renderStudents();
+  renderStudents(_studentSearchText());
   showToast(`Student ${students[idx].status}!`, 'info');
 }
 
 function deleteStudent(id) {
   const s = getData('students', []).find(s => s.id === id);
-  showConfirm('Delete Student', `Remove ${s.name}'s account? All evaluation records will be preserved.`, () => {
+  if (!s) return;
+  // Their ratings stop counting once they are deleted (getData filters them -
+  // see countedEvaluations in admin-core.js) but stay in the database.
+  const given = evaluationsSubmittedBy(id, 'student').length;
+  const givenNote = given
+      ? ` The ${given} evaluation${given === 1 ? '' : 's'} they submitted will stop counting toward` +
+        ' faculty scores (kept in the database, not deleted).'
+      : '';
+  showConfirm('Delete Student', `Remove ${s.name}'s account?${givenNote}`, () => {
     const students = getData('students', []);
-    students.find(s => s.id === id).deleted = true;
-    setData('students', students);
-    addAudit('Delete Student', `Deleted: ${s.name} (${s.sid}) — records preserved`);
-    renderStudents();
-    showToast('Student deleted. Records preserved.', 'info');
+    const idx = students.findIndex(x => x.id === id);
+    if (idx === -1) return;
+    const before = cloneRecord(students[idx]);
+    students[idx].deleted = true;
+    commitRecords('students', students, [{ before, after: students[idx] }]);
+    addAudit('Delete Student', `Deleted: ${s.name} (${s.sid})` +
+      (given ? ` — ${given} evaluation(s) no longer counted` : '') + ' — records preserved');
+    renderStudents(_studentSearchText());
+    showToast('Student deleted.' + (given ? ` Their ${given} evaluation(s) no longer count.` : '') +
+              ' Records preserved.', 'info');
   });
 }
 

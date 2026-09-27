@@ -18,7 +18,10 @@
 // will flip back every page load.
 window.migrateSupervisorRecords = function() {
   const teachers = getData('teachers', []);
-  let changed = false;
+  // Only the records this migration actually changes are written - it runs on
+  // every page load on every laptop, and pushing the whole list each time let
+  // a stale copy overwrite other laptops' edits.
+  const changes = [];
   teachers.forEach(t => {
     if (t.deleted) return;
     // Skip any record that already has an explicit facultyType — admin set it intentionally.
@@ -26,12 +29,15 @@ window.migrateSupervisorRecords = function() {
     // Only here: facultyType is missing/null (old record from before the field existed).
     // Use deptRole to decide what it should be.
     const hasSupervisorRole = t.deptRole === 'dean' || t.deptRole === 'chairperson' || t.deptRole === 'supervisor';
+    const before = cloneRecord(t);
     t.facultyType = hasSupervisorRole ? 'supervisor' : 'regular';
     if (hasSupervisorRole && !t.password) t.password = t.tid;
-    changed = true;
+    changes.push({ before, after: t });
   });
-  if (changed) {
-    setData('teachers', teachers);
+  if (changes.length) {
+    // Before the first load, passwords are not known yet and commitRecords
+    // refuses - the migration runs again once Firestore data is in.
+    commitRecords('teachers', teachers, changes);
     console.log('Migration: assigned facultyType to legacy records that lacked it.');
   }
 };
@@ -328,7 +334,9 @@ window.mcDownloadTemplate = function() {
         source = 'App supervisor';
         supName = sup.name || sup.tid || recSupId;
       } else {
-        source = 'Orphaned \u2014 supervisor removed';
+        // Not counted in any score already (see countedEvaluations); listed here
+        // so it can be permanently deleted if the office wants it gone.
+        source = 'Orphaned \u2014 supervisor removed (not counted)';
         orphan = true;
         supName = (sup && sup.name) ? (sup.name + ' (removed)') : (rec.supervisorTid || recSupId);
       }
@@ -343,7 +351,7 @@ window.mcDownloadTemplate = function() {
 
   function orphanIds() {
     const byId = teacherMap();
-    return getData('evaluations', [])
+    return getData('evaluations', [], { includeHidden: true })   // the audit sees everything
       .filter(e => e.evaluatorType === 'supervisor')
       .filter(e => classifySef(e, byId).orphan)
       .map(e => e.id);
@@ -351,7 +359,7 @@ window.mcDownloadTemplate = function() {
 
   window.openSEFAudit = function () {
     const byId = teacherMap();
-    const sef = getData('evaluations', []).filter(e => e.evaluatorType === 'supervisor');
+    const sef = getData('evaluations', [], { includeHidden: true }).filter(e => e.evaluatorType === 'supervisor');
 
     const rows = sef.map(rec => {
       const c = classifySef(rec, byId);
@@ -447,8 +455,8 @@ window.mcDownloadTemplate = function() {
 
   window.deleteSefRecord = function (id) {
     showConfirm('Delete SEF Record', 'Remove this supervisor evaluation permanently? This cannot be undone.', async () => {
-      const evals = getData('evaluations', []).filter(e => e.id !== id);
-      setData('evaluations', evals);
+      const evals = getData('evaluations', [], { includeHidden: true }).filter(e => e.id !== id);
+      setLocalData('evaluations', evals);   // local only; the delete below does the database
       try {
         if (typeof firebase !== 'undefined' && firebase.firestore) {
           await firebase.firestore().collection('evaluations').doc(id).delete();
@@ -465,8 +473,8 @@ window.mcDownloadTemplate = function() {
     const ids = orphanIds();
     if (!ids.length) { showToast('No orphaned SEF records to delete.', 'info'); return; }
     showConfirm('Delete Orphaned SEF', `Remove ${ids.length} orphaned SEF record(s)? These point to faculty or supervisors that no longer exist. This cannot be undone.`, async () => {
-      const evals = getData('evaluations', []).filter(e => !ids.includes(e.id));
-      setData('evaluations', evals);
+      const evals = getData('evaluations', [], { includeHidden: true }).filter(e => !ids.includes(e.id));
+      setLocalData('evaluations', evals);   // local only; each delete below does the database
       for (const id of ids) {
         try {
           if (typeof firebase !== 'undefined' && firebase.firestore) {

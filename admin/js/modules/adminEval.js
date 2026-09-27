@@ -482,7 +482,9 @@ window._backupKeys = ['students','teachers','subjects','evaluations','schoolYear
 window.exportSystemBackup = function() {
     const backup = { _meta: { app: 'Faculty Evaluation System', exportedAt: new Date().toISOString(), version: 1 } };
     window._backupKeys.forEach(k => {
-        const v = getData(k, null);
+        // Full data - including ratings from deleted people - so a backup
+        // never loses anything.
+        const v = getData(k, null, { includeHidden: true });
         if (v !== null && v !== undefined) backup[k] = v;
     });
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });

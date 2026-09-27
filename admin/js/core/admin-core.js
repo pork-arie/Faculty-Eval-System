@@ -42,11 +42,20 @@ window._stripPasswords = function (key, list) {
     });
 };
 
-window.getData = function(key, defaultValue = []) {
+// `opts.includeHidden` - evaluations only. By default getData('evaluations')
+// leaves out ratings whose evaluator was deleted (see countedEvaluations
+// below), so every report, score and count skips them without each screen
+// having to remember to. Pass { includeHidden: true } where the FULL list is
+// needed: backups, the SEF audit, and code that writes the list back.
+window.getData = function(key, defaultValue = [], opts) {
     const data = localStorage.getItem(key);
     if (!data) return defaultValue;
     let parsed;
     try { parsed = JSON.parse(data); } catch (e) { return defaultValue; }
+
+    if (key === 'evaluations' && Array.isArray(parsed) && !(opts && opts.includeHidden)) {
+        return window.countedEvaluations(parsed);
+    }
 
     // Old copies written before this fix still hold passwords. Take them into
     // the vault and rewrite the stored copy clean, once.
@@ -86,6 +95,237 @@ window.setData = function(key, value) {
     if (typeof syncCollectionToFirestore === 'function') {
         syncCollectionToFirestore(key, value);          // Firestore keeps the full record
     }
+};
+
+// ============================================================
+// PER-RECORD SAVES (students and teachers)
+// ------------------------------------------------------------
+// setData() pushes the WHOLE list to Firestore, so with several laptops open
+// the last one to save wins - even when its copy is hours old. A student
+// deactivated on one laptop was switched back on when another laptop added
+// someone else, and a record deleted in the Firebase console was re-uploaded
+// by whichever admin tab still had it.
+//
+// Students and teachers therefore no longer go through setData(). A save
+// updates this browser's copy (setLocalData) and writes ONLY the fields that
+// changed, on ONLY the record that changed (writeRecordToCloud). Other
+// laptops pick the change up through the live listener in dashboard.html.
+// ============================================================
+
+// localStorage only - never touches Firestore. Same password guard as
+// setData(): refuses until this session has loaded the real passwords.
+window.setLocalData = function(key, value) {
+    if (_PW_KEYS.indexOf(key) !== -1 && !window._pwVaultReady[key]) {
+        console.warn('Save of ' + key + ' blocked: passwords not loaded from Firestore yet.');
+        // Silent during start-up (migrateSupervisorRecords runs before the
+        // first load and again after it), same as setData().
+        if (window._firestoreLoadAttempted && typeof showToast === 'function') {
+            showToast('The ' + key + ' list has not finished loading from the database. ' +
+                      'Click the status badge to refresh, then try again.', 'warning');
+        }
+        return false;
+    }
+    localStorage.setItem(key, JSON.stringify(window._stripPasswords(key, value)));
+    return true;
+};
+
+// Deep copy of a record, taken BEFORE editing it, so the save can tell
+// which fields actually changed.
+window.cloneRecord = function(rec) {
+    return rec ? JSON.parse(JSON.stringify(rec)) : null;
+};
+
+// Fields that differ between two versions of a record. A field that was
+// removed is sent as a delete. `id` is the document ID, never a change.
+function _changedFields(before, after) {
+    const out = {};
+    const keys = new Set(Object.keys(before || {}).concat(Object.keys(after || {})));
+    keys.forEach(function (k) {
+        if (k === 'id') return;
+        const a = before ? before[k] : undefined;
+        const b = after[k];
+        if (JSON.stringify(a) === JSON.stringify(b)) return;
+        out[k] = (b === undefined) ? firebase.firestore.FieldValue.delete() : b;
+    });
+    return out;
+}
+
+// Writes one record. `before` null = a brand-new record (written whole);
+// otherwise only the changed fields are sent with update(), so a field
+// another laptop changed in the meantime is left alone.
+window.writeRecordToCloud = async function(col, before, after) {
+    if (!after || !after.id) return false;
+    if (typeof firebase === 'undefined' || !firebase.firestore) {
+        showToast('Saved on this device only - the database is not reachable.', 'warning');
+        return false;
+    }
+    const ref = firebase.firestore().collection(col).doc(after.id);
+    try {
+        if (!before) {
+            await ref.set(JSON.parse(JSON.stringify(after)));   // drops undefined fields
+            return true;
+        }
+        const changes = _changedFields(before, after);
+        if (!Object.keys(changes).length) return true;
+        await ref.update(changes);
+        return true;
+    } catch (e) {
+        console.error('Write to ' + col + '/' + after.id + ' failed:', e);
+        if (e && e.code === 'not-found') {
+            // Deliberately NOT recreated. The record was removed from the
+            // database by someone else; writing it back is exactly how deleted
+            // records used to come back.
+            showToast((after.name || 'This record') + ' no longer exists in the database ' +
+                      '(it was removed elsewhere). Refresh to see the current list.', 'error');
+        } else {
+            showToast('Saved on this device, but the database write failed: ' + e.message, 'error');
+        }
+        return false;
+    }
+};
+
+// Local copy + database in one call. `changes` is a list of
+// { before, after } - before null for a new record. Resolves true only when
+// every write reached Firestore.
+window.commitRecords = async function(key, list, changes) {
+    if (!window.setLocalData(key, list)) return false;
+    const results = await Promise.all(changes.map(function (c) {
+        return window.writeRecordToCloud(key, c.before, c.after);
+    }));
+    return results.every(Boolean);
+};
+
+// Same as commitRecords, for many records at once (bulk import). Writes go
+// out in batches of 400 (Firestore allows 500 per batch). Unlike
+// commitRecords, the DATABASE is written first and this browser's copy only
+// after it succeeds - otherwise a failed import would sit in the local list
+// looking done, and retrying would skip every row as "already exists".
+window.commitRecordsBatch = async function(key, list, changes) {
+    if (_PW_KEYS.indexOf(key) !== -1 && !window._pwVaultReady[key]) {
+        return window.setLocalData(key, list);          // refuses, with the message
+    }
+    if (typeof firebase === 'undefined' || !firebase.firestore) {
+        showToast('The database is not reachable - nothing was imported.', 'error');
+        return false;
+    }
+    const fdb = firebase.firestore();
+    try {
+        for (let i = 0; i < changes.length; i += 400) {
+            const batch = fdb.batch();
+            changes.slice(i, i + 400).forEach(function (c) {
+                const ref = fdb.collection(key).doc(c.after.id);
+                if (!c.before) {
+                    batch.set(ref, JSON.parse(JSON.stringify(c.after)));
+                } else {
+                    const ch = _changedFields(c.before, c.after);
+                    if (Object.keys(ch).length) batch.update(ref, ch);
+                }
+            });
+            await batch.commit();
+        }
+    } catch (e) {
+        console.error('Batch write to ' + key + ' failed:', e);
+        showToast('Import stopped: ' + e.message + '. Refresh, then import the same file again - rows that were already saved will be skipped.', 'error');
+        return false;
+    }
+    return window.setLocalData(key, list);
+};
+
+// Every record in the DATABASE with this ID - deleted ones included. Used
+// for duplicate checks, because this browser's copy cannot see a record
+// another laptop added a minute ago. Throws when the database is unreachable.
+window.findRosterRecords = async function(col, field, value) {
+    const snap = await firebase.firestore().collection(col).where(field, '==', value).get();
+    return snap.docs.map(function (d) { return Object.assign({}, d.data(), { id: d.id }); });
+};
+
+// Same, for many IDs at once (bulk import). Firestore's 'in' takes 30 values
+// per query, so the list is split into chunks. Returns { id: [records] }.
+window.findRosterRecordsMany = async function(col, field, values) {
+    const unique = Array.from(new Set(values.filter(Boolean)));
+    const byValue = {};
+    for (let i = 0; i < unique.length; i += 30) {
+        const chunk = unique.slice(i, i + 30);
+        const snap = await firebase.firestore().collection(col).where(field, 'in', chunk).get();
+        snap.docs.forEach(function (d) {
+            const rec = Object.assign({}, d.data(), { id: d.id });
+            (byValue[rec[field]] = byValue[rec[field]] || []).push(rec);
+        });
+    }
+    return byValue;
+};
+
+// ============================================================
+// RATINGS FROM DELETED PEOPLE: KEPT, BUT NOT COUNTED
+// ------------------------------------------------------------
+// When a student or supervisor is deleted, the evaluations they SUBMITTED
+// stay in Firestore - nothing is destroyed - but they stop counting in any
+// score, report, Annex, count or feedback list. If the person's record is
+// ever set back to deleted: false, their ratings count again automatically.
+//
+// Who submitted an evaluation:
+//   student SET     -> studentId        (a students document)
+//   supervisor SEF  -> supervisorId (web portal) or studentId (Android app),
+//                      a teachers document
+// A record that is MISSING altogether - removed in the Firebase console, say -
+// is treated the same as deleted. Otherwise its ratings kept counting, and
+// Annex C listed them as "Supervisor (record removed)". (Annex C section B
+// already skipped students with no record, so students and supervisors now
+// follow one rule.) Deactivated (status: inactive) people still count; that
+// is temporary.
+// ============================================================
+
+function _evaluatorOf(e) {
+    return e.evaluatorType === 'supervisor'
+        ? { col: 'teachers', id: e.supervisorId || e.studentId || '' }
+        : { col: 'students', id: e.studentId || '' };
+}
+
+// Live (not deleted) student and teacher IDs, plus whether each list is
+// loaded at all. getData('evaluations') runs dozens of times per screen, so
+// this is cached until either list actually changes.
+let _rosterIdsCache = { s: null, t: null, ids: null };
+function _liveEvaluatorIds() {
+    const rawS = localStorage.getItem('students') || '[]';
+    const rawT = localStorage.getItem('teachers') || '[]';
+    if (_rosterIdsCache.ids && _rosterIdsCache.s === rawS && _rosterIdsCache.t === rawT) {
+        return _rosterIdsCache.ids;
+    }
+    const pick = function (raw) {
+        let list = [];
+        try { list = JSON.parse(raw) || []; } catch (e) {}
+        return {
+            loaded: list.length > 0,
+            live: new Set(list.filter(function (r) { return r && r.deleted !== true; })
+                              .map(function (r) { return r.id; }))
+        };
+    };
+    const ids = { students: pick(rawS), teachers: pick(rawT) };
+    _rosterIdsCache = { s: rawS, t: rawT, ids: ids };
+    return ids;
+}
+
+// True when the evaluation's evaluator was deleted or no longer exists.
+// Nothing is hidden while a list has not loaded yet - an empty list means
+// "not known", not "everyone was removed".
+window.isEvaluationHidden = function(e) {
+    if (!e) return false;
+    const who = _evaluatorOf(e);
+    if (!who.id) return false;                  // e.g. admin-entered SEF: no evaluator
+    const roster = _liveEvaluatorIds()[who.col];
+    return roster.loaded && !roster.live.has(who.id);
+};
+
+window.countedEvaluations = function(list) {
+    return list.filter(function (e) { return !window.isEvaluationHidden(e); });
+};
+
+// Evaluations a person submitted, counted or not - for the delete message.
+window.evaluationsSubmittedBy = function(docId, kind) {
+    return getData('evaluations', [], { includeHidden: true }).filter(function (e) {
+        const who = _evaluatorOf(e);
+        return who.id === docId && who.col === (kind === 'teacher' ? 'teachers' : 'students');
+    });
 };
 
 // Explicit delete. The sync helper has no delete path.
@@ -204,9 +444,12 @@ window.resetLoginPassword = async function (kind, record, newPass) {
     const idx  = rows.findIndex(r => r.id === record.id);
     if (idx === -1) { showToast('Record not found.', 'error'); return false; }
 
+    const before = window.cloneRecord(rows[idx]);
     rows[idx].password = wanted;
     rows[idx].forceReset = false;
-    setData(col, rows);
+    // Only this record, only these two fields - not the whole list.
+    const ok = await window.commitRecords(col, rows, [{ before: before, after: rows[idx] }]);
+    if (!ok) return false;
 
     addAudit('Reset Password', record.name + ' (' + loginId + ')');
     showToast(record.name + ' can now sign in with: ' + wanted, 'success');

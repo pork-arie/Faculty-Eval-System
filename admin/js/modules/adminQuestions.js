@@ -136,7 +136,9 @@ window.questionTextFor = function (evaluation, questionId) {
 
 /** Has anything been submitted against this set? If so it must never be edited. */
 window.questionSetInUse = function (setId) {
-  return getData('evaluations', []).some(e => e.questionSetId === setId);
+  // Every stored answer counts here, hidden or not - a question set that any
+  // evaluation was answered against must not be edited out from under it.
+  return getData('evaluations', [], { includeHidden: true }).some(e => e.questionSetId === setId);
 };
 
 // ---- Editor ----------------------------------------------------------------

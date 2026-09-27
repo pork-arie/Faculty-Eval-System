@@ -14,11 +14,24 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    function ownsRecord(rec) {
+    // Whether the signed-in person owns this roster record.
+    //
+    // This used to be ONE function for both collections:
+    //     rec.sid is string ? rec.sid.lower() : rec.tid.lower()
+    // Teacher records have no `sid` field at all, and in rules reading a
+    // field that does not exist is an ERROR, not null - so for every teacher
+    // the whole check failed and a supervisor could never update their own
+    // record. That is the "no permission" on the forced password change.
+    // get() with a default reads a missing field safely.
+    function ownsRecord(rec) {                       // students
       return signedIn()
         && request.auth.token.email is string
-        && request.auth.token.email.split('@')[0].split('\\.')[0]
-           == (rec.sid is string ? rec.sid.lower() : rec.tid.lower());
+        && signedInId() == rec.get('sid', '').lower();
+    }
+    function ownsTeacherRecord(rec) {                // teachers / supervisors
+      return signedIn()
+        && request.auth.token.email is string
+        && signedInId() == rec.get('tid', '').lower();
     }
     function changesOwnPasswordOnly() {
       return request.resource.data.diff(resource.data)
@@ -65,7 +78,7 @@ service cloud.firestore {
       allow read:           if signedIn();
       allow create, delete: if isAdmin();
       allow update:         if isAdmin()
-                            || (ownsRecord(resource.data) && changesOwnTeacherPasswordOnly());
+                            || (ownsTeacherRecord(resource.data) && changesOwnTeacherPasswordOnly());
     }
 
     function rosterUidFor(id, isSupervisor) {

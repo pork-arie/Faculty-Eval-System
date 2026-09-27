@@ -494,6 +494,8 @@ window.refreshFromCloud = async function () {
   // data. Otherwise a refresh on a warm cache looks like nothing happened.
   if (typeof showSkeleton === 'function') showSkeleton(true);
   await loadFromFirebase();
+  _liveRetries = 0;
+  startRosterListeners();                    // restarts them if they had stopped
   // Put back anything the redraw did not replace (see clearStuckSkeletons).
   if (typeof clearStuckSkeletons === 'function') clearStuckSkeletons();
   showToast(_staleCollections.length
@@ -525,8 +527,129 @@ function _rerenderCurrentPage() {
   if (typeof renderDashboard === 'function') renderDashboard();
 }
 
-window.addEventListener('load', () => {
-  loadFromFirebase();
+// ============================================================
+// LIVE DATA (students, teachers, evaluations)
+// ------------------------------------------------------------
+// loadFromFirebase() reads everything ONCE. With several laptops open, each
+// kept the data as it was when the page loaded. These listeners keep this
+// browser's copy current:
+//   - a student or teacher changed on ANY laptop shows up here in a second
+//     or two;
+//   - an evaluation submitted from the app or the student portal appears
+//     on the dashboard, Evaluation Control, department and feedback pages
+//     without pressing refresh.
+//
+// The listeners only ever READ. They never call setData() - if they did,
+// every laptop would start re-uploading every other laptop's changes.
+// ============================================================
+
+// Which open pages are redrawn when each collection changes. Reports and
+// "View full list" are NOT redrawn automatically - a redraw there resets the
+// department filter the admin picked - so they get a small notice instead.
+const LIVE_COLLECTIONS = {
+  // Students and teachers also redraw the evaluation pages: deleting someone
+  // hides the ratings they gave (countedEvaluations in admin-core.js).
+  students:    { redraw: ['students', 'dashboard', 'supervisor', 'dept', 'evalControl', 'feedback'] },
+  teachers:    { redraw: ['teachers', 'dashboard', 'supervisor', 'dept', 'evalControl', 'feedback'] },
+  evaluations: { redraw: ['dashboard', 'evalControl', 'dept', 'supervisor', 'feedback'],
+                 notify: ['reports', 'rptViewAll'] }
+};
+
+let _liveUnsubs = null;
+let _liveRedrawTimer = null;
+let _liveRetries = 0;
+let _liveChanged = new Set();        // collections changed since the last redraw
+let _liveNewEvals = 0;               // evaluations added since the last redraw
+let _liveLastNotice = 0;
+
+function startRosterListeners() {
+  if (_liveUnsubs || !db) return;                        // once per page
+  // The page can finish loading before the sign-in is restored. A listener
+  // started then is refused, so wait for the user first.
+  if (!fbAuth.currentUser) {
+    const off = fbAuth.onAuthStateChanged(u => { if (u) { off(); startRosterListeners(); } });
+    return;
+  }
+  _liveUnsubs = Object.keys(LIVE_COLLECTIONS).map(col => {
+    let first = true;
+    return db.collection(col).onSnapshot(snap => {
+      const docs = snap.docs.map(d => {
+        const data = { id: d.id, ...d.data() };
+        // Same default loadFromFirebase() applies to old teacher records.
+        if (col === 'teachers' && !data.facultyType) data.facultyType = 'regular';
+        return data;
+      });
+      if (col === 'students' || col === 'teachers') {
+        // Passwords go to the in-memory vault; only a stripped copy is stored.
+        localStorage.setItem(col, JSON.stringify(_stripPasswords(col, docs)));
+        if (window._pwVaultReady) window._pwVaultReady[col] = true;
+      } else {
+        localStorage.setItem(col, JSON.stringify(docs));
+      }
+      // The first snapshot is simply everything that already exists - not news.
+      if (!first && col === 'evaluations') {
+        _liveNewEvals += snap.docChanges().filter(c => c.type === 'added').length;
+      }
+      first = false;
+      _liveChanged.add(col);
+      _scheduleLiveRedraw();
+    }, err => {
+      console.warn('Live updates for ' + col + ' stopped:', (err && (err.code || err.message)));
+      // Stop them all and try again shortly - a first-time admin's /admins doc
+      // may still be being created. Gives up after a few tries; clicking the
+      // status badge (refreshFromCloud) starts them again.
+      if (_liveUnsubs) { _liveUnsubs.forEach(u => { try { u(); } catch (e) {} }); _liveUnsubs = null; }
+      if (_liveRetries++ < 3) setTimeout(startRosterListeners, 5000);
+    });
+  });
+}
+
+// Debounced, because a bulk import or a class submitting at once fires many
+// snapshots in a row.
+function _scheduleLiveRedraw() {
+  clearTimeout(_liveRedrawTimer);
+  _liveRedrawTimer = setTimeout(_liveRedraw, 400);
+}
+
+function _liveRedraw() {
+  const el = document.querySelector('.page.active');
+  const page = el ? el.id.replace(/^page-/, '') : '';
+
+  // Never redraw under someone's cursor. If a field on this page has focus
+  // (typing a deadline, a search), wait until they are done. The Students and
+  // Teachers search boxes are the exception: those redraws replace only the
+  // table rows, never the box itself.
+  const focused = document.activeElement;
+  const typingHere = focused && el && el.contains(focused) &&
+                     /^(INPUT|TEXTAREA|SELECT)$/.test(focused.tagName) &&
+                     !/^(studentSearchInput|teacherSearchInput)$/.test(focused.id);
+  if (typingHere) { _liveRedrawTimer = setTimeout(_liveRedraw, 1500); return; }
+
+  const changed = _liveChanged;
+  const newEvals = _liveNewEvals;
+  _liveChanged = new Set();
+  _liveNewEvals = 0;
+
+  const redraw = [...changed].some(c => (LIVE_COLLECTIONS[c].redraw || []).includes(page));
+  const notify = [...changed].some(c => (LIVE_COLLECTIONS[c].notify || []).includes(page));
+  const search = id => (document.getElementById(id) || {}).value || '';
+
+  try {
+    if (redraw) {
+      if (page === 'students' && typeof renderStudents === 'function') renderStudents(search('studentSearchInput'));
+      else if (page === 'teachers' && typeof renderTeachers === 'function') renderTeachers(search('teacherSearchInput'));
+      else _rerenderCurrentPage();
+    } else if (notify && newEvals > 0 && Date.now() - _liveLastNotice > 30000) {
+      _liveLastNotice = Date.now();
+      showToast(newEvals === 1 ? 'A new evaluation came in. Reopen this report to include it.'
+                               : newEvals + ' new evaluations came in. Reopen this report to include them.', 'info');
+    }
+  } catch (e) { console.warn('Live redraw failed:', e); }
+}
+
+window.addEventListener('load', async () => {
+  await loadFromFirebase();
+  startRosterListeners();
 });
 </script>
 
@@ -668,7 +791,7 @@ window.addEventListener('load', () => {
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
           <div class="search-box" style="flex:1;min-width:200px;margin-bottom:0;">
             <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" placeholder="Search by name, ID, or department..." oninput="renderStudents(this.value)"/>
+            <input type="text" id="studentSearchInput" placeholder="Search by name, ID, or department..." oninput="renderStudents(this.value)"/>
           </div>
         </div>
         <div id="studentDeptFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>

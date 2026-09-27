@@ -788,27 +788,18 @@ window.fullSyncToFirebase = async function() {
     // retry: setData pushes them once and only console.warn's on failure, so a
     // single failed write left a saved FEDAF sitting in one browser forever.
     // This list is now every key MAP knows about.
-    const keys = ['students', 'teachers', 'subjects', 'evaluations', 'schoolYears', 'auditLog', 'evalPeriod', 'finalReports', 'customDepartments', 'customCourses', 'questionSets', 'developmentPlans', 'exemptions', 'reportSignatories'];
+    // 'students' and 'teachers' are NOT in this list any more. Every save now
+    // writes its own record (commitRecords in admin-core.js), so there is
+    // nothing left for a full push to catch up on - and pushing this laptop's
+    // whole list was how a stale copy undid another laptop's changes, or
+    // brought back a record deleted in the Firebase console.
+    // 'evaluations' is out too. Students and supervisors write those, not the
+    // admin, and the dashboard now receives them live. Re-sending every
+    // evaluation on every page load was one write per evaluation per load, and
+    // could bring back an evaluation another laptop had just deleted.
+    const keys = ['subjects', 'schoolYears', 'auditLog', 'evalPeriod', 'finalReports', 'customDepartments', 'customCourses', 'questionSets', 'developmentPlans', 'exemptions', 'reportSignatories'];
     
     for (const key of keys) {
-        // Students and teachers are stored WITHOUT their passwords (see
-        // admin-core.js). Pushing that stored copy would overwrite every record
-        // in Firestore without its password, and sign-in would fall back to each
-        // person's ID - resetting everyone at once. Read them through getData(),
-        // which puts the in-memory passwords back, and only once those passwords
-        // have actually been loaded this session.
-        if (key === 'students' || key === 'teachers') {
-            if (!window._pwVaultReady || !window._pwVaultReady[key]) {
-                console.warn(`Full sync skipped ${key}: passwords not loaded this session.`);
-                continue;
-            }
-            try {
-                await syncCollectionToFirestore(key, getData(key, []));
-            } catch(e) {
-                console.warn(`Failed to sync ${key}:`, e);
-            }
-            continue;
-        }
         const data = localStorage.getItem(key);
         if (data) {
             try {

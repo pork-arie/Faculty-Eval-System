@@ -58,37 +58,73 @@ window.previewBulkStudents = function(input) {
   reader.readAsText(file);
 };
 
-window.importBulkStudents = function() {
+// Set while an import is waiting on the database, so a double-click cannot
+// import the same file twice.
+let _importingStudents = false;
+
+window.importBulkStudents = async function() {
   const rows = window._bulkStudentData || [];
-  if (!rows.length) return;
-  const students = getData('students', []);
-  const subjects = getData('subjects', []);
-  let added = 0, skipped = 0;
-  rows.forEach(r => {
-    if (!r.sid || !r.name) { skipped++; return; }
+  if (!rows.length || _importingStudents) return;
+  _importingStudents = true;
+  const btn = document.getElementById('bulkStudentImportBtn');
+  const btnText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing\u2026'; }
+  try {
+    const students = getData('students', []);
+    const subjects = getData('subjects', []);
     // Normalize here as well - a CSV column typed as 22-1745 would otherwise
     // sail past the duplicate check and create a twin of an existing student.
-    r.sid = normalizeStudentId(r.sid);
-    if (students.find(s => s.sid === r.sid && !s.deleted)) { skipped++; return; }
-    // Already-known students are skipped above, so this only ever gates NEW
-    // records - re-importing a legacy roster is unaffected.
-    if (!STUDENT_ID_RE.test(r.sid)) { skipped++; return; }
-    const newId = 'stu' + Date.now() + Math.random().toString(36).slice(2,6);
-    // forceReset TRUE - see admin-students.js. A bulk-imported roster is the
-    // most common way students are created, so this is the path that matters.
-    students.push({ id: newId, sid: r.sid, name: r.name, course: r.course || '', year: r.year, section: String(r.section || '').trim().toUpperCase(), dept: r.dept, password: r.sid, status:'active', forceReset:true, deleted:false });
-    r.subjectCodes.forEach(code => {
-      const sub = subjects.find(s => s.code.toLowerCase() === code.toLowerCase());
-      if (sub) { if (!sub.enrolledIds) sub.enrolledIds = []; if (!sub.enrolledIds.includes(newId)) sub.enrolledIds.push(newId); }
+    rows.forEach(r => { if (r.sid) r.sid = normalizeStudentId(r.sid); });
+
+    // Look every ID up in the DATABASE, not just this browser's copy - another
+    // laptop may have added some of them. Deleted records are ignored: a
+    // re-imported ID becomes a brand-new person.
+    let inDb;
+    try {
+      inDb = await findRosterRecordsMany('students', 'sid', rows.map(r => r.sid));
+    } catch (e) {
+      console.error('Bulk duplicate check failed:', e);
+      showToast('Could not check the database for these IDs. Check your connection and try again.', 'error');
+      return;
+    }
+
+    let added = 0, skipped = 0;
+    const changes = [];
+    const seen = new Set();                       // the same ID twice in one CSV
+    rows.forEach(r => {
+      if (!r.sid || !r.name || seen.has(r.sid)) { skipped++; return; }
+      const found = inDb[r.sid] || [];
+      if (students.find(s => s.sid === r.sid && !s.deleted) || found.some(m => !m.deleted)) { skipped++; return; }
+      if (!STUDENT_ID_RE.test(r.sid)) { skipped++; return; }
+      seen.add(r.sid);
+
+      // forceReset TRUE - see admin-students.js. A bulk-imported roster is the
+      // most common way students are created, so this is the path that matters.
+      const fresh = { sid: r.sid, name: r.name, course: r.course || '', year: r.year,
+                      section: String(r.section || '').trim().toUpperCase(), dept: r.dept,
+                      password: r.sid, status: 'active', forceReset: true, deleted: false };
+      const recId = 'stu' + Date.now() + Math.random().toString(36).slice(2,6);
+      const rec = Object.assign({ id: recId }, fresh);
+      students.push(rec);
+      changes.push({ before: null, after: rec });
+      added++;
+      r.subjectCodes.forEach(code => {
+        const sub = subjects.find(s => s.code.toLowerCase() === code.toLowerCase());
+        if (sub) { if (!sub.enrolledIds) sub.enrolledIds = []; if (!sub.enrolledIds.includes(recId)) sub.enrolledIds.push(recId); }
+      });
     });
-    added++;
-  });
-  setData('students', students);
-  setData('subjects', subjects);
-  addAudit('Bulk Upload Students', `Imported ${added} students, skipped ${skipped}`);
-  closeModal('bulkUploadStudentModal');
-  renderStudents();
-  showToast(`Imported ${added} students! ${skipped ? skipped + ' skipped.' : ''}`, 'success');
+
+    const ok = await commitRecordsBatch('students', students, changes);
+    if (!ok) return;
+    setData('subjects', subjects);
+    addAudit('Bulk Upload Students', `Imported ${added} students, skipped ${skipped}`);
+    closeModal('bulkUploadStudentModal');
+    renderStudents();
+    showToast(`Imported ${added} students! ${skipped ? skipped + ' skipped.' : ''}`, 'success');
+  } finally {
+    _importingStudents = false;
+    if (btn) { btn.disabled = false; btn.textContent = btnText; }
+  }
 };
 
 window.previewBulkTeachers = function(input) {
@@ -123,35 +159,67 @@ window.previewBulkTeachers = function(input) {
   reader.readAsText(file);
 };
 
-window.importBulkTeachers = function() {
+let _importingTeachers = false;
+
+window.importBulkTeachers = async function() {
   const rows = window._bulkTeacherData || [];
-  if (!rows.length) return;
-  const teachers = getData('teachers', []);
-  const subjects = getData('subjects', []);
-  let added = 0, skipped = 0;
-  rows.forEach(r => {
-    if (!r.tid || !r.name) { skipped++; return; }
-    if (teachers.find(t => t.tid === r.tid && !t.deleted)) { skipped++; return; }
-    const newId = 'tch' + Date.now() + Math.random().toString(36).slice(2,6);
-    teachers.push({ id: newId, tid: r.tid, name: r.name, dept: r.dept, facultyType: r.facultyType, status:'active', deleted:false });
-    r.subjectCodes.forEach(code => {
-      const sub = subjects.find(s => s.code.toLowerCase() === code.toLowerCase());
-      // Add this teacher to the subject's teachers - a subject can have several.
-      if (sub) {
-        const list = subjectTeachers(sub);
-        if (!list.some(t => t.id === newId)) list.push({ id: newId, sections: [] });
-        sub.teachers = list;
-        if (!sub.teacherId) sub.teacherId = newId;
-      }
+  if (!rows.length || _importingTeachers) return;
+  _importingTeachers = true;
+  const btn = document.getElementById('bulkTeacherImportBtn');
+  const btnText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing\u2026'; }
+  try {
+    const teachers = getData('teachers', []);
+    const subjects = getData('subjects', []);
+
+    // Same database check as the student import.
+    let inDb;
+    try {
+      inDb = await findRosterRecordsMany('teachers', 'tid', rows.map(r => r.tid));
+    } catch (e) {
+      console.error('Bulk duplicate check failed:', e);
+      showToast('Could not check the database for these IDs. Check your connection and try again.', 'error');
+      return;
+    }
+
+    let added = 0, skipped = 0;
+    const changes = [];
+    const seen = new Set();
+    rows.forEach(r => {
+      if (!r.tid || !r.name || seen.has(r.tid)) { skipped++; return; }
+      const found = inDb[r.tid] || [];
+      if (teachers.find(t => t.tid === r.tid && !t.deleted) || found.some(m => !m.deleted)) { skipped++; return; }
+      seen.add(r.tid);
+
+      // Always a new record - a deleted teacher with this ID stays deleted.
+      const recId = 'tch' + Date.now() + Math.random().toString(36).slice(2,6);
+      const rec = { id: recId, tid: r.tid, name: r.name, dept: r.dept, facultyType: r.facultyType, status: 'active', deleted: false };
+      teachers.push(rec);
+      changes.push({ before: null, after: rec });
+      added++;
+      r.subjectCodes.forEach(code => {
+        const sub = subjects.find(s => s.code.toLowerCase() === code.toLowerCase());
+        // Add this teacher to the subject's teachers - a subject can have several.
+        if (sub) {
+          const list = subjectTeachers(sub);
+          if (!list.some(t => t.id === recId)) list.push({ id: recId, sections: [] });
+          sub.teachers = list;
+          if (!sub.teacherId) sub.teacherId = recId;
+        }
+      });
     });
-    added++;
-  });
-  setData('teachers', teachers);
-  setData('subjects', subjects);
-  addAudit('Bulk Upload Teachers', `Imported ${added} teachers, skipped ${skipped}`);
-  closeModal('bulkUploadTeacherModal');
-  renderTeachers();
-  showToast(`Imported ${added} teachers! ${skipped ? skipped + ' skipped.' : ''}`, 'success');
+
+    const ok = await commitRecordsBatch('teachers', teachers, changes);
+    if (!ok) return;
+    setData('subjects', subjects);
+    addAudit('Bulk Upload Teachers', `Imported ${added} teachers, skipped ${skipped}`);
+    closeModal('bulkUploadTeacherModal');
+    renderTeachers();
+    showToast(`Imported ${added} teachers! ${skipped ? skipped + ' skipped.' : ''}`, 'success');
+  } finally {
+    _importingTeachers = false;
+    if (btn) { btn.disabled = false; btn.textContent = btnText; }
+  }
 };
 
 // ===== BULK UPLOAD SUBJECTS =====

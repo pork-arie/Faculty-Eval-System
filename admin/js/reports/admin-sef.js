@@ -82,7 +82,8 @@ window.saveSEFRating = function(teacherId, setId) {
 
     // Percentage of the maximum possible (5 per item), not a fixed /75.
     const computedRating = ((totalScore / (items.length * 5)) * 100).toFixed(2);
-    const evals = getData('evaluations', []);
+    // Full list: it is written back whole just below.
+    const evals = getData('evaluations', [], { includeHidden: true });
     evals.push({
         id: 'sef_' + Date.now(),
         teacherId: teacherId,
@@ -188,9 +189,10 @@ window.softDeleteTeacher = function(id) {
     if (!t) return;
 
     showConfirm('Archive Teacher', `Archive ${t.name}? Evaluation history will be preserved.`, () => {
+        const before = cloneRecord(t);
         t.deleted = true;
         t.status = 'archived';
-        setData('teachers', teachers);
+        commitRecords('teachers', teachers, [{ before, after: t }]);
         addAudit('Archive Teacher', `Archived: ${t.name}`);
         if (typeof currentDept !== 'undefined' && currentDept && typeof renderDeptPage === 'function') renderDeptPage(currentDept);
         renderTeachers();

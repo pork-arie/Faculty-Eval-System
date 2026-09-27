@@ -645,15 +645,23 @@ window.forceSetSupervisor = function(id) {
   if (idx === -1) return;
   const t = teachers[idx];
   if (!confirm('Move "' + t.name + '" to the Supervisors table?\nThis will set their Faculty Type to Supervisor and cannot be undone from here (use Edit to change back).')) return;
+  const before = cloneRecord(teachers[idx]);
   teachers[idx].facultyType = 'supervisor';
   if (!teachers[idx].password) teachers[idx].password = t.tid;
-  setData('teachers', teachers);
+  commitRecords('teachers', teachers, [{ before, after: teachers[idx] }]);
   addAudit('Fix Supervisor', 'Moved ' + t.name + ' (' + t.tid + ') to Supervisor table');
   showToast(t.name + ' moved to Supervisors table!', 'success');
   renderTeachers();
 };
 
+// Set while a save is waiting on the database, so a double-click on
+// "Add Teacher" cannot create the same teacher twice.
+let _savingTeacher = false;
+
 async function saveTeacher() {
+  if (_savingTeacher) return;
+  // Captured now: the modal stays open while the database check runs.
+  const editingId = editTeacherId;
   const tid = document.getElementById('tchId').value.trim();
   const nameParts = tchNameParts();
   const name = buildName(nameParts);
@@ -696,134 +704,147 @@ async function saveTeacher() {
   // Read the optional supervisor password field
   const pwFieldVal = (document.getElementById('tchPassword') || {}).value?.trim() || '';
 
-  if (editTeacherId) {
-    // Same gap as students: the tid duplicate check only ran when adding.
-    if (teachers.find(t => t.tid === tid && !t.deleted && t.id !== editTeacherId)) {
-      showToast('Another teacher already uses that ID.', 'error'); return;
-    }
-    const idx = teachers.findIndex(t => t.id === editTeacherId);
-    const existing = teachers[idx];
-    teachers[idx].tid = tid;
-    teachers[idx].name = name;
-    Object.assign(teachers[idx], nameFields);
-    teachers[idx].dept = dept;
-    // null means "no such field on the form" - keep what is already stored.
-    if (category !== null) teachers[idx].category = category;
-    teachers[idx].rank = rank;
-    teachers[idx].facultyType = facultyType;
-    teachers[idx].deptRole = deptRole;
-    teachers[idx].supervisedDepts = supervisedDepts;
-    // Home department follows the first supervisory assignment when one exists,
-    // so a dean moved to a new college does not keep pointing at the old one.
-    if (supervisedDepts.length) teachers[idx].dept = supervisedDepts[0].dept;
-
-    if (facultyType === 'supervisor') {
-      if (pwFieldVal) {
-        // The password box cannot change the credential - Firebase Auth holds it
-        // (see resetLoginPassword in admin-core.js). Saving the other edits here
-        // and routing the password through the proper path stops the modal from
-        // reporting a change the supervisor will never see.
-        teachers[idx].password = '';
-        setData('teachers', teachers);
-        addAudit('Edit Supervisor', `Updated: ${name} (${tid}) — password reset requested`);
-        resetLoginPassword('supervisor', teachers[idx], pwFieldVal);
-        closeModal('addTeacherModal');
-        renderTeachers();
-        return;
-      } else {
-        // Keep existing password; if none exists (e.g. promoted from regular), default to TID
-        if (!existing.password) teachers[idx].password = tid;
-        addAudit('Edit Supervisor', `Updated: ${name} (${tid})`);
-        showToast('Supervisor updated!', 'success');
-      }
-    } else {
-      // Demoted to regular — clear supervisor password
-      delete teachers[idx].password;
-      addAudit('Edit Teacher', `Updated: ${name} (${tid}) — now regular faculty`);
-      showToast('Teacher updated!', 'success');
-    }
-  } else {
-    if (teachers.find(t => t.tid === tid && !t.deleted)) {
-      showToast('Teacher ID already exists.', 'error');
-      return;
-    }
-
-    const newTeacher = {
-      id: 'tch'+Date.now(),
-      tid,
-      name,
-      ...nameFields,
-      // Home department follows the first supervisory assignment for supervisors.
-      dept: supervisedDepts.length ? supervisedDepts[0].dept : dept,
-      category: category || '',
-      rank,
-      facultyType,
-      deptRole,
-      supervisedDepts,
-      status:'active',
-      deleted: false
-    };
-
-    if (facultyType === 'supervisor') {
-      // Use the password field value if provided, otherwise default to TID
-      newTeacher.password = pwFieldVal || tid;
-      // The password is deliberately NOT written to the audit log. The log is
-      // stored in Firestore and mirrored to localStorage, so a password put
-      // here would be readable long after the account was created, by anyone
-      // who can read the log. The toast below still shows it once, to the
-      // admin who just created the account and has to pass it on.
-      addAudit('Add Supervisor', `Added: ${name} (${tid})`);
-      showToast(`Supervisor added! Login password: ${newTeacher.password}`, 'success');
-    } else {
-      addAudit('Add Teacher', `Added: ${name} (${tid})`);
-      showToast('Teacher added!', 'success');
-    }
-
-    teachers.push(newTeacher);
-  }
-  
-  setData('teachers', teachers);
-
-  // Make sure a supervisor actually reaches Firestore so they can sign in to the
-  // app. setData()'s sync is fire-and-forget and can fail silently (e.g. locked
-  // Firestore rules); here we await an explicit write and report the real result.
-  if (facultyType === 'supervisor') {
-    const justSaved = getData('teachers', []).find(t => t.tid === tid && !t.deleted);
-    if (justSaved) await pushTeacherToCloud(justSaved);
-  }
-
-  closeModal('addTeacherModal');
-  
-  const searchInput = document.getElementById('teacherSearchInput');
-  if (searchInput) searchInput.value = '';
-  
-  const teacherDeptBar = document.getElementById('teacherDeptFilterBar');
-  if (teacherDeptBar) teacherDeptBar.dataset.active = '';
-  
-  renderTeachers();
-}
-
-async function pushTeacherToCloud(teacher) {
-  if (typeof firebase === 'undefined' || !firebase.firestore) {
-    showToast('Saved locally. (Firebase not loaded — open online to sync.)', 'info');
+  // Quick check against this browser's copy first.
+  if (teachers.find(t => t.tid === tid && !t.deleted && t.id !== editingId)) {
+    showToast(editingId ? 'Another teacher already uses that ID.' : 'Teacher ID already exists.', 'error');
     return;
   }
+  const priorTid = editingId ? (teachers.find(t => t.id === editingId) || {}).tid : null;
+  const tidUnchanged = priorTid != null && tid === priorTid;
+
+  _savingTeacher = true;
   try {
-    await firebase.firestore().collection('teachers').doc(teacher.id).set(teacher);
-    showToast(`${teacher.name} synced to cloud — they can now sign in to the app.`, 'success');
-  } catch (e) {
-    showToast(`⚠️ Saved locally but CLOUD SYNC FAILED: ${e.message}. The supervisor will NOT be able to log in until this is fixed — check your Firestore security rules.`, 'error');
-    console.error('Supervisor cloud sync failed:', e);
+    // Then ask the DATABASE - another laptop may have added this ID, and this
+    // browser may still hold records deleted elsewhere.
+    let matches = [];
+    if (!tidUnchanged) {
+      try {
+        matches = await findRosterRecords('teachers', 'tid', tid);
+      } catch (e) {
+        console.error('Duplicate check failed:', e);
+        showToast('Could not check the database for this ID. Check your connection and try again.', 'error');
+        return;
+      }
+      if (matches.some(m => !m.deleted && m.id !== editingId)) {
+        showToast('That Teacher ID is already in use (it may have just been added on another computer). ' +
+                  'Refresh the list to see it.', 'error');
+        return;
+      }
+    }
+
+    let changes;
+    let savedRecord;
+    if (editingId) {
+      const idx = teachers.findIndex(t => t.id === editingId);
+      if (idx === -1) { showToast('Teacher not found. Refresh and try again.', 'error'); return; }
+      const existing = teachers[idx];
+      const before = cloneRecord(existing);
+      teachers[idx].tid = tid;
+      teachers[idx].name = name;
+      Object.assign(teachers[idx], nameFields);
+      teachers[idx].dept = dept;
+      // null means "no such field on the form" - keep what is already stored.
+      if (category !== null) teachers[idx].category = category;
+      teachers[idx].rank = rank;
+      teachers[idx].facultyType = facultyType;
+      teachers[idx].deptRole = deptRole;
+      teachers[idx].supervisedDepts = supervisedDepts;
+      // Home department follows the first supervisory assignment when one exists,
+      // so a dean moved to a new college does not keep pointing at the old one.
+      if (supervisedDepts.length) teachers[idx].dept = supervisedDepts[0].dept;
+
+      if (facultyType === 'supervisor') {
+        if (pwFieldVal) {
+          // Save the other edits, then route the password through the proper
+          // reset path (resetLoginPassword in admin-core.js).
+          await commitRecords('teachers', teachers, [{ before, after: teachers[idx] }]);
+          addAudit('Edit Supervisor', `Updated: ${name} (${tid}) — password reset requested`);
+          await resetLoginPassword('supervisor', teachers[idx], pwFieldVal);
+          closeModal('addTeacherModal');
+          renderTeachers(_teacherSearchText());
+          return;
+        } else {
+          // Keep existing password; if none exists (e.g. promoted from regular), default to TID
+          if (!before.password) teachers[idx].password = tid;
+          addAudit('Edit Supervisor', `Updated: ${name} (${tid})`);
+        }
+      } else {
+        // Demoted to regular — clear supervisor password
+        delete teachers[idx].password;
+        addAudit('Edit Teacher', `Updated: ${name} (${tid}) — now regular faculty`);
+      }
+      changes = [{ before, after: teachers[idx] }];
+      savedRecord = teachers[idx];
+    } else {
+      const fresh = {
+        tid,
+        name,
+        ...nameFields,
+        // Home department follows the first supervisory assignment for supervisors.
+        dept: supervisedDepts.length ? supervisedDepts[0].dept : dept,
+        category: category || '',
+        rank,
+        facultyType,
+        deptRole,
+        supervisedDepts,
+        status:'active',
+        deleted: false
+      };
+      // Use the password field value if provided, otherwise default to TID.
+      // The password is deliberately NOT written to the audit log (it is
+      // readable by anyone who can read the log); the toast shows it once.
+      if (facultyType === 'supervisor') fresh.password = pwFieldVal || tid;
+
+      // A deleted teacher with this ID stays deleted and untouched - this is a
+      // brand-new record (same rule as students).
+      const rec = Object.assign({ id: 'tch' + Date.now() }, fresh);
+      teachers.push(rec);
+      changes = [{ before: null, after: rec }];
+      savedRecord = rec;
+      addAudit(facultyType === 'supervisor' ? 'Add Supervisor' : 'Add Teacher', `Added: ${name} (${tid})`);
+    }
+
+    // Awaited, so the toast reports what actually reached the database. A
+    // supervisor who is not in Firestore cannot sign in to the app.
+    const ok = await commitRecords('teachers', teachers, changes);
+    if (ok) {
+      if (!editingId && facultyType === 'supervisor') {
+        showToast(`Supervisor saved! Login password: ${savedRecord.password}`, 'success');
+      } else {
+        showToast(editingId ? (facultyType === 'supervisor' ? 'Supervisor updated!' : 'Teacher updated!')
+                            : 'Teacher added!', 'success');
+      }
+    }
+
+    closeModal('addTeacherModal');
+    
+    const searchInput = document.getElementById('teacherSearchInput');
+    if (searchInput) searchInput.value = '';
+    
+    const teacherDeptBar = document.getElementById('teacherDeptFilterBar');
+    if (teacherDeptBar) teacherDeptBar.dataset.active = '';
+    
+    renderTeachers();
+  } finally {
+    _savingTeacher = false;
   }
+}
+
+// What is typed in the Teachers search box, so a redraw keeps the filter.
+function _teacherSearchText() {
+  const el = document.getElementById('teacherSearchInput');
+  return el ? el.value : '';
 }
 
 function toggleTeacherStatus(id) {
   const teachers = getData('teachers', []);
   const idx = teachers.findIndex(t => t.id === id);
+  if (idx === -1) return;
+  const before = cloneRecord(teachers[idx]);
   teachers[idx].status = teachers[idx].status === 'active' ? 'inactive' : 'active';
-  setData('teachers', teachers);
+  commitRecords('teachers', teachers, [{ before, after: teachers[idx] }]);
   addAudit(teachers[idx].status==='active'?'Activate Teacher':'Deactivate Teacher', teachers[idx].name);
-  renderTeachers();
+  renderTeachers(_teacherSearchText());
   showToast(`Teacher ${teachers[idx].status}!`, 'info');
 }
 
@@ -839,10 +860,22 @@ function deleteTeacher(id) {
         ' and will be removed from them.'
       : '';
 
-  showConfirm('Delete Teacher', `Remove ${t.name}?${note} All evaluation records will be preserved.`, () => {
+  // SEF ratings this supervisor GAVE stop counting once they are deleted
+  // (getData filters them - see countedEvaluations in admin-core.js). They
+  // stay in the database; nothing is destroyed.
+  const sefGiven = evaluationsSubmittedBy(id, 'teacher').length;
+  const sefNote = sefGiven
+      ? ` The ${sefGiven} SEF rating${sefGiven === 1 ? '' : 's'} they gave to faculty will stop counting` +
+        ' toward faculty scores (kept in the database, not deleted).'
+      : '';
+
+  showConfirm('Delete Teacher', `Remove ${t.name}?${note}${sefNote} Evaluations OF this teacher are kept.`, () => {
     const teachers = getData('teachers', []);
-    teachers.find(t => t.id === id).deleted = true;
-    setData('teachers', teachers);
+    const tIdx = teachers.findIndex(x => x.id === id);
+    if (tIdx === -1) return;
+    const before = cloneRecord(teachers[tIdx]);
+    teachers[tIdx].deleted = true;
+    commitRecords('teachers', teachers, [{ before, after: teachers[tIdx] }]);
 
     // Take them off every subject as well. Marking the teacher deleted used to
     // leave them on the subject, so the subject still counted them - a subject
@@ -867,11 +900,12 @@ function deleteTeacher(id) {
       if (changed) setData('subjects', subjects);
     }
 
-    addAudit('Delete Teacher', `Deleted: ${t.name} — removed from ${onSubjects.length} subject(s), records preserved`);
+    addAudit('Delete Teacher', `Deleted: ${t.name} — removed from ${onSubjects.length} subject(s)` +
+      (sefGiven ? `, ${sefGiven} SEF rating(s) they gave no longer counted` : '') + ', records preserved');
     renderTeachers();
     if (typeof renderSubjects === 'function') renderSubjects();
-    showToast(onSubjects.length
-      ? `Teacher deleted and removed from ${onSubjects.length} subject(s). Records preserved.`
-      : 'Teacher deleted. Records preserved.', 'info');
+    showToast('Teacher deleted' +
+      (onSubjects.length ? ` and removed from ${onSubjects.length} subject(s)` : '') +
+      (sefGiven ? `. Their ${sefGiven} SEF rating(s) no longer count.` : '.') + ' Records preserved.', 'info');
   });
 }

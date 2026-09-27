@@ -915,11 +915,14 @@ window._orphanFeedbackEvals = function() {
 
 window.deleteFeedbackEntry = async function(evalId) {
     if (!confirm('Delete this evaluation permanently?\n\nThe rating and comment are removed and the faculty average is recomputed without them. This cannot be undone.')) return;
-    const evals = getData('evaluations', []);
+    const evals = getData('evaluations', [], { includeHidden: true });   // written back below
     const idx = evals.findIndex(function (e) { return e.id === evalId; });
     if (idx === -1) { showToast('Already removed.', 'info'); return; }
     evals.splice(idx, 1);
-    setData('evaluations', evals);
+    // This browser's copy only. The document itself is deleted just below;
+    // pushing the whole evaluations list as well used to rewrite every other
+    // evaluation too, and could put back ones another laptop had deleted.
+    setLocalData('evaluations', evals);
     try { await deleteDocFromFirestore('evaluations', evalId); }
     catch (e) { console.warn('Firestore delete failed:', e && e.message); }
     addAudit('Delete Evaluation', 'Evaluation ' + evalId + ' removed');
@@ -934,7 +937,8 @@ window.purgeOrphanFeedback = async function() {
         + ' belonging to removed faculty?\n\nThis cannot be undone. Print any Annex C you still need first.')) return;
 
     const ids = new Set(orphans.map(function (e) { return e.id; }));
-    setData('evaluations', getData('evaluations', []).filter(function (e) { return !ids.has(e.id); }));
+    // Local copy only - each document is deleted individually below.
+    setLocalData('evaluations', getData('evaluations', [], { includeHidden: true }).filter(function (e) { return !ids.has(e.id); }));
     for (const id of ids) {
         try { await deleteDocFromFirestore('evaluations', id); }
         catch (e) { console.warn('Firestore delete failed for', id, e && e.message); }
