@@ -401,6 +401,7 @@ function renderEnrollPicker() {
 
   // Search overrides the drill-down entirely and looks across the whole pool.
   // This is the manual path for an irregular student who is not in the cohort.
+  _enrollUpdateCount();   // footer count was stuck at 0 until a box was ticked
   if (search) {
     const hits = pool.filter(st =>
       (st.name || '').toLowerCase().includes(search) || (st.sid || '').toLowerCase().includes(search));

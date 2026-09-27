@@ -135,6 +135,34 @@ window.teacherTeachesStudent = function (sub, teacherId, student) {
     return !!student && t.sections.indexOf(_sectionLabel(student)) !== -1;
 };
 
+// Enrolled students that NO teacher takes, once sections are split.
+// If every teacher is limited to specific sections, a student outside all of
+// them has nobody to rate - they should not stay enrolled. If any teacher is
+// on "All students", everyone is covered and nothing is removed.
+// `teachers` is the list about to be saved: [{ id, sections: [] }].
+// Returns { keep: [ids], removed: [students] }.
+window.splitUncoveredStudents = function (sub, teachers) {
+    const ids = (sub && sub.enrolledIds) || [];
+    const list = Array.isArray(teachers) ? teachers : [];
+    if (!list.length || list.some(t => !t.sections || !t.sections.length)) {
+        return { keep: ids.slice(), removed: [] };
+    }
+    const covered = new Set();
+    list.forEach(t => t.sections.forEach(l => covered.add(l)));
+
+    const byId = {};
+    getData('students', []).forEach(s => { byId[s.id] = s; });
+
+    const keep = [], removed = [];
+    ids.forEach(id => {
+        const st = byId[id];
+        // Unknown/deleted records are left alone - not ours to judge here.
+        if (!st || st.deleted || covered.has(_sectionLabel(st))) keep.push(id);
+        else removed.push(st);
+    });
+    return { keep, removed };
+};
+
 function _setSectionRows(sub, classEvals, students) {
     const byId = {};
     students.forEach(s => { byId[s.id] = s; });

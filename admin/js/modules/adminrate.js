@@ -487,21 +487,55 @@ window.saveSubjectTeachers = function () {
     const idx = subjects.findIndex(s => s.id === subId);
     if (idx === -1) { showToast('Subject not found.', 'error'); return; }
 
-    const teachers = _tpChosen.map(t => ({ id: t.id, sections: t.sections.slice() }));
-    subjects[idx].teachers  = teachers;
-    // Kept in step with the first teacher, for any code reading a single id.
-    subjects[idx].teacherId = teachers.length ? teachers[0].id : '';
-    setData('subjects', subjects);
+    const teachers = _tpTeachersToSave();
+    const { keep, removed } = splitUncoveredStudents(subjects[idx], teachers);
 
-    addAudit('Edit Subject', `Teachers updated on ${subjects[idx].code}: ${teachers.length} assigned`);
-    showToast(teachers.length ? 'Teachers saved.' : 'All teachers removed from this subject.', 'success');
+    const commit = () => {
+        subjects[idx].teachers  = teachers;
+        // Kept in step with the first teacher, for any code reading a single id.
+        subjects[idx].teacherId = teachers.length ? teachers[0].id : '';
+        // Students outside every chosen section are unenrolled - nobody rates them.
+        subjects[idx].enrolledIds = keep;
+        setData('subjects', subjects);
 
-    closeModal('subjectTeachersModal');
-    _tpResetHost();
-    renderSubjects();
-    // Came from the teacher list: show it again with the change applied.
-    if (window._tlSubjectId === subId) { renderSubjectTeacherList(); openModal('subjectTeacherListModal'); }
+        addAudit('Edit Subject', `Teachers updated on ${subjects[idx].code}: ${teachers.length} assigned`
+            + (removed.length ? `, ${removed.length} student(s) outside the chosen sections unenrolled` : ''));
+        showToast(teachers.length
+            ? 'Teachers saved.' + (removed.length ? ` ${removed.length} student(s) unenrolled.` : '')
+            : 'All teachers removed from this subject.', 'success');
+
+        closeModal('subjectTeachersModal');
+        _tpResetHost();
+        renderSubjects();
+        // Came from the teacher list: show it again with the change applied.
+        if (window._tlSubjectId === subId) { renderSubjectTeacherList(); openModal('subjectTeacherListModal'); }
+    };
+
+    if (removed.length) _tpConfirmUnenrol(removed, commit);
+    else commit();
 };
+
+// The chosen teachers as they will be saved. Sections no longer present in the
+// subject (their students were unenrolled) are dropped, so what is saved matches
+// the chips on screen - otherwise a teacher could show "All students" while
+// actually being saved against a section with nobody in it.
+function _tpTeachersToSave() {
+    const present = _tpSubjectSections();
+    return _tpChosen.map(t => ({
+        id: t.id,
+        sections: present.length ? t.sections.filter(l => present.indexOf(l) !== -1) : t.sections.slice()
+    }));
+}
+
+// Ask before unenrolling students that no teacher's sections cover.
+function _tpConfirmUnenrol(removed, onYes) {
+    const secs = Array.from(new Set(removed.map(st => _sectionLabel(st)))).sort();
+    showConfirm('Unenrol students outside these sections?',
+        `${removed.length} enrolled student${removed.length === 1 ? ' is' : 's are'} not in any teacher's section `
+        + `(${secs.join(', ')}) and will be removed from this subject. `
+        + `To keep them, tick their section for a teacher or set a teacher to "All students".`,
+        onYes);
+}
 
 // Back to the Add/Edit Subject form, so opening it next still works.
 function _tpResetHost() {
@@ -523,7 +557,7 @@ window.saveSubject = function() {
     const code = document.getElementById('subCode').value.trim();
     const name = document.getElementById('subName').value.trim();
     // Every chosen teacher, each with the sections they take (none = everyone).
-    const teachers  = _tpChosen.map(t => ({ id: t.id, sections: t.sections.slice() }));
+    const teachers  = _tpTeachersToSave();
     // The first teacher, kept for any code that still reads a single teacherId.
     const teacherId = teachers.length ? teachers[0].id : '';
     const dept = document.getElementById('subDept').value;
@@ -541,6 +575,15 @@ window.saveSubject = function() {
 
     if (typeof editSubjectId !== 'undefined' && editSubjectId) {
         const idx = subjects.findIndex(s => s.id === editSubjectId);
+        // Same rule as the Teachers & Sections modal: students outside every
+        // teacher's sections are unenrolled, after asking.
+        const { keep, removed } = splitUncoveredStudents(subjects[idx], teachers);
+        if (removed.length && !window._subUnenrolOk) {
+            _tpConfirmUnenrol(removed, () => { window._subUnenrolOk = true; window.saveSubject(); });
+            return;
+        }
+        window._subUnenrolOk = false;
+        subjects[idx].enrolledIds = keep;
         // REMOVED: changing the teacher used to DELETE the subject's student
         // evaluations, so students could rate the new teacher. That was needed
         // only because a student could hold one rating per subject. Ratings are
