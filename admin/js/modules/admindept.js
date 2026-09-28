@@ -310,9 +310,14 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
     <div class="dept-stat" style="cursor:pointer;" onclick="goToDeptFeedback('${deptCode}')" title="View evaluation feedback for this department"><div class="dept-stat-icon" style="background:;"><img src ="../icons/evaluate.png" width="28" height="28" alt="Evalaute"></div><div><div class="dept-stat-val">${deptEvals.length}</div><div class="dept-stat-label">Evaluations</div></div></div>
   `;
 
+  // The cards on this page are a preview: at most DEPT_PREVIEW_ROWS rows each.
+  // The count badge still shows the full total, and "View all" opens the
+  // complete list (showDeptFullList in adminfeatures.js).
+  const DEPT_PREVIEW_ROWS = 5;
+
   document.getElementById('deptTeacherCount').textContent = regularTeachers.length;
   document.getElementById('deptTeachersTbody').innerHTML = regularTeachers.length
-    ? regularTeachers.map(t => {
+    ? regularTeachers.slice(0, DEPT_PREVIEW_ROWS).map(t => {
         const tSubs = getData('subjects', []).filter(s => subjectHasTeacher(s, t.id));
         const tEvals = allEvals.filter(e => tSubs.some(s => s.id === e.subjectId));
         const setSc = calculateWeightedSETRating(t.id);
@@ -324,7 +329,7 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
           <td><span style="font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;">${escapeHtml(t.tid)}</span></td>
           <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong></td>
           <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
-          <td><strong style="font-size:0.82rem;">SET: ${setSc}% | SEF: ${sefSc ? sefSc + '%' : 'N/A'}</strong></td>
+          <td><strong style="font-size:0.82rem;">SET: ${Number(setSc) > 0 ? setSc + '%' : 'N/A'} | SEF: ${sefSc ? sefSc + '%' : 'N/A'}</strong></td>
         </tr>`;
       }).join('')
     : `<tr><td colspan="4" style="text-align:center;padding:24px;">No teachers found.</td></tr>`;
@@ -376,7 +381,7 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
 
   document.getElementById('deptSubjectCount').textContent = allSubjects.length;
   document.getElementById('deptSubjectsTbody').innerHTML = allSubjects.length
-    ? allSubjects.map(sub => {
+    ? allSubjects.slice(0, DEPT_PREVIEW_ROWS).map(sub => {
         const enrolled = (sub.enrolledIds || []).filter(eid => allStudents.find(s => s.id===eid)).length;
         const liveTeachers = getData('teachers', []).filter(t => !t.deleted);
         const names = subjectTeacherNames(sub, liveTeachers);

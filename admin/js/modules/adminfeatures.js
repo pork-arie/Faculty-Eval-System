@@ -1676,7 +1676,10 @@ window.showDeptFullList = function(deptCode, type) {
     });
     columns = ['ID', 'Name', 'Status', 'SET %', 'SEF %'];
     rows = list.map(t => {
-      const setSc = (typeof calculateWeightedSETRating === 'function') ? calculateWeightedSETRating(t.id) : '0';
+      // 0 means "no SET ratings yet" (the lowest possible real rating is 20%).
+      // It printed as a bare "%" here, because escapeHtml(0) returns ''.
+      const setRaw = (typeof calculateWeightedSETRating === 'function') ? calculateWeightedSETRating(t.id) : 0;
+      const setSc  = Number(setRaw) > 0 ? setRaw + '%' : 'N/A';
       const sefAgg = (typeof getSEFForTeacher === 'function')
         ? getSEFForTeacher(t.id)
         : (() => {
@@ -1687,8 +1690,8 @@ window.showDeptFullList = function(deptCode, type) {
       return {
         s: ((t.tid || '') + ' ' + (t.name || '')).toLowerCase(),
         onclick: "showAnnexReports('" + t.id + "')",
-        cells: [mono(t.tid), strong(t.name), pill(t.status || 'active', (t.status === 'active' ? '#059669' : '#dc2626')), esc(setSc) + '%', esc(sefSc)],
-        plain: [t.tid || '', t.name || '', t.status || 'active', setSc + '%', sefSc]
+        cells: [mono(t.tid), strong(t.name), pill(t.status || 'active', (t.status === 'active' ? '#059669' : '#dc2626')), esc(setSc), esc(sefSc)],
+        plain: [t.tid || '', t.name || '', t.status || 'active', setSc, sefSc]
       };
     });
   } else if (type === 'subjects') {
@@ -1841,7 +1844,7 @@ window.showDeptFullList = function(deptCode, type) {
       + '<div class="page-title"><h1>' + title + '</h1><p id="_dflSub">' + sub + '</p></div>'
       + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
         + '<input id="_dflSearch" type="text" placeholder="Search\u2026" style="padding:8px 12px;border:1px solid var(--border,#cbd5e1);border-radius:8px;font-size:0.85rem;outline:none;">'
-        + '<button class="btn btn-ghost btn-sm" onclick="_exportDeptListCSV()"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV</button>'
+        + '<button class="btn btn-ghost btn-sm" onclick="_exportDeptListPDF()" title="Opens the print dialog - choose Save as PDF"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>Export PDF</button>'
         + '<button class="btn btn-ghost btn-sm" onclick="showDeptPage(\'' + deptCode + '\')"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><polyline points="15 18 9 12 15 6"/></svg>Back to ' + deptLabel + '</button>'
       + '</div>'
     + '</div>'
@@ -1852,7 +1855,7 @@ window.showDeptFullList = function(deptCode, type) {
   if (typeof closeSidebar === 'function') closeSidebar();
   window.scrollTo(0, 0);
 
-  window._dflExport = { title: title, columns: columns, rows: rows };
+  window._dflExport = { title: title, columns: columns, rows: rows, dept: cfg.name || deptCode, type: type };
 
   const searchEl = document.getElementById('_dflSearch');
   const bodyEl   = document.getElementById('_dflBody');
@@ -1873,17 +1876,81 @@ window.showDeptFullList = function(deptCode, type) {
   }
 };
 
-window._exportDeptListCSV = function() {
+// ============================================================
+// EXPORT PDF (department "View all" lists)
+// ------------------------------------------------------------
+// Was a CSV download. Now a print-ready page in a new tab - the same way
+// the FER and Annex reports are produced - and the print dialog opens by
+// itself; choose "Save as PDF" as the printer. The tab title becomes the
+// suggested file name.
+//
+// Exports the rows currently shown: if the list is filtered by the search
+// box, only the matching rows go into the PDF, and the filter is printed
+// under the title so the page says what it contains.
+// ============================================================
+window._exportDeptListPDF = function() {
   const d = window._dflExport;
   if (!d || !d.rows.length) { if (typeof showToast === 'function') showToast('Nothing to export.', 'info'); return; }
-  let csv = d.columns.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',') + '\n';
-  d.rows.forEach(r => {
-    csv += r.plain.map(v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"').join(',') + '\n';
-  });
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
-    download: d.title.replace(/[^a-z0-9]+/gi, '_').toLowerCase() + '.csv'
-  });
-  a.click();
-  if (typeof showToast === 'function') showToast('Exported ' + d.rows.length + ' rows.', 'success');
+
+  const esc = (typeof escapeHtml === 'function') ? escapeHtml : (x => String(x == null ? '' : x));
+  const plainEsc = v => esc(String(v == null ? '' : v));
+
+  // Only the rows the search box left visible.
+  const bodyEl = document.getElementById('_dflBody');
+  const search = (document.getElementById('_dflSearch') || {}).value || '';
+  let rows = d.rows;
+  if (bodyEl && search.trim()) {
+    const shown = Array.prototype.map.call(bodyEl.querySelectorAll('tr[data-s]'), tr => tr.style.display !== 'none');
+    rows = d.rows.filter((r, i) => shown[i]);
+  }
+  if (!rows.length) { if (typeof showToast === 'function') showToast('No rows match the search.', 'info'); return; }
+
+  const titleText = String(d.title).replace(/&amp;/g, '&');   // d.title was escaped for the page
+  const now = new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+  const logo = new URL('../icons/NWSSU-LOGO1.png', location.href).href;
+  const numeric = i => /enrolled|%/i.test(d.columns[i]);   // right-align counts and scores
+
+  const head = '<tr><th class="n">#</th>' + d.columns.map((c, i) =>
+      '<th' + (numeric(i) ? ' class="r"' : '') + '>' + esc(c) + '</th>').join('') + '</tr>';
+  const body = rows.map((r, k) => '<tr><td class="n">' + (k + 1) + '</td>' + r.plain.map((v, i) =>
+      '<td' + (numeric(i) ? ' class="r"' : '') + '>' + plainEsc(v) + '</td>').join('') + '</tr>').join('');
+
+  const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + esc(titleText) + '</title><style>'
+    + '*{box-sizing:border-box}'
+    + 'body{font-family:"Segoe UI",Arial,sans-serif;color:#1a1a1a;margin:32px;font-size:12px}'
+    + '.hd{display:flex;align-items:center;gap:14px;border-bottom:2px solid #059669;padding-bottom:10px;margin-bottom:14px}'
+    + '.hd img{width:54px;height:54px}'
+    + '.u{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#065f46;font-weight:700}'
+    + 'h1{font-size:17px;margin:2px 0 0}'
+    + '.sub{color:#555;margin:0 0 12px}'
+    + 'table{width:100%;border-collapse:collapse}'
+    + 'th,td{border:1px solid #d9dee3;padding:6px 8px;text-align:left;vertical-align:top}'
+    + 'thead th{background:#064e3b;color:#fff;font-weight:700}'
+    + 'tbody tr:nth-child(even) td{background:#f3faf6}'
+    + '.n{width:34px;text-align:center;color:#666}.r{text-align:right}'
+    + 'thead{display:table-header-group}tr{page-break-inside:avoid}'
+    + '.ft{margin-top:14px;color:#777;font-size:10px}'
+    + '.noprint{text-align:center;margin-bottom:16px}'
+    + '.noprint button{padding:8px 20px;font-size:13px;border:none;border-radius:6px;background:#059669;color:#fff;cursor:pointer}'
+    + '@media print{body{margin:12px}.noprint{display:none}thead th{-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+    + 'tbody tr:nth-child(even) td{-webkit-print-color-adjust:exact;print-color-adjust:exact}}'
+    + '</style></head><body>'
+    + '<div class="noprint"><button onclick="window.print()">Print / Save as PDF</button></div>'
+    + '<div class="hd"><img src="' + logo + '" alt="" onerror="this.style.display=\'none\'">'
+    +   '<div><div class="u">Northwest Samar State University</div><h1>' + esc(titleText) + '</h1></div></div>'
+    + '<p class="sub"><strong>' + rows.length + '</strong> ' + (rows.length === 1 ? 'record' : 'records')
+    +   (search.trim() ? ' &middot; filtered by &ldquo;' + esc(search.trim()) + '&rdquo;' : '')
+    +   ' &middot; Generated ' + esc(now) + '</p>'
+    + '<table><thead>' + head + '</thead><tbody>' + body + '</tbody></table>'
+    + '<p class="ft">Faculty Evaluation System &mdash; ' + esc(d.dept) + '</p>'
+    // Print once the logo has loaded (or failed), so it is on the page.
+    + '<script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script>'
+    + '</body></html>';
+
+  const w = window.open('', '_blank');
+  if (!w) { if (typeof showToast === 'function') showToast('Please allow pop-ups to export the PDF.', 'warning'); return; }
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  if (typeof addAudit === 'function') addAudit('Export PDF', titleText + ' (' + rows.length + ' rows)');
 };
