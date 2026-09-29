@@ -623,7 +623,13 @@ function _liveRedraw() {
   const typingHere = focused && el && el.contains(focused) &&
                      /^(INPUT|TEXTAREA|SELECT)$/.test(focused.tagName) &&
                      !/^(studentSearchInput|teacherSearchInput)$/.test(focused.id);
-  if (typingHere) { _liveRedrawTimer = setTimeout(_liveRedraw, 1500); return; }
+  // Nor while a pop-up is open over the page (a form, or the Print Ratings
+  // chooser). Redrawing the page underneath shifts the layout, and the browser
+  // closes an open dropdown when that happens - so a live update arriving at
+  // the wrong moment made the dropdown snap shut as it was being used.
+  const popupOpen = document.querySelector(
+    '.fb-print-overlay, .modal-overlay.open, .modal-overlay.active, .modal.open, #sefAuditOverlay');
+  if (typingHere || popupOpen) { _liveRedrawTimer = setTimeout(_liveRedraw, 1500); return; }
 
   const changed = _liveChanged;
   const newEvals = _liveNewEvals;
@@ -1005,7 +1011,7 @@ window.addEventListener('load', async () => {
               </button>
               <button type="button" class="reports-menu-item" role="menuitem" onclick="closeReportsMenu();exportReport()">
                 <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                <span class="reports-menu-text"><span class="reports-menu-label">Export CSV</span><span class="reports-menu-desc">Download the current term&rsquo;s ratings as a spreadsheet</span></span>
+                <span class="reports-menu-text"><span class="reports-menu-label">Export PDF</span><span class="reports-menu-desc">Print or save the current term&rsquo;s SET and SEF ratings as a PDF</span></span>
               </button>
               <div class="reports-menu-sep"></div>
               <div class="reports-menu-group">Setup</div>
@@ -1019,7 +1025,7 @@ window.addEventListener('load', async () => {
               </button>
               <button type="button" class="reports-menu-item" role="menuitem" onclick="closeReportsMenu();openSignatoriesModal()">
                 <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
-                <span class="reports-menu-text"><span class="reports-menu-label">Signatories</span><span class="reports-menu-desc">Names printed as Prepared by / Reviewed by</span></span>
+                <span class="reports-menu-text"><span class="reports-menu-label">Signatories</span><span class="reports-menu-desc">Names printed as Prepared by / Reviewed by / Approved by</span></span>
               </button>
             </div>
           </div>
@@ -1325,10 +1331,7 @@ window.addEventListener('load', async () => {
           <p style="font-size:0.82rem;color:var(--muted);margin-bottom:16px;">Resetting for: <strong id="resetPassName"></strong></p>
           <div class="form-group"><label class="form-label">New Password</label><input class="form-control" id="resetPassInput" placeholder="Leave blank to reset to their Student ID"/></div>
           <p style="font-size:0.76rem;color:var(--muted);line-height:1.5;margin:0;">
-            Logins are held by Firebase Authentication, not in the student record. This
-            always flags the account so a new password must be set at next login; whether
-            the credential itself changes here depends on the Cloud Function being deployed
-            &mdash; you will be told either way.
+            
           </p>
         </div>
         <div class="modal-footer"><input type="checkbox" id="forceResetCheck" checked style="display:none;"/><button class="btn btn-ghost" onclick="closeModal('resetPassModal')">Cancel</button><button class="btn btn-primary" onclick="saveResetPass()">Reset</button></div>
@@ -1425,14 +1428,14 @@ window.addEventListener('load', async () => {
           </div>
           <!-- Password field — only visible when facultyType is supervisor -->
           <div class="form-group" id="tchPasswordGroup" style="display:none;">
-            <label class="form-label">Supervisor Login Password <span style="font-weight:400;color:var(--muted);font-size:0.75rem;">&mdash; starts a reset; Firebase Auth holds the real credential</span></label>
+            <label class="form-label">Supervisor Login Password <span style="font-weight:400;color:var(--muted);font-size:0.75rem;">&mdash; </span></label>
             <div style="display:flex;gap:8px;align-items:center;">
               <input class="form-control" id="tchPassword" type="text" placeholder="Leave blank to keep current password" style="flex:1;"/>
               <button type="button" class="btn btn-ghost btn-sm" style="white-space:nowrap;font-size:0.75rem;" onclick="resetPasswordToId()">🔑 Reset to ID</button>
             </div>
             <small style="color:var(--muted);font-size:0.72rem;margin-top:4px;display:block;">
               When adding a new supervisor, leave blank to auto-set password to their Teacher ID.
-              When editing, leave blank to keep the existing password unchanged. Click "Reset to ID" to restore default.
+             
             </small>
           </div>
         </div>

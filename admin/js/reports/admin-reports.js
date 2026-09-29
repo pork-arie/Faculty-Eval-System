@@ -606,6 +606,21 @@ function renderRptViewAll() {
     window._rptViewAllList = list;
 }
 
+// "Prepared by" and "Approved by" at the foot of the printed list. Names and
+// positions come from Reports > Actions > Signatories; any left blank prints
+// as an empty line to sign and write on by hand.
+function _rptSignatureBlock() {
+    const sig = (typeof getSignatories === 'function') ? getSignatories() : {};
+    const one = (label, name, role) =>
+        '<div><div class="lbl">' + label + '</div>'
+      + '<div class="name">' + (escapeHtml(name || '') || '&nbsp;') + '</div>'
+      + '<div class="role">' + (escapeHtml(role || '') || '&nbsp;') + '</div></div>';
+    return '<div class="sig">'
+      + one('Prepared by:', sig.preparedName, sig.preparedRole)
+      + one('Approved by:', sig.approvedName, sig.approvedRole)
+      + '</div>';
+}
+
 // Was a CSV export. Now prints the same list through the browser's print
 // dialog, so the destination "Save as PDF" produces the file - the same
 // mechanism Annex C/D and the Reports export use, rather than a second
@@ -638,17 +653,30 @@ function _exportRptViewAllPDF(tableType, list, deptLabel) {
 
     const w = window.open('', '_blank');
     w.document.write(`<html><head><title>${escapeHtml(title)}</title><style>
-        body{font-family:serif;margin:30px;font-size:12px;color:#111;}
+        /* The page is a column at least one sheet tall; margin-top:auto on
+           the signature block pushes it to the BOTTOM of the sheet. A list
+           longer than one sheet keeps it right after the table instead. */
+        @page{margin:12mm;}
+        html,body{margin:0;}
+        body{font-family:serif;font-size:12px;color:#111;}
+        .page{min-height:calc(100vh - 2px);display:flex;flex-direction:column;box-sizing:border-box;padding:18px 18px 8px;}
+        @media print{.page{padding:0;}}
         h1{font-size:16px;margin:0 0 2px;}
         .sub{color:#555;margin:0 0 16px;font-size:11px;}
         table{width:100%;border-collapse:collapse;}
         th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;}
         th{background:#f2f2f2;}
-      </style></head><body>
+        .sig{display:flex;justify-content:space-between;gap:60px;margin-top:auto;padding-top:56px;page-break-inside:avoid;}
+        .sig > div{flex:1;max-width:280px;}
+        .sig .lbl{margin-bottom:34px;}
+        .sig .name{border-bottom:1px solid #111;min-height:16px;padding-bottom:2px;text-align:center;font-weight:bold;text-transform:uppercase;}
+        .sig .role{text-align:center;font-size:11px;color:#333;margin-top:3px;min-height:14px;}
+      </style></head><body><div class="page">
         <h1>${escapeHtml(title)}</h1>
         <div class="sub">${escapeHtml(termLabel)} &middot; ${list.length} ${isFaculty ? 'faculty member' : 'supervisor'}${list.length !== 1 ? 's' : ''} &middot; Generated ${new Date().toLocaleDateString()}</div>
         <table><thead>${head}</thead><tbody>${rows}</tbody></table>
-      </body></html>`);
+        ${_rptSignatureBlock()}
+      </div></body></html>`);
     w.document.close();
     w.print();
 

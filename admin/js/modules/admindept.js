@@ -274,9 +274,10 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
 
   const everyTeacher = getData('teachers', []).filter(t => !t.deleted);
 
-  // Regular faculty still belong to exactly one home department.
-  const regularTeachers = everyTeacher.filter(t =>
-    (t.facultyType || 'regular') !== 'supervisor' && t.dept === deptCode);
+  // Faculty of this department: regular faculty whose department it is, plus
+  // any supervisor whose HOME department it is but who supervises elsewhere -
+  // e.g. a CCIS teacher who is Dean of COED. See teachesInDept (admin-teachers.js).
+  const regularTeachers = everyTeacher.filter(t => teachesInDept(t, deptCode));
 
   // Supervisors do NOT. A dean of COED may also chair a CCIS program, so this
   // page lists anyone whose supervisedDepts includes THIS department - not just
@@ -327,7 +328,8 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
         const sefSc = sefAggD.count ? sefAggD.average.toFixed(2) : null;
         return `<tr onclick="showAnnexReports('${t.id}')" title="Click to view Annex C/D" style="cursor:pointer;">
           <td><span style="font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;">${escapeHtml(t.tid)}</span></td>
-          <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong></td>
+          <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong>${t.facultyType === 'supervisor'
+              ? `<div style="font-size:0.68rem;color:var(--muted);">also ${escapeHtml(supervisorRoleSummary(t))}</div>` : ''}</td>
           <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
           <td><strong style="font-size:0.82rem;">SET: ${Number(setSc) > 0 ? setSc + '%' : 'N/A'} | SEF: ${sefSc ? sefSc + '%' : 'N/A'}</strong></td>
         </tr>`;

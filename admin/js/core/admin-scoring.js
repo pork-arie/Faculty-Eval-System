@@ -333,7 +333,11 @@ window.getSignatories = function() {
         preparedName: d.preparedName || '',
         preparedRole: d.preparedRole || '',
         reviewedName: d.reviewedName || '',
-        reviewedRole: d.reviewedRole || ''
+        reviewedRole: d.reviewedRole || '',
+        // "Approved by" - printed on the Faculty Performance / Supervisors
+        // lists (Reports > View all > Export PDF).
+        approvedName: d.approvedName || '',
+        approvedRole: d.approvedRole || ''
     };
 };
 
@@ -352,8 +356,9 @@ window.openSignatoriesModal = function() {
         </div>
         <div class="modal-body" style="padding:20px;">
           <p style="font-size:0.78rem;color:var(--muted);margin:0 0 16px;line-height:1.5;">
-            Filled in automatically on Annex C, Annex D and the FER. You can still type over
-            them on the printed page before printing without changing what is saved here.
+            Filled in automatically on Annex C, Annex D and the FER, and "Prepared by" /
+            "Approved by" on the Faculty Performance list. You can still type over them on the
+            Annex and FER pages before printing without changing what is saved here.
           </p>
           <div class="form-group"><label class="form-label">Prepared by &mdash; Name of Staff</label>
             <input class="form-control" id="sigPrepName" value="${escapeHtml(sig.preparedName)}" placeholder="JOHNNY BOY G. GALVAN"/></div>
@@ -363,6 +368,10 @@ window.openSignatoriesModal = function() {
             <input class="form-control" id="sigRevName" value="${escapeHtml(sig.reviewedName)}" placeholder="ELEGRECIO M. TIMAN"/></div>
           <div class="form-group"><label class="form-label">Reviewed by &mdash; Position</label>
             <input class="form-control" id="sigRevRole" value="${escapeHtml(sig.reviewedRole)}" placeholder="Admin Officer V / QA Director"/></div>
+          <div class="form-group"><label class="form-label">Approved by &mdash; Name</label>
+            <input class="form-control" id="sigAppName" value="${escapeHtml(sig.approvedName)}" placeholder="Name of approving official"/></div>
+          <div class="form-group"><label class="form-label">Approved by &mdash; Position</label>
+            <input class="form-control" id="sigAppRole" value="${escapeHtml(sig.approvedRole)}" placeholder="e.g. Vice President for Academic Affairs"/></div>
         </div>
         <div class="modal-footer" style="padding:14px 20px;display:flex;gap:8px;justify-content:flex-end;">
           <button class="btn btn-ghost" onclick="closeModal('sigModal')">Cancel</button>
@@ -377,7 +386,8 @@ window.saveSignatories = function() {
     const v = id => (document.getElementById(id) || {}).value.trim() || '';
     setData('reportSignatories', {
         preparedName: v('sigPrepName'), preparedRole: v('sigPrepRole'),
-        reviewedName: v('sigRevName'),  reviewedRole: v('sigRevRole')
+        reviewedName: v('sigRevName'),  reviewedRole: v('sigRevRole'),
+        approvedName: v('sigAppName'),  approvedRole: v('sigAppRole')
     });
     addAudit('Update Signatories', 'Report signatories updated');
     closeModal('sigModal');

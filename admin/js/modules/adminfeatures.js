@@ -164,6 +164,24 @@ window.filterDeptEnrolledStudents = function(query) {
 let _studentSearchQuery = '';
 let _studentDeptFilter = '';
 
+// ============================================================
+// "NO DEPT" FILTER PILL
+// ------------------------------------------------------------
+// The pills counted a record with no department as 'UNASSIGNED', but the
+// tables then compared  s.dept === 'UNASSIGNED'  - and a blank department is
+// '', never 'UNASSIGNED' - so clicking "No Dept" always showed an empty
+// table. Every pill count and every table filter now goes through this one
+// function, so they cannot disagree again.
+//
+// A department code that no longer exists in the department list (renamed
+// or removed) also counts as No Dept: it has no pill of its own, so those
+// records could otherwise only be found under All.
+// ============================================================
+window.deptFilterKey = function(dept) {
+    const cfg = (typeof getDepartments === 'function') ? getDepartments() : {};
+    return (dept && cfg[dept]) ? dept : 'UNASSIGNED';
+};
+
 window.renderStudents = function(search) {
     if (search !== undefined) _studentSearchQuery = search;
     // Rebuild the department pills on EVERY redraw, not just when the page
@@ -182,7 +200,7 @@ window.renderStudents = function(search) {
             s.name.toLowerCase().includes(query.toLowerCase()) ||
             s.sid.toLowerCase().includes(query.toLowerCase()) ||
             (s.dept || '').toLowerCase().includes(query.toLowerCase());
-        const matchDept = !deptFilter || s.dept === deptFilter;
+        const matchDept = !deptFilter || deptFilterKey(s.dept) === deptFilter;
         return matchSearch && matchDept;
     });
     filtered.sort(byYearThenName);
@@ -264,7 +282,7 @@ window.buildStudentDeptFilterBar = function() {
     const allStudents = getData('students', []).filter(s => !s.deleted);
 
     const counts = {};
-    allStudents.forEach(s => { counts[s.dept || 'UNASSIGNED'] = (counts[s.dept || 'UNASSIGNED'] || 0) + 1; });
+    allStudents.forEach(s => { const k = deptFilterKey(s.dept); counts[k] = (counts[k] || 0) + 1; });
 
     // If the department being viewed just lost its last student, its pill is
     // about to disappear - fall back to All rather than leave the table empty
@@ -1561,7 +1579,7 @@ window.buildTeacherDeptFilterBar = function() {
     const allFaculty = getData('teachers', []).filter(t => !t.deleted && t.facultyType !== 'supervisor');
 
     const counts = {};
-    allFaculty.forEach(t => { counts[t.dept || 'UNASSIGNED'] = (counts[t.dept || 'UNASSIGNED'] || 0) + 1; });
+    allFaculty.forEach(t => { const k = deptFilterKey(t.dept); counts[k] = (counts[k] || 0) + 1; });
 
     let html = `<button class="student-dept-filter-btn ${!_teacherDeptFilter ? 'active' : ''}" data-dept="" onclick="filterTeachersByDept('')">
         All <span class="dept-filter-count">${allFaculty.length}</span>
@@ -1667,12 +1685,12 @@ window.showDeptFullList = function(deptCode, type) {
   let columns, rows;
 
   if (type === 'teachers') {
+    // Faculty of this department (including a supervisor who teaches here but
+    // supervises elsewhere - teachesInDept) plus the supervisors OF this department.
     const list = allTeachers.filter(t => {
-        const isSup = (t.facultyType || 'regular') === 'supervisor';
-        if (!isSup) return t.dept === deptCode;
-        return (typeof getSupervisedDepts === 'function')
-            ? getSupervisedDepts(t).some(a => a.dept === deptCode)
-            : t.dept === deptCode;
+        if (teachesInDept(t, deptCode)) return true;
+        return (t.facultyType || 'regular') === 'supervisor'
+            && getSupervisedDepts(t).some(a => a.dept === deptCode);
     });
     columns = ['ID', 'Name', 'Status', 'SET %', 'SEF %'];
     rows = list.map(t => {

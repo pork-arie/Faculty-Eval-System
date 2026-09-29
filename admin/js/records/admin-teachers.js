@@ -161,7 +161,8 @@ window.renderTeachers = function(search = '') {
       t.tid.toLowerCase().includes(q) ||
       deptCode.includes(q) ||
       deptFull.includes(q);
-    const matchesDept = !deptActive || t.dept === deptActive;
+    // Via deptFilterKey (adminfeatures.js) so "No Dept" matches a blank department.
+    const matchesDept = !deptActive || deptFilterKey(t.dept) === deptActive;
     return matchesSearch && matchesDept;
   }).sort(byName);
 
@@ -296,7 +297,14 @@ window.renderSupervisorTable = function(search) {
       t.tid.toLowerCase().includes(sq) ||
       deptCode.includes(sq) ||
       deptFull.includes(sq);
-    const matchesDept = !deptActive || t.dept === deptActive;
+    // The supervisor pills are counted by the departments each person
+    // SUPERVISES (buildSupervisorDeptFilterBar), so filter the same way.
+    // Comparing the home department instead meant a CCIS teacher who chairs
+    // GS was counted in the GS pill but missing when you clicked it, and a
+    // supervisor with no department never matched "No Dept".
+    const sup = getSupervisedDepts(t).filter(a => a.dept);
+    const matchesDept = !deptActive ||
+      (deptActive === 'UNASSIGNED' ? sup.length === 0 : sup.some(a => a.dept === deptActive));
     return matchesSearch && matchesDept;
   }).sort(byName);
 
@@ -455,6 +463,14 @@ function openAddTeacherModal() {
   if (drGrp) drGrp.style.display = 'none';
   const ftGrp = document.getElementById('tchFacultyTypeGroup');
   if (ftGrp) ftGrp.style.display = '';
+  // Regular faculty never sign in, so no password box. It stayed visible here
+  // after the Add Supervisor form had been opened, because this function
+  // never hid it again.
+  const pwGrp = document.getElementById('tchPasswordGroup');
+  const pwEl  = document.getElementById('tchPassword');
+  if (pwGrp) pwGrp.style.display = 'none';
+  if (pwEl)  pwEl.value = '';
+  _setHomeDeptLabel('regular');
   openModal('addTeacherModal');
 }
 
@@ -491,6 +507,23 @@ const SUP_ROLES = [
 ];
 
 // Read whatever the record has, old shape or new, as a normalised list.
+// Is this person FACULTY of deptCode - someone whose teaching is rated there?
+//   - regular faculty: their department;
+//   - a supervisor: their home department, unless they also supervise it
+//     (a CCIS chair is listed as CCIS's supervisor, not as its faculty).
+// So a CCIS teacher who is Dean of COED counts as CCIS faculty.
+window.teachesInDept = function(t, deptCode) {
+  if (!t || t.deleted || !deptCode || t.dept !== deptCode) return false;
+  if ((t.facultyType || 'regular') !== 'supervisor') return true;
+  return !getSupervisedDepts(t).some(a => a.dept === deptCode);
+};
+
+// Short "Dean · COED" text for a supervisor listed as faculty elsewhere.
+window.supervisorRoleSummary = function(t) {
+  const label = r => r === 'dean' ? 'Dean' : r === 'chairperson' ? 'Chairperson' : 'Supervisor';
+  return getSupervisedDepts(t).map(a => label(a.role) + ' \u00b7 ' + a.dept).join(', ');
+};
+
 window.getSupervisedDepts = function(t) {
   if (!t) return [];
   if (Array.isArray(t.supervisedDepts) && t.supervisedDepts.length) {
@@ -579,6 +612,7 @@ window.openAddSupervisorModal = function() {
   const pwEl  = document.getElementById('tchPassword');
   if (pwGrp) pwGrp.style.display = '';
   if (pwEl)  pwEl.value = '';
+  _setHomeDeptLabel('supervisor');
   openModal('addTeacherModal');
 };
 
@@ -594,6 +628,7 @@ window.onFacultyTypeChange = function(val) {
 
   const grp = document.getElementById('tchDeptRoleGroup');
   if (grp) grp.style.display = val === 'supervisor' ? '' : 'none';
+  _setHomeDeptLabel(val);
 
   // Show password field only for supervisors
   const pwGrp = document.getElementById('tchPasswordGroup');
@@ -636,7 +671,32 @@ function openEditTeacherModal(id) {
   const pwEl  = document.getElementById('tchPassword');
   if (pwGrp) pwGrp.style.display = resolvedType === 'supervisor' ? '' : 'none';
   if (pwEl)  pwEl.value = resolvedType === 'supervisor' ? (t.password || t.tid || '') : '';
+  _setHomeDeptLabel(resolvedType);
   openModal('addTeacherModal');
+}
+
+// ============================================================
+// HOME DEPARTMENT vs SUPERVISED DEPARTMENTS
+// ------------------------------------------------------------
+// A supervisor has two separate things:
+//   - dept             - their HOME department: where they teach and are
+//                        counted as faculty (CCIS, say);
+//   - supervisedDepts  - where they are Dean / Chair (COED, say).
+// They used to be forced to match: saving a supervisor overwrote the home
+// department with the first supervised one, so a CCIS teacher who is Dean of
+// COED stopped being CCIS faculty and the CCIS chair could no longer rate
+// her. Now the home department is kept as chosen. Leaving it blank still
+// falls back to the first supervised department, as before.
+// ============================================================
+function _setHomeDeptLabel(type) {
+  const sel = document.getElementById('tchDept');
+  const lbl = sel && sel.closest('.form-group') && sel.closest('.form-group').querySelector('.form-label');
+  if (!lbl) return;
+  lbl.textContent = type === 'supervisor' ? 'Home Department (where they teach)' : 'Department';
+  const first = sel.querySelector('option[value=""]');
+  if (first) first.textContent = type === 'supervisor'
+    ? '-- Same as first supervised department --'
+    : '-- Select Department --';
 }
 
 window.forceSetSupervisor = function(id) {
@@ -749,9 +809,10 @@ async function saveTeacher() {
       teachers[idx].facultyType = facultyType;
       teachers[idx].deptRole = deptRole;
       teachers[idx].supervisedDepts = supervisedDepts;
-      // Home department follows the first supervisory assignment when one exists,
-      // so a dean moved to a new college does not keep pointing at the old one.
-      if (supervisedDepts.length) teachers[idx].dept = supervisedDepts[0].dept;
+      // The home department is kept as chosen - it is where they TEACH, and it
+      // can differ from where they supervise (see _setHomeDeptLabel). Only a
+      // blank home department falls back to the first supervised one.
+      if (!teachers[idx].dept && supervisedDepts.length) teachers[idx].dept = supervisedDepts[0].dept;
 
       if (facultyType === 'supervisor') {
         if (pwFieldVal) {
@@ -780,8 +841,8 @@ async function saveTeacher() {
         tid,
         name,
         ...nameFields,
-        // Home department follows the first supervisory assignment for supervisors.
-        dept: supervisedDepts.length ? supervisedDepts[0].dept : dept,
+        // Home department as chosen; blank falls back to the first supervised one.
+        dept: dept || (supervisedDepts.length ? supervisedDepts[0].dept : ''),
         category: category || '',
         rank,
         facultyType,

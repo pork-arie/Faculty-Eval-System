@@ -150,7 +150,14 @@ function exportReport() {
     </tr>`).join('');
 
   const html = `<html><head><meta charset="utf-8"><title>Faculty Evaluation Report</title><style>
-      body{font-family:serif;margin:30px;font-size:12px;color:#111;}
+      /* The page is a column at least one sheet tall; margin-top:auto on the
+         signatures pushes them to the BOTTOM of the sheet. A report longer
+         than one sheet keeps them right after the table instead. */
+      @page{margin:12mm;}
+      html,body{margin:0;}
+      body{font-family:serif;font-size:12px;color:#111;}
+      .page{min-height:calc(100vh - 2px);display:flex;flex-direction:column;box-sizing:border-box;padding:18px 18px 8px;}
+      @media print{.page{padding:0;}}
       h1{font-size:16px;margin:0 0 2px;}
       .sub{color:#555;margin:0 0 16px;font-size:11px;}
       table{width:100%;border-collapse:collapse;}
@@ -158,13 +165,13 @@ function exportReport() {
       th{background:#f2f2f2;}
       /* Signature block. Kept together so the names never split from the
          table onto a page of their own. */
-      .sigs{display:flex;justify-content:space-between;gap:40px;margin-top:48px;page-break-inside:avoid;}
+      .sigs{display:flex;justify-content:space-between;gap:40px;margin-top:auto;padding-top:48px;page-break-inside:avoid;}
       .sig{flex:1;max-width:280px;}
       .sig-label{font-size:11px;margin-bottom:34px;}
       .sig-name{border-top:1px solid #111;padding-top:4px;font-weight:bold;text-transform:uppercase;font-size:12px;text-align:center;}
       .sig-role{font-size:11px;text-align:center;color:#333;}
       .sig-date{font-size:11px;margin-top:14px;}
-    </style></head><body>
+    </style></head><body><div class="page">
       <h1>Faculty Evaluation Report — SET and SEF Ratings</h1>
       <div class="sub">${escapeHtml(termLabel)}${dept ? ' &middot; Department: ' + escapeHtml(dept) : ''} &middot; Generated ${new Date().toLocaleDateString()}</div>
       <table><thead><tr><th>Teacher ID</th><th>Name</th><th>Department</th><th>Faculty Type</th><th>SET Rating</th><th>SEF Rating</th></tr></thead>
@@ -173,7 +180,7 @@ function exportReport() {
         ${sigBox('Prepared by:', sig.preparedName, sig.preparedRole)}
         ${sigBox('Reviewed by:', sig.reviewedName, sig.reviewedRole)}
       </div>
-    </body></html>`;
+    </div></body></html>`;
 
   const w = window.open('', '_blank');
   w.document.write(html);

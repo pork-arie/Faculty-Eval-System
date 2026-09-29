@@ -926,7 +926,8 @@ if (typeof window.renderTeachers === 'function') {
                 t.name.toLowerCase().includes(q) ||
                 t.tid.toLowerCase().includes(q) ||
                 (t.dept || '').toLowerCase().includes(q);
-            const matchesDept = !deptActive || t.dept === deptActive;
+            // Via deptFilterKey (adminfeatures.js) so "No Dept" matches a blank department.
+            const matchesDept = !deptActive || deptFilterKey(t.dept) === deptActive;
             return matchesSearch && matchesDept;
         });
         // Alphabetical by surname where the split name fields exist, otherwise
@@ -993,7 +994,9 @@ if (typeof window.renderTeachers === 'function') {
                 <tr class="dept-group-student-row teacher-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
                     <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
                     <td><strong>${escapeHtml(t.name)}</strong></td>
-                    <td><span class="dept-tag-inline">${escapeHtml(deptCode)}</span></td>
+                    <td>${deptCode === 'UNASSIGNED'
+                        ? '<span style="color:var(--muted);">\u2014</span>'
+                        : `<span class="dept-tag-inline">${escapeHtml(deptCode)}</span>`}</td>
                     <td><span class="badge badge-primary">${teacherSubs.length} Subject${teacherSubs.length !== 1 ? 's' : ''}</span></td>
                     <td><span class="badge ${t.status === 'active' ? 'badge-success' : 'badge-danger'}">${t.status}</span></td>
                     <td>
