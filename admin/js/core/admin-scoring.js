@@ -361,11 +361,11 @@ window.openSignatoriesModal = function() {
             Annex and FER pages before printing without changing what is saved here.
           </p>
           <div class="form-group"><label class="form-label">Prepared by &mdash; Name of Staff</label>
-            <input class="form-control" id="sigPrepName" value="${escapeHtml(sig.preparedName)}" placeholder="JOHNNY BOY G. GALVAN"/></div>
+            <input class="form-control" id="sigPrepName" value="${escapeHtml(sig.preparedName)}" placeholder="Name of staff"/></div>
           <div class="form-group"><label class="form-label">Prepared by &mdash; Position</label>
             <input class="form-control" id="sigPrepRole" value="${escapeHtml(sig.preparedRole)}" placeholder="Admin Officer II / QA I"/></div>
           <div class="form-group"><label class="form-label">Reviewed by &mdash; Authorized Official</label>
-            <input class="form-control" id="sigRevName" value="${escapeHtml(sig.reviewedName)}" placeholder="ELEGRECIO M. TIMAN"/></div>
+            <input class="form-control" id="sigRevName" value="${escapeHtml(sig.reviewedName)}" placeholder="Name of official"/></div>
           <div class="form-group"><label class="form-label">Reviewed by &mdash; Position</label>
             <input class="form-control" id="sigRevRole" value="${escapeHtml(sig.reviewedRole)}" placeholder="Admin Officer V / QA Director"/></div>
           <div class="form-group"><label class="form-label">Approved by &mdash; Name</label>
