@@ -1692,8 +1692,28 @@ window.showDeptFullList = function(deptCode, type) {
         return (t.facultyType || 'regular') === 'supervisor'
             && getSupervisedDepts(t).some(a => a.dept === deptCode);
     });
-    columns = ['ID', 'Name', 'Status', 'SET %', 'SEF %'];
+    // Role column: says WHY each person is on this list, since it mixes the
+    // department's faculty with its deans/chairs.
+    //   Faculty                     - regular faculty of this department
+    //   Dean / Chairperson / ...    - a supervisor OF this department
+    //   Faculty · also Dean of COED - teaches here, supervises elsewhere
+    const roleLabel = r => r === 'dean' ? 'Dean' : r === 'chairperson' ? 'Chairperson' : 'Supervisor';
+    const roleColor = r => r === 'dean' ? '#7c3aed' : r === 'chairperson' ? '#2563eb' : '#0891b2';
+    const roleOf = t => {
+      if ((t.facultyType || 'regular') !== 'supervisor') return { text: 'Faculty', html: pill('Faculty', '#475569') };
+      const sup  = getSupervisedDepts(t).filter(a => a.dept);
+      const here = sup.find(a => a.dept === deptCode);
+      if (here) return { text: roleLabel(here.role), html: pill(roleLabel(here.role), roleColor(here.role)) };
+      const elsewhere = sup.map(a => roleLabel(a.role) + ' of ' + a.dept).join(', ');
+      return {
+        text: 'Faculty \u00b7 also ' + elsewhere,
+        html: pill('Faculty', '#475569') +
+              '<div style="font-size:0.72rem;color:var(--muted);margin-top:3px;">also ' + esc(elsewhere) + '</div>'
+      };
+    };
+    columns = ['ID', 'Name', 'Role', 'Status', 'SET %', 'SEF %'];
     rows = list.map(t => {
+      const role = roleOf(t);
       // 0 means "no SET ratings yet" (the lowest possible real rating is 20%).
       // It printed as a bare "%" here, because escapeHtml(0) returns ''.
       const setRaw = (typeof calculateWeightedSETRating === 'function') ? calculateWeightedSETRating(t.id) : 0;
@@ -1706,10 +1726,11 @@ window.showDeptFullList = function(deptCode, type) {
           })();
       const sefSc = sefAgg.count ? sefAgg.average.toFixed(2) + '%' : 'N/A';
       return {
-        s: ((t.tid || '') + ' ' + (t.name || '')).toLowerCase(),
+        // Role is searchable too: typing "dean" finds the deans.
+        s: ((t.tid || '') + ' ' + (t.name || '') + ' ' + role.text).toLowerCase(),
         onclick: "showAnnexReports('" + t.id + "')",
-        cells: [mono(t.tid), strong(t.name), pill(t.status || 'active', (t.status === 'active' ? '#059669' : '#dc2626')), esc(setSc), esc(sefSc)],
-        plain: [t.tid || '', t.name || '', t.status || 'active', setSc, sefSc]
+        cells: [mono(t.tid), strong(t.name), role.html, pill(t.status || 'active', (t.status === 'active' ? '#059669' : '#dc2626')), esc(setSc), esc(sefSc)],
+        plain: [t.tid || '', t.name || '', role.text, t.status || 'active', setSc, sefSc]
       };
     });
   } else if (type === 'subjects') {
