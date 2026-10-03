@@ -292,15 +292,52 @@ window.mcHandleBulkUpload = function(event) {
   reader.readAsArrayBuffer(file);
 };
 
-// ── Download the blank template (base64 fallback placeholder) ──
-// The actual template file is provided as a separate download.
-// This function is called from the Manage Courses panel.
+// ── Download the bulk-upload template ──
+// This used to link to '../courses_bulk_upload_template.xlsx', a file that was
+// never in the project. The server answered with its "page not found" page,
+// which the browser saved under the .xlsx name - so the download was an empty
+// or broken spreadsheet. The template is now built right here with SheetJS
+// (already loaded for the upload), so there is no separate file to go missing.
+//
+// Sheet 1 "Courses" is what the upload reads: a "Department Code | Course Name"
+// header, then one row per department with the course name left blank. Rows
+// with a blank course are skipped on upload, so unused rows do no harm.
+// Sheet 2 "Instructions" holds the explanation and examples - kept off sheet 1
+// so an example can never be imported by accident.
 window.mcDownloadTemplate = function() {
-  // Point to the template file in the project root
-  const a = document.createElement('a');
-  a.href = '../courses_bulk_upload_template.xlsx';
-  a.download = 'courses_bulk_upload_template.xlsx';
-  a.click();
+  if (typeof XLSX === 'undefined') {
+    showToast('The spreadsheet tool has not loaded. Check your internet connection and reload the page.', 'error');
+    return;
+  }
+  const depts = (typeof getDepartments === 'function') ? getDepartments() : {};
+  const codes = Object.keys(depts).sort();
+
+  const courses = [['Department Code', 'Course Name']]
+    .concat(codes.map(code => [code, '']));
+  const wsCourses = XLSX.utils.aoa_to_sheet(courses);
+  wsCourses['!cols'] = [{ wch: 18 }, { wch: 70 }];
+
+  const help = [
+    ['How to use this template'],
+    [''],
+    ['1. Fill in sheet "Courses" only. Column A = Department Code, column B = Course Name.'],
+    ['2. One course per row. For more courses in a department, add rows with the same code.'],
+    ['3. Use the department codes already listed (they match the departments in the system).'],
+    ['4. Write the course name with its short form in brackets, e.g.:'],
+    ['      Bachelor of Science in Information Technology (BSIT)'],
+    ['      Bachelor of Secondary Education major in English (BSEd-English)'],
+    ['5. Rows with an empty Course Name are ignored, and courses that already exist are skipped.'],
+    ['6. Keep the header row (Department Code | Course Name). Save as .xlsx and upload it in Manage Courses.'],
+    [''],
+    ['Department codes in the system:']
+  ].concat(codes.map(code => ['      ' + code + ' \u2014 ' + ((depts[code] && depts[code].name) || '')]));
+  const wsHelp = XLSX.utils.aoa_to_sheet(help);
+  wsHelp['!cols'] = [{ wch: 95 }];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsCourses, 'Courses');        // must stay first: the upload reads sheet 1
+  XLSX.utils.book_append_sheet(wb, wsHelp, 'Instructions');
+  XLSX.writeFile(wb, 'courses_bulk_upload_template.xlsx');
 };
 // ============================================================
 // SEF RECORDS AUDIT  (find & clean stray supervisor evaluations)
