@@ -588,7 +588,7 @@ function renderRptViewAll() {
                 <p>${subtitle}</p>
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
-                <button class="btn btn-ghost btn-sm" ${list.length ? '' : 'disabled style="opacity:.5;cursor:not-allowed;"'} onclick="_exportRptViewAllPDF('${tableType}', window._rptViewAllList, '${deptLabel}')">
+                <button class="btn btn-ghost btn-sm" ${list.length ? '' : 'disabled style="opacity:.5;cursor:not-allowed;"'} onclick="_exportRptViewAllPDF('${tableType}', window._rptViewAllList, '${deptLabel}', '${escapeHtml(dept || '')}')">
                     <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export PDF
                 </button>
                 <button class="btn btn-ghost btn-sm" onclick="showPage('reports')">
@@ -625,7 +625,22 @@ function _rptSignatureBlock() {
 // dialog, so the destination "Save as PDF" produces the file - the same
 // mechanism Annex C/D and the Reports export use, rather than a second
 // code path with its own formatting.
-function _exportRptViewAllPDF(tableType, list, deptLabel) {
+// Full department name for a printed title: "College of Computing & Info.
+// Sciences". Used by both PDF exports when one department is selected.
+window._rptDeptFullName = function(code) {
+    if (!code) return '';
+    if (code === 'UNASSIGNED') return 'No Department';
+    const cfg = (typeof DEPT_CONFIG !== 'undefined' && DEPT_CONFIG[code]) || null;
+    return (cfg && cfg.name) || code;
+};
+
+// deptCode: the department selected on the page, or '' for All Departments.
+//   All Departments -> title "Faculty Performance — All Departments", with a
+//                      Department column (the list mixes departments).
+//   One department  -> the title IS the department ("College of Computing &
+//                      Info. Sciences"), and the Department column is left out
+//                      because every row would repeat the same value.
+function _exportRptViewAllPDF(tableType, list, deptLabel, deptCode) {
     list = list || [];
     if (!list.length) {
         showToast('Nothing to export — the list is empty.', 'info');
@@ -636,20 +651,25 @@ function _exportRptViewAllPDF(tableType, list, deptLabel) {
     const termLabel = (typeof getReportTermInfo === 'function') ? getReportTermInfo().label : '';
     const pct = v => (v !== '\u2014' ? v + '%' : 'N/A');
 
+    const showDept = !deptCode;
+    const deptTh = showDept ? '<th>Department</th>' : '';
+    const deptTd = t => showDept ? `<td>${escapeHtml(t.dept || 'N/A')}</td>` : '';
+
     const head = isFaculty
-        ? '<tr><th>Teacher ID</th><th>Name</th><th>Department</th><th>Classes</th><th>Evals</th><th>SET Rating</th><th>SEF Rating</th></tr>'
-        : '<tr><th>Teacher ID</th><th>Name</th><th>Department</th><th>SET Rating</th><th>SEF Rating</th><th>Status</th></tr>';
+        ? `<tr><th>Teacher ID</th><th>Name</th>${deptTh}<th>Classes</th><th>Evals</th><th>SET Rating</th><th>SEF Rating</th></tr>`
+        : `<tr><th>Teacher ID</th><th>Name</th>${deptTh}<th>SET Rating</th><th>SEF Rating</th><th>Status</th></tr>`;
 
     const rows = list.map(t => isFaculty
-        ? `<tr><td>${escapeHtml(t.tid)}</td><td>${escapeHtml(t.name)}</td><td>${escapeHtml(t.dept || 'N/A')}</td>`
+        ? `<tr><td>${escapeHtml(t.tid)}</td><td>${escapeHtml(t.name)}</td>${deptTd(t)}`
           + `<td style="text-align:center;">${t.totalClasses}</td><td style="text-align:center;">${t.totalEvaluations}</td>`
           + `<td style="text-align:center;">${pct(t.overallSET)}</td><td style="text-align:center;">${pct(t.sefScore)}</td></tr>`
-        : `<tr><td>${escapeHtml(t.tid)}</td><td>${escapeHtml(t.name)}</td><td>${escapeHtml(t.dept || 'N/A')}</td>`
+        : `<tr><td>${escapeHtml(t.tid)}</td><td>${escapeHtml(t.name)}</td>${deptTd(t)}`
           + `<td style="text-align:center;">${pct(t.overallSET)}</td><td style="text-align:center;">${pct(t.sefScore)}</td>`
           + `<td style="text-align:center;">${escapeHtml(t.status || '')}</td></tr>`
     ).join('');
 
-    const title = (isFaculty ? 'Faculty Performance' : 'Supervisors') + ' \u2014 ' + deptLabel;
+    const kind  = isFaculty ? 'Faculty Performance' : 'Supervisors';
+    const title = showDept ? kind + ' \u2014 All Departments' : _rptDeptFullName(deptCode);
 
     const w = window.open('', '_blank');
     w.document.write(`<html><head><title>${escapeHtml(title)}</title><style>
@@ -673,7 +693,7 @@ function _exportRptViewAllPDF(tableType, list, deptLabel) {
         .sig .role{text-align:center;font-size:11px;color:#333;margin-top:3px;min-height:14px;}
       </style></head><body><div class="page">
         <h1>${escapeHtml(title)}</h1>
-        <div class="sub">${escapeHtml(termLabel)} &middot; ${list.length} ${isFaculty ? 'faculty member' : 'supervisor'}${list.length !== 1 ? 's' : ''} &middot; Generated ${new Date().toLocaleDateString()}</div>
+        <div class="sub">${showDept ? '' : escapeHtml(kind) + ' &middot; '}${escapeHtml(termLabel)} &middot; ${list.length} ${isFaculty ? 'faculty member' : 'supervisor'}${list.length !== 1 ? 's' : ''} &middot; Generated ${new Date().toLocaleDateString()}</div>
         <table><thead>${head}</thead><tbody>${rows}</tbody></table>
         ${_rptSignatureBlock()}
       </div></body></html>`);

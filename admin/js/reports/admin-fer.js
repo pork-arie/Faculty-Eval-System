@@ -139,17 +139,25 @@ function exportReport() {
         <div class="sig-date">Date: ____________________</div>
       </div>`;
 
+  // All Departments: title "Faculty Evaluation Report — SET and SEF Ratings"
+  // with a Department column. One department selected: the title is that
+  // department's name and the Department column is left out (every row would
+  // show the same value). See _rptDeptFullName in admin-reports.js.
+  const showDept  = !dept;
+  const deptName  = (typeof _rptDeptFullName === 'function') ? _rptDeptFullName(dept) : dept;
+  const pageTitle = showDept ? 'Faculty Evaluation Report \u2014 SET and SEF Ratings' : deptName;
+
   const rows = list.map(t => `
     <tr>
       <td>${escapeHtml(t.tid)}</td>
       <td>${escapeHtml(t.name)}</td>
-      <td>${escapeHtml(t.dept || 'N/A')}</td>
+      ${showDept ? `<td>${escapeHtml(t.dept || 'N/A')}</td>` : ''}
       <td>${escapeHtml(t.facultyType || 'regular')}</td>
       <td style="text-align:center;">${t.overallSET}${t.overallSET !== '—' ? '%' : ''}</td>
       <td style="text-align:center;">${t.sefScore}${t.sefScore !== '—' ? '%' : ''}</td>
     </tr>`).join('');
 
-  const html = `<html><head><meta charset="utf-8"><title>Faculty Evaluation Report</title><style>
+  const html = `<html><head><meta charset="utf-8"><title>${escapeHtml(showDept ? 'Faculty Evaluation Report' : deptName + ' \u2014 Faculty Evaluation Report')}</title><style>
       /* The page is a column at least one sheet tall; margin-top:auto on the
          signatures pushes them to the BOTTOM of the sheet. A report longer
          than one sheet keeps them right after the table instead. */
@@ -172,9 +180,9 @@ function exportReport() {
       .sig-role{font-size:11px;text-align:center;color:#333;}
       .sig-date{font-size:11px;margin-top:14px;}
     </style></head><body><div class="page">
-      <h1>Faculty Evaluation Report — SET and SEF Ratings</h1>
-      <div class="sub">${escapeHtml(termLabel)}${dept ? ' &middot; Department: ' + escapeHtml(dept) : ''} &middot; Generated ${new Date().toLocaleDateString()}</div>
-      <table><thead><tr><th>Teacher ID</th><th>Name</th><th>Department</th><th>Faculty Type</th><th>SET Rating</th><th>SEF Rating</th></tr></thead>
+      <h1>${escapeHtml(pageTitle)}</h1>
+      <div class="sub">${showDept ? '' : 'Faculty Evaluation Report &mdash; SET and SEF Ratings &middot; '}${escapeHtml(termLabel)} &middot; Generated ${new Date().toLocaleDateString()}</div>
+      <table><thead><tr><th>Teacher ID</th><th>Name</th>${showDept ? '<th>Department</th>' : ''}<th>Faculty Type</th><th>SET Rating</th><th>SEF Rating</th></tr></thead>
       <tbody>${rows}</tbody></table>
       <div class="sigs">
         ${sigBox('Prepared by:', sig.preparedName, sig.preparedRole)}
