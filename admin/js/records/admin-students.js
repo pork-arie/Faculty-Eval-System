@@ -88,9 +88,12 @@ function splitName(full) {
   return out;
 }
 
-// Surname used for A-Z sorting. Falls back to the last word of the stored name
-// for records that predate the separate Last Name field.
+// Surname used for A-Z sorting. This file loads AFTER admin-core.js and its
+// byName replaces the one there, so it must use the same key: personSortKey
+// (admin-core.js), which keeps "Dela Peña" together and skips Jr./Dr. The old
+// last-word rule here filed "John Rich O. Dela Peña" under P.
 function sortKey(p) {
+  if (typeof personSortKey === 'function') return personSortKey(p);
   const last = (p && p.lastName) ? p.lastName : splitName(p && p.name).last;
   return String(last || (p && p.name) || '').trim();
 }
@@ -162,8 +165,13 @@ function openEditStudentModal(id) {
 // NwSSU uses TWO student ID formats, and both are accepted:
 //
 //   YY-NNNNN       e.g. 24-00001     two-digit year, hyphen, five digits
-//   YYYY-NNNN-N    e.g. 2025-9902-1  four-digit year, four digits, then one or
-//                  or 2025-9902-12   two digits
+//   YYYY-N-N       e.g. 2025-9902-1  four-digit year, a number of ONE TO FOUR
+//                  or 2024-652-1     digits, then one or two digits.
+//                  or 2024-56-1      The registrar does not zero-pad the middle
+//                                    part (class lists show 2024-652-1 and
+//                                    2024-56-1), so it must not be padded here
+//                                    either - "2024-0652-1" would be a different
+//                                    sign-in from the one the student uses.
 //
 // The second was introduced with a registrar update; students on either
 // format are enrolled at the same time, so neither can replace the other.
@@ -175,7 +183,7 @@ function openEditStudentModal(id) {
 // For YY-NNNNN the zero padding is load-bearing - "22-1745" and "22-01745" are
 // the same person to a human but two different strings to the duplicate
 // check, so one mistyped entry creates a second record that looks identical.
-const STUDENT_ID_RE = /^(?:\d{2}-\d{5}|\d{4}-\d{4}-\d{1,2})$/;
+const STUDENT_ID_RE = /^(?:\d{2}-\d{5}|\d{4}-\d{1,4}-\d{1,2})$/;
 
 // Repairs the near-misses people actually type, and NOTHING else.
 //
@@ -188,10 +196,11 @@ function normalizeStudentId(raw) {
   const v = String(raw || '').trim();
   const SEP = '\\s*[-\\u2013\\u2014_ ]\\s*';     // hyphen, en/em dash, underscore or space
 
-  // YYYY-NNNN-N. Checked FIRST: its opening "20" would otherwise be read as the
-  // two-digit year of the old format. No padding - the parts are fixed-length,
-  // so only the separators are repaired ("2025 9902 1", "2025\u20139902\u20131").
-  const n = v.match(new RegExp('^(\\d{4})' + SEP + '(\\d{4})' + SEP + '(\\d{1,2})$'));
+  // YYYY-N-N. Checked FIRST: its opening "20" would otherwise be read as the
+  // two-digit year of the old format. No padding - the registrar writes the
+  // middle part unpadded (2024-652-1) - so only the separators are repaired
+  // ("2025 9902 1", "2025\u20139902\u20131").
+  const n = v.match(new RegExp('^(\\d{4})' + SEP + '(\\d{1,4})' + SEP + '(\\d{1,2})$'));
   if (n) return n[1] + '-' + n[2] + '-' + n[3];
 
   // YY-NNNNN, with the zero padding repaired ("22-1745" -> "22-01745").
@@ -214,7 +223,8 @@ async function saveStudent() {
   document.getElementById('stuId').value = sid;
   const nameParts = stuNameParts();
   const name = buildName(nameParts);
-  const course = (document.getElementById('stuCourse') ? document.getElementById('stuCourse').value.trim() : '');
+  // Saved in one standard spelling - see normalizeCourseName (admin-core.js).
+  const course = normalizeCourseName(document.getElementById('stuCourse') ? document.getElementById('stuCourse').value : '');
   const year = document.getElementById('stuYear').value;
   // Uppercased on the way in, not just on screen. text-transform only changes
   // how the input looks - a typed "a" still submits as "a" - and sections are
@@ -244,7 +254,7 @@ async function saveStudent() {
     : null;
   const sidUnchanged = priorSid != null && sid === priorSid;
   if (!sidUnchanged && !STUDENT_ID_RE.test(sid)) {
-    showToast(`Student ID must look like 24-00001, 2025-9902-1 or 2025-9902-12. Got "${sid}".`, 'error');
+    showToast(`Student ID must look like 24-00001, 2025-9902-1 or 2024-652-1. Got "${sid}".`, 'error');
     return;
   }
 

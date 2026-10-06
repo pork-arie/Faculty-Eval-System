@@ -180,7 +180,7 @@ window.mcCancelEdit = function(idx) {
 
 window.mcSaveEdit = function(deptCode, idx) {
   const input = document.getElementById(`mcinput-${idx}`);
-  const newName = (input ? input.value.trim() : '');
+  const newName = normalizeCourseName(input ? input.value : '');
   if (!newName) { showToast('Course name cannot be empty.', 'error'); return; }
 
   const custom = getData('customCourses', {});
@@ -188,7 +188,7 @@ window.mcSaveEdit = function(deptCode, idx) {
   const oldName = list[idx];
   if (oldName === undefined) { showToast('Course not found.', 'error'); return; }
   // Check dup
-  const dup = list.find((c, i) => i !== idx && c.toLowerCase() === newName.toLowerCase());
+  const dup = list.find((c, i) => i !== idx && courseKey(c) === courseKey(newName));
   if (dup) { showToast('A course with that name already exists.', 'error'); return; }
 
   list[idx] = newName;
@@ -214,13 +214,13 @@ window.mcDeleteCourse = function(deptCode, idx) {
 
 window.mcAddCourse = function(deptCode) {
   const input = document.getElementById('mcNewCrseInput');
-  const name = (input ? input.value.trim() : '');
+  const name = normalizeCourseName(input ? input.value : '');
   if (!deptCode) { showToast('Select a department first.', 'error'); return; }
   if (!name) { showToast('Enter a course name.', 'error'); return; }
 
   const custom = getData('customCourses', {});
   if (!custom[deptCode]) custom[deptCode] = [];
-  if (custom[deptCode].some(c => c.toLowerCase() === name.toLowerCase())) {
+  if (custom[deptCode].some(c => courseKey(c) === courseKey(name))) {
     showToast('This course already exists.', 'error'); return;
   }
   custom[deptCode].push(name);
@@ -258,12 +258,12 @@ window.mcHandleBulkUpload = function(event) {
 
         for (let i = dataStart; i < rows.length; i++) {
           const dept = String(rows[i][0] || '').trim().toUpperCase();
-          const course = String(rows[i][1] || '').trim();
+          const course = normalizeCourseName(rows[i][1]);
           if (!dept || !course) { skipped++; continue; }
           // Skip dept-header separator rows (e.g. "── COED ──")
           if (dept.startsWith('─') || course === '') { skipped++; continue; }
           if (!custom[dept]) custom[dept] = [];
-          if (!custom[dept].includes(course)) {
+          if (!custom[dept].some(c => courseKey(c) === courseKey(course))) {
             custom[dept].push(course);
             added++;
           } else {

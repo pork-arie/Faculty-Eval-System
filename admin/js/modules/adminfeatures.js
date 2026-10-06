@@ -165,6 +165,24 @@ let _studentSearchQuery = '';
 let _studentDeptFilter = '';
 
 // ============================================================
+// STUDENTS TABLE ORDER
+// ------------------------------------------------------------
+// Fixed order, no sorting controls: by section - course, year and section
+// together (BSEMC 3A, BSIS 4B, BSIT 4C ...) - and inside each section by LAST
+// name A to Z (byName in admin-core.js), then by ID.
+// ============================================================
+function _stuSectionLabel(st) {
+    if (typeof _sectionLabel === 'function') return _sectionLabel(st);
+    return ((st.course || '') + ' ' + (st.year || '') + ' ' + (st.section || '')).trim();
+}
+window.studentListCompare = function(a, b) {
+    const opts = { sensitivity: 'base', numeric: true };
+    return _stuSectionLabel(a).localeCompare(_stuSectionLabel(b), undefined, opts)
+        || byName(a, b)
+        || String(a.sid || '').localeCompare(String(b.sid || ''), undefined, opts);
+};
+
+// ============================================================
 // "NO DEPT" FILTER PILL
 // ------------------------------------------------------------
 // The pills counted a record with no department as 'UNASSIGNED', but the
@@ -203,7 +221,8 @@ window.renderStudents = function(search) {
         const matchDept = !deptFilter || deptFilterKey(s.dept) === deptFilter;
         return matchSearch && matchDept;
     });
-    filtered.sort(byYearThenName);
+    // By section, then last name A to Z - see studentListCompare above.
+    filtered.sort(studentListCompare);
 
     const tbody = document.getElementById('studentsTbody');
     if (!tbody) return;

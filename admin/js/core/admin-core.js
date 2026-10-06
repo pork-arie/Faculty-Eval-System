@@ -349,12 +349,38 @@ window.yearRank = function(year) {
     return m ? parseInt(m[0], 10) : 99;
 };
 
+// ============================================================
+// ALPHABETICAL ORDER: BY SURNAME
+// ------------------------------------------------------------
+// Lists (Faculty, Supervisors, Students) are sorted by LAST name, then first.
+// Records added through the form store lastName/firstName separately; records
+// from a bulk import or older data only have the full name ("Edgar Gara").
+// Those used to be sorted by their FIRST word, so the two kinds of record were
+// mixed together and the list did not look alphabetical. Now the surname is
+// taken from the full name too: titles (Dr., Mr., Engr. ...) and suffixes
+// (Jr., III ...) are skipped, and particles such as "Dela" stay with the
+// surname ("Mark Josua Dela Cruz" sorts under D).
+// ============================================================
+const _SORT_TITLES   = ['dr', 'mr', 'mrs', 'ms', 'miss', 'engr', 'prof', 'atty', 'sir', 'maam'];
+const _SORT_SUFFIXES = ['jr', 'sr', 'ii', 'iii', 'iv', 'v'];
+const _SORT_PARTICLES = ['de', 'del', 'dela', 'delos', 'de los', 'da', 'di', 'san', 'sta', 'sto', 'van', 'von'];
+function _surnameFirst(fullName) {
+    const bare = w => w.toLowerCase().replace(/[.,']/g, '');
+    let words = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+    while (words.length > 1 && _SORT_TITLES.indexOf(bare(words[0])) !== -1) words.shift();
+    while (words.length > 1 && _SORT_SUFFIXES.indexOf(bare(words[words.length - 1])) !== -1) words.pop();
+    if (words.length < 2) return words.join(' ');
+    let start = words.length - 1;                               // the last word is the surname...
+    while (start > 1 && _SORT_PARTICLES.indexOf(bare(words[start - 1])) !== -1) start--;  // ...plus "Dela", "De" etc.
+    return words.slice(start).concat(words.slice(0, start)).join(' ');
+}
+
 window.personSortKey = function(p) {
     if (!p) return '';
     if (p.lastName) {
         return [p.lastName, p.firstName, p.middleName].filter(Boolean).join(' ');
     }
-    return String(p.name || '');
+    return _surnameFirst(p.name);
 };
 
 window.byName = function(a, b) {
@@ -369,6 +395,27 @@ window.byYearThenName = function(a, b) {
     if (sa !== sb) return sa.localeCompare(sb, undefined, { sensitivity: 'base', numeric: true });
     return byName(a, b);
 };
+
+// ============================================================
+// COURSE NAMES: ONE SPELLING
+// ------------------------------------------------------------
+// The same course was stored two ways - "...Information Systems (BSIS )"
+// with a space before the bracket, and "...(BSIS)" - so the enrolment picker
+// listed BSIS twice and split the students between them. Every place that
+// SAVES or COMPARES a course now goes through these:
+//   normalizeCourseName - one space between words, no space just inside
+//                         brackets, trimmed. Used when saving.
+//   courseKey           - the same, lower-cased. Used when comparing.
+// Old records keep their stored text; they are simply matched correctly.
+// ============================================================
+window.normalizeCourseName = function(s) {
+    return String(s || '')
+        .replace(/\s+/g, ' ')
+        .replace(/\(\s+/g, '(')
+        .replace(/\s+\)/g, ')')
+        .trim();
+};
+window.courseKey = function(s) { return window.normalizeCourseName(s).toLowerCase(); };
 
 // Sort: course first, then year/section/name. No-course records last.
 window.byCourseThenYear = function(a, b) {

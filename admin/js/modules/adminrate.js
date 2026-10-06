@@ -930,9 +930,10 @@ if (typeof window.renderTeachers === 'function') {
             const matchesDept = !deptActive || deptFilterKey(t.dept) === deptActive;
             return matchesSearch && matchesDept;
         });
-        // Alphabetical by surname where the split name fields exist, otherwise
-        // by full name - see byName in admin-core.js.
-        filtered.sort(byName);
+        // In the order picked with the ID / Name column headers - see
+        // teacherListCompare in admin-teachers.js (default: name A to Z).
+        filtered.sort(typeof teacherListCompare === 'function' ? teacherListCompare : byName);
+        if (typeof paintTeacherSortArrows === 'function') paintTeacherSortArrows();
         
         const tbody = document.getElementById('teachersTbody');
         if (!tbody) return;
@@ -1086,7 +1087,9 @@ if (typeof window.renderSubjects === 'function') {
                         onclick="${names.length > 1 ? `openSubjectTeacherList('${sub.id}')` : `openSubjectTeachersModal('${sub.id}')`}"
                         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${names.length > 1 ? `openSubjectTeacherList('${sub.id}')` : `openSubjectTeachersModal('${sub.id}')`};}"
                     >${teacherCell}</td>
-                    <td><span class="badge badge-primary">${enrolled} student${enrolled !== 1 ? 's' : ''}</span></td>
+                    <!-- nowrap: the pill used to break into "30 / students" on rows
+                         where a long subject name squeezed this column. -->
+                    <td><span class="badge badge-primary" style="white-space:nowrap;">${enrolled} student${enrolled !== 1 ? 's' : ''}</span></td>
                     <td><div class="td-actions">
                         <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditSubjectModal('${sub.id}')"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
                         <button class="btn btn-ghost btn-icon btn-sm" onclick="openSubjectTeachersModal('${sub.id}')" title="Teachers &amp; sections"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M12 14l9-5-9-5-9 5 9 5z"/><path d="M12 14l6.16-3.42a12 12 0 01.84 4.42 12 12 0 01-7 1 12 12 0 01-7-1 12 12 0 01.84-4.42L12 14z"/></svg></button>

@@ -681,6 +681,10 @@ window.addEventListener('load', async () => {
 }
 .annex-tab:hover { color: var(--primary); }
 .annex-tab-active { color: var(--primary) !important; border-bottom-color: var(--primary) !important; }
+/* Clickable ID / Name headers on the Faculty and Supervisors tables. */
+.th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+.th-sort:hover { color: var(--primary); }
+.th-sort .sort-ind { font-size: 0.7em; margin-left: 2px; opacity: 0.85; }
 </style>
 </head>
 <body>
@@ -873,7 +877,7 @@ window.addEventListener('load', async () => {
           <table>
             <thead>
               <tr>
-                <th>ID</th><th>Name</th><th>Department</th><th>Subjects</th><th>Status</th><th>Actions</th>
+                <th class="th-sort" onclick="setTeacherSort('id')" title="Sort by ID">ID <span class="sort-ind" data-sort="id"></span></th><th class="th-sort" onclick="setTeacherSort('name')" title="Sort by name">Name <span class="sort-ind" data-sort="name"></span></th><th>Department</th><th>Subjects</th><th>Status</th><th>Actions</th>
               </tr>
             </thead>
             <tbody id="teachersTbody"></tbody>
@@ -911,7 +915,7 @@ window.addEventListener('load', async () => {
           <table>
             <thead>
               <tr>
-                <th>ID</th><th>Name</th><th>Department</th><th>Role</th><th>Subjects</th><th>Status</th><th>Actions</th>
+                <th class="th-sort" onclick="setTeacherSort('id')" title="Sort by ID">ID <span class="sort-ind" data-sort="id"></span></th><th class="th-sort" onclick="setTeacherSort('name')" title="Sort by name">Name <span class="sort-ind" data-sort="name"></span></th><th>Department</th><th>Role</th><th>Subjects</th><th>Status</th><th>Actions</th>
               </tr>
             </thead>
             <tbody id="supervisorsTbody"></tbody>
@@ -1677,7 +1681,7 @@ window.addEventListener('load', async () => {
           <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;margin-bottom:16px;font-size:0.8rem;">
             <strong>CSV Format:</strong> ID Number, Full Name, Year Level, Section, Course, Department, Subject Codes (semicolon-separated)<br>
             <code style="display:block;margin-top:6px;color:#166534;background:#dcfce7;padding:6px 10px;border-radius:4px;">24-00001,Juan dela Cruz,1st Year,A,Bachelor of Science in Information Technology (BSIT),CCIS,CS301;CS302</code>
-            <span style="color:var(--muted);">ID Number must be YY-NNNNN (e.g. 24-00001) or YYYY-NNNN-N (e.g. 2025-9902-1 or 2025-9902-12) &mdash; rows in any other format are skipped. &nbsp;|&nbsp; Year Level options: 1st Year / 2nd Year / 3rd Year / 4th Year / 5th Year &nbsp;|&nbsp; Course column can be full name or short code</span>
+            <span style="color:var(--muted);">ID Number must be YY-NNNNN (e.g. 24-00001) or YYYY-N-N (e.g. 2025-9902-1, 2024-652-1 or 2024-56-1) &mdash; rows in any other format are skipped. &nbsp;|&nbsp; Year Level options: 1st Year / 2nd Year / 3rd Year / 4th Year / 5th Year &nbsp;|&nbsp; Course column can be full name or short code</span>
           </div>
           <div style="border:2px dashed var(--border);border-radius:10px;padding:28px;text-align:center;margin-bottom:14px;cursor:pointer;" onclick="document.getElementById('bulkStudentFile').click()" id="bulkStudentDropZone">
             <svg width="32" height="32" fill="none" stroke="var(--muted)" stroke-width="1.5" viewBox="0 0 24 24" style="margin-bottom:8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>

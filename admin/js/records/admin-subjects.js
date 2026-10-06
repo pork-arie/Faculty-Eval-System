@@ -48,7 +48,7 @@ function renderSubjects(search = '') {
         <td>${escapeHtml(sub.dept || '—')}</td>
         <td>${escapeHtml(sub.category || '—')}</td>
         <td>${teacher?escapeHtml(teacher.name):'<span style="color:var(--muted)">Not assigned</span>'}</td>
-        <td><span class="badge badge-primary">${enrolled} student${enrolled!==1?'s':''}</span></td>
+        <td><span class="badge badge-primary" style="white-space:nowrap;">${enrolled} student${enrolled!==1?'s':''}</span></td>
         <td><div class="td-actions">
           <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditSubjectModal('${sub.id}')"><svg width="14" height="14" fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
           <button class="btn btn-ghost btn-icon btn-sm" onclick="openEnrollModal('${sub.id}')"><svg width="14" height="14" fill="none" stroke="var(--success)" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg></button>
@@ -145,7 +145,8 @@ window.getSubCourses = function() { return _subCourses.slice(); };
 window.studentMatchesSubject = function(student, sub) {
     if (!sub) return false;
     const courses  = Array.isArray(sub.courses) ? sub.courses : [];
-    const courseOk = courses.length === 0 || courses.includes(student.course);
+    const courseOk = courses.length === 0 ||
+                     courses.some(c => courseKey(c) === courseKey(student.course));
     const yearOk   = !sub.yearLevel || student.year === sub.yearLevel;
     return courseOk && yearOk;
 };
@@ -319,6 +320,7 @@ function openEnrollModal(subId) {
 
   window._enrollChecked = new Set(preselected);
   window._enrollStep = { course: '', year: '' };
+  window._enrollOpenSecs = new Set();      // which sections are expanded (Step 3)
   renderEnrollPicker();
   openModal('enrollModal');
 }
@@ -331,7 +333,8 @@ function _enrollPool() {
   return enrollCandidates(sub, window._enrollShowAll);
 }
 
-function _enrollCourseOf(st) { return (st.course || '').trim() || '(no course)'; }
+// normalizeCourseName (admin-core.js): "(BSIS )" and "(BSIS)" are one course.
+function _enrollCourseOf(st) { return normalizeCourseName(st.course) || '(no course)'; }
 function _enrollYearOf(st)   { return (st.year   || '').trim() || '(no year)'; }
 function _enrollSecOf(st)    { return (st.section|| '').trim() || '(no section)'; }
 
@@ -458,27 +461,56 @@ function renderEnrollPicker() {
   inYear.forEach(x => { (bySec[_enrollSecOf(x)] = bySec[_enrollSecOf(x)] || []).push(x); });
   const secs = Object.keys(bySec).sort();
 
+  // Each section is a collapsible block: click its header to show or hide the
+  // students. With several sections they all start CLOSED, so every section
+  // is visible at a glance instead of one long list to scroll through; a
+  // single section starts open. Open/closed is remembered while the window is
+  // open, so ticking a student or "Enrol all" does not fold everything back.
+  if (!window._enrollOpenSecs) window._enrollOpenSecs = new Set();
+  const openSet = window._enrollOpenSecs;
   box.innerHTML = _enrollCrumb()
-    + `<div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px;">Step 3 &mdash; enrol by section</div>`
+    + `<div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px;">Step 3 &mdash; enrol by section
+         ${secs.length > 1 ? '<span style="margin-left:4px;">(click a section to show its students)</span>' : ''}</div>`
     + secs.map(sec => {
-        const list = bySec[sec].slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        const list = bySec[sec].slice().sort(byName);          // last name A to Z
         const n = list.filter(x => chosen.has(x.id)).length;
         const all = n === list.length;
         const c = st.course.replace(/"/g,''), y = st.year.replace(/"/g,''), sc = sec.replace(/"/g,'');
+        const key  = st.course + '|' + st.year + '|' + sec;
+        const open = secs.length === 1 || openSet.has(key);
         return `<div style="border:1px solid var(--border);border-radius:8px;margin-bottom:10px;overflow:hidden;">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;
-                        padding:9px 12px;background:var(--bg,#f2f7f4);">
-              <div style="font-weight:600;font-size:0.84rem;">Section ${escapeHtml(sec)}
+            <div onclick="enrollToggleSectionEl(this)" data-key="${escapeHtml(key)}"
+                 title="Show or hide this section's students"
+                 style="display:flex;justify-content:space-between;align-items:center;gap:10px;
+                        padding:9px 12px;background:var(--bg,#f2f7f4);cursor:pointer;user-select:none;">
+              <div style="font-weight:600;font-size:0.84rem;display:flex;align-items:center;gap:8px;">
+                <span class="enr-chev" style="display:inline-block;transition:transform .15s;font-size:0.7rem;
+                      color:var(--muted);${open ? 'transform:rotate(90deg);' : ''}">&#9654;</span>
+                <span>Section ${escapeHtml(sec)}
                 <span style="font-weight:400;color:var(--muted);font-size:0.74rem;">
-                  &middot; ${n} of ${list.length} enrolled</span></div>
+                  &middot; ${n} of ${list.length} enrolled</span></span></div>
               <button type="button" class="btn btn-ghost btn-sm"
-                onclick="enrollBulkSection(&quot;${c}&quot;,&quot;${y}&quot;,&quot;${sc}&quot;,${all ? 'false' : 'true'})">
+                onclick="event.stopPropagation();enrollBulkSection(&quot;${c}&quot;,&quot;${y}&quot;,&quot;${sc}&quot;,${all ? 'false' : 'true'})">
                 ${all ? 'Remove all' : 'Enrol all'}</button>
             </div>
-            <div style="padding:4px 12px 8px;">${list.map(_enrollRow).join('')}</div>
+            <div class="enr-sec-body" style="padding:4px 12px 8px;${open ? '' : 'display:none;'}">${list.map(_enrollRow).join('')}</div>
           </div>`;
       }).join('');
 }
+
+// Header click: show/hide that section's students. Done on the page directly
+// (no redraw), so the list does not jump back to the top.
+window.enrollToggleSectionEl = function (head) {
+  const body = head && head.nextElementSibling;
+  if (!body) return;
+  const open = body.style.display === 'none';
+  body.style.display = open ? '' : 'none';
+  const chev = head.querySelector('.enr-chev');
+  if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
+  const key = head.getAttribute('data-key');
+  if (!window._enrollOpenSecs) window._enrollOpenSecs = new Set();
+  if (open) window._enrollOpenSecs.add(key); else window._enrollOpenSecs.delete(key);
+};
 
 function _enrollRow(s) {
   const on = window._enrollChecked.has(s.id);

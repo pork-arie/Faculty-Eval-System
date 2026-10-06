@@ -225,7 +225,7 @@ window.annexSectionRoster = function (subjectId, sectionLabel, teacherId) {
       .filter(Boolean)
       .filter(inSection)
       .filter(st => owedTo(st).length > 0)          // only students the teacher(s) teach
-      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+      .sort(byName);                                // last name A to Z
 
   // Count submissions per student so a second copy is visible rather than just
   // inflating the total.
@@ -588,7 +588,7 @@ window.buildAnnexCContent = function(teacherId) {
     const knownCourses = new Set();
     Object.keys(getData('customCourses', {})).forEach(function (d) {
         (getData('customCourses', {})[d] || []).forEach(function (c) {
-            knownCourses.add(String(c).trim().toLowerCase());
+            knownCourses.add(courseKey(c));
         });
     });
     const unknownCourses = new Set();
@@ -597,9 +597,9 @@ window.buildAnnexCContent = function(teacherId) {
         (sub.enrolledIds || []).forEach(function (id) {
             const st = students.find(function (x) { return x.id === id; });
             if (!st) return;
-            const c = String(st.course || '').trim();
+            const c = normalizeCourseName(st.course);
             if (!c) { missingCourse++; return; }
-            if (knownCourses.size && !knownCourses.has(c.toLowerCase())) unknownCourses.add(c);
+            if (knownCourses.size && !knownCourses.has(courseKey(c))) unknownCourses.add(c);
         });
     });
 

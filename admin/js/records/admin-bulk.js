@@ -14,7 +14,10 @@ window.previewBulkStudents = function(input) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = function(e) {
-    const lines = e.target.result.split('\n').map(l => l.trim()).filter(Boolean);
+    // .replace strips the invisible byte-order mark Excel adds when saving as
+    // "CSV UTF-8" - it used to glue itself to the first ID, so that row was
+    // rejected. UTF-8 is the only Excel CSV option that keeps letters like \u00f1.
+    const lines = e.target.result.replace(/^\uFEFF/, '').split('\n').map(l => l.trim()).filter(Boolean);
     const parsed = [];
     lines.forEach(line => {
       const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g,''));
@@ -100,7 +103,7 @@ window.importBulkStudents = async function() {
 
       // forceReset TRUE - see admin-students.js. A bulk-imported roster is the
       // most common way students are created, so this is the path that matters.
-      const fresh = { sid: r.sid, name: r.name, course: r.course || '', year: r.year,
+      const fresh = { sid: r.sid, name: r.name, course: normalizeCourseName(r.course), year: r.year,
                       section: String(r.section || '').trim().toUpperCase(), dept: r.dept,
                       password: r.sid, status: 'active', forceReset: true, deleted: false };
       const recId = 'stu' + Date.now() + Math.random().toString(36).slice(2,6);
@@ -132,7 +135,10 @@ window.previewBulkTeachers = function(input) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = function(e) {
-    const lines = e.target.result.split('\n').map(l => l.trim()).filter(Boolean);
+    // .replace strips the invisible byte-order mark Excel adds when saving as
+    // "CSV UTF-8" - it used to glue itself to the first ID, so that row was
+    // rejected. UTF-8 is the only Excel CSV option that keeps letters like \u00f1.
+    const lines = e.target.result.replace(/^\uFEFF/, '').split('\n').map(l => l.trim()).filter(Boolean);
     const parsed = [];
     lines.forEach(line => {
       const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g,''));
@@ -229,7 +235,10 @@ window.previewBulkSubjects = function(input) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = function(e) {
-    const lines = e.target.result.split('\n').map(l => l.trim()).filter(Boolean);
+    // .replace strips the invisible byte-order mark Excel adds when saving as
+    // "CSV UTF-8" - it used to glue itself to the first ID, so that row was
+    // rejected. UTF-8 is the only Excel CSV option that keeps letters like \u00f1.
+    const lines = e.target.result.replace(/^\uFEFF/, '').split('\n').map(l => l.trim()).filter(Boolean);
     const parsed = [];
     lines.forEach((line, i) => {
       if (i === 0 && line.toLowerCase().startsWith('subject')) return;

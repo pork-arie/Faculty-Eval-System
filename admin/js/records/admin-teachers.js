@@ -164,7 +164,7 @@ window.renderTeachers = function(search = '') {
     // Via deptFilterKey (adminfeatures.js) so "No Dept" matches a blank department.
     const matchesDept = !deptActive || deptFilterKey(t.dept) === deptActive;
     return matchesSearch && matchesDept;
-  }).sort(byName);
+  }).sort(teacherListCompare);          // ID / Name header choice
 
   const tbody = document.getElementById('teachersTbody');
   if (!tbody) return;
@@ -306,7 +306,8 @@ window.renderSupervisorTable = function(search) {
     const matchesDept = !deptActive ||
       (deptActive === 'UNASSIGNED' ? sup.length === 0 : sup.some(a => a.dept === deptActive));
     return matchesSearch && matchesDept;
-  }).sort(byName);
+  }).sort(teacherListCompare);          // ID / Name header choice
+  paintTeacherSortArrows();
 
   const tbody = document.getElementById('supervisorsTbody');
   if (!tbody) return;
@@ -512,6 +513,47 @@ const SUP_ROLES = [
 //   - a supervisor: their home department, unless they also supervise it
 //     (a CCIS chair is listed as CCIS's supervisor, not as its faculty).
 // So a CCIS teacher who is Dean of COED counts as CCIS faculty.
+// ============================================================
+// FACULTY / SUPERVISORS TABLE ORDER
+// ------------------------------------------------------------
+// Click the ID or Name header to sort by it; click again to reverse.
+//   Name - A to Z by LAST name, then first name (byName in admin-core.js):
+//          "Reman Alejan" under A, "Dr. Nancy Lanuza" under L.
+//   ID   - in Teacher ID order, numbers compared as numbers (T00002 < T00010).
+// The choice is remembered on this computer and used by both tables.
+// ============================================================
+window._teacherSort = (function () {
+  try { return JSON.parse(localStorage.getItem('teacherSortPref')) || { key: 'name', dir: 1 }; }
+  catch (e) { return { key: 'name', dir: 1 }; }
+})();
+
+window.teacherListCompare = function(a, b) {
+  const s = window._teacherSort || { key: 'name', dir: 1 };
+  const opts = { sensitivity: 'base', numeric: true };
+  const r = s.key === 'id'
+    ? String(a.tid || '').localeCompare(String(b.tid || ''), undefined, opts)
+    : personSortKey(a).localeCompare(personSortKey(b), undefined, opts);
+  return (r || String(a.tid || '').localeCompare(String(b.tid || ''), undefined, opts)) * s.dir;
+};
+
+// Arrow beside the header that is currently sorting.
+window.paintTeacherSortArrows = function() {
+  const s = window._teacherSort;
+  document.querySelectorAll('.sort-ind').forEach(el => {
+    el.textContent = el.getAttribute('data-sort') === s.key ? (s.dir === 1 ? '\u25B2' : '\u25BC') : '';
+  });
+};
+
+window.setTeacherSort = function(key) {
+  const s = window._teacherSort;
+  window._teacherSort = (s.key === key) ? { key: key, dir: -s.dir } : { key: key, dir: 1 };
+  try { localStorage.setItem('teacherSortPref', JSON.stringify(window._teacherSort)); } catch (e) {}
+  const q = (document.getElementById('teacherSearchInput') || {}).value || '';
+  if (typeof renderTeachers === 'function') renderTeachers(q);
+  if (typeof renderSupervisorTable === 'function') renderSupervisorTable();
+  paintTeacherSortArrows();
+};
+
 window.teachesInDept = function(t, deptCode) {
   if (!t || t.deleted || !deptCode || t.dept !== deptCode) return false;
   if ((t.facultyType || 'regular') !== 'supervisor') return true;
