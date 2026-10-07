@@ -468,6 +468,18 @@ function renderEnrollPicker() {
   // open, so ticking a student or "Enrol all" does not fold everything back.
   if (!window._enrollOpenSecs) window._enrollOpenSecs = new Set();
   const openSet = window._enrollOpenSecs;
+
+  // Sections no teacher of this subject takes. If every teacher is limited to
+  // particular sections (Teachers & Sections), a student outside all of them
+  // has nobody to rate, so the section is marked here and saveEnrollment()
+  // leaves those students out.
+  const subNow   = getData('subjects', []).find(s => s.id === enrollSubjectId);
+  const tList    = subNow ? subjectTeachers(subNow) : [];
+  const coverAll = !tList.length || tList.some(t => !t.sections.length);
+  const covered  = new Set();
+  tList.forEach(t => t.sections.forEach(l => covered.add(l)));
+  const untaught = list => !coverAll && list.length && !covered.has(_sectionLabel(list[0]));
+
   box.innerHTML = _enrollCrumb()
     + `<div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px;">Step 3 &mdash; enrol by section
          ${secs.length > 1 ? '<span style="margin-left:4px;">(click a section to show its students)</span>' : ''}</div>`
@@ -488,7 +500,9 @@ function renderEnrollPicker() {
                       color:var(--muted);${open ? 'transform:rotate(90deg);' : ''}">&#9654;</span>
                 <span>Section ${escapeHtml(sec)}
                 <span style="font-weight:400;color:var(--muted);font-size:0.74rem;">
-                  &middot; ${n} of ${list.length} enrolled</span></span></div>
+                  &middot; ${n} of ${list.length} enrolled</span>
+                ${untaught(list) ? `<span style="font-weight:600;color:#b45309;font-size:0.72rem;margin-left:6px;"
+                    title="Add this section to a teacher in Teachers &amp; Sections first">&middot; no teacher takes this section</span>` : ''}</span></div>
               <button type="button" class="btn btn-ghost btn-sm"
                 onclick="event.stopPropagation();enrollBulkSection(&quot;${c}&quot;,&quot;${y}&quot;,&quot;${sc}&quot;,${all ? 'false' : 'true'})">
                 ${all ? 'Remove all' : 'Enrol all'}</button>
@@ -545,10 +559,33 @@ function saveEnrollment() {
   const checked = [...window._enrollChecked];
   const subjects = getData('subjects', []);
   const idx = subjects.findIndex(s => s.id === enrollSubjectId);
-  subjects[idx].enrolledIds = checked;
-  setData('subjects', subjects);
-  addAudit('Update Enrollment', `${subjects[idx].name} — ${checked.length} students`);
-  closeModal('enrollModal');
-  renderSubjects();
-  showToast('Enrollment saved!', 'success');
+  if (idx === -1) { showToast('Subject not found.', 'error'); return; }
+
+  // Students in a section that no teacher of this subject takes would see the
+  // subject in the app with nobody to rate. Saving Teachers & Sections already
+  // unenrols them; enrolment has to follow the same rule, or they slip back in.
+  const teachers = subjectTeachers(subjects[idx]);
+  const { keep, removed } = splitUncoveredStudents(
+      Object.assign({}, subjects[idx], { enrolledIds: checked }), teachers);
+
+  const commit = (ids, left) => {
+    subjects[idx].enrolledIds = ids;
+    setData('subjects', subjects);
+    addAudit('Update Enrollment', `${subjects[idx].name} — ${ids.length} students`
+      + (left ? `, ${left} left out (no teacher for their section)` : ''));
+    closeModal('enrollModal');
+    renderSubjects();
+    showToast('Enrollment saved!' + (left ? ` ${left} student(s) left out.` : ''), 'success');
+  };
+
+  if (removed.length) {
+    const secs = Array.from(new Set(removed.map(s => _sectionLabel(s)))).join(', ');
+    showConfirm('Some students have no teacher',
+      `${removed.length} student(s) from ${secs} are in a section that no teacher of this ` +
+      `subject takes, so they would have nobody to rate. They will be left out. To enrol them, ` +
+      `first add their section to a teacher in Teachers & Sections.`,
+      () => commit(keep, removed.length));
+    return;
+  }
+  commit(checked, 0);
 }
