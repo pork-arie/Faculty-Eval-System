@@ -325,6 +325,31 @@ window.exportEnhancedReport = function() {
 // ===== FACULTY EVALUATION REPORT (FER) — CMO §6.8 =====
 // Institutional summary for the President / VPAA: statistical trends, key
 // insights, and notable patterns across all faculty for the active term.
+// ============================================================
+// "PREPARED BY" / "REVIEWED BY" FOR PRINTED REPORTS
+// ------------------------------------------------------------
+// Names and positions come from Reports > Actions > Signatories. A blank name
+// prints as an empty line to sign by hand. Styled inline so it looks the same
+// on every printed page that uses it (the FER and the Feedback prints).
+// ============================================================
+window.preparedReviewedHtml = function(marginTop) {
+    const sig = (typeof getSignatories === 'function') ? getSignatories() : {};
+    const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s == null ? '' : s));
+    const box = (label, name, role) =>
+        '<div style="flex:1;max-width:260px;">'
+      + '<div style="font-size:11px;margin-bottom:30px;">' + label + '</div>'
+      + '<div style="border-bottom:1px solid #111;min-height:16px;padding-bottom:2px;text-align:center;'
+      +       'font-weight:700;font-size:11px;text-transform:uppercase;">' + (esc(name || '') || '&nbsp;') + '</div>'
+      + '<div style="text-align:center;font-size:10px;color:#333;margin-top:3px;min-height:13px;">'
+      +       (esc(role || '') || '&nbsp;') + '</div>'
+      + '</div>';
+    return '<div style="display:flex;justify-content:space-between;gap:40px;margin-top:' + (marginTop || 40) + 'px;'
+         +      'page-break-inside:avoid;break-inside:avoid;">'
+         + box('Prepared by:', sig.preparedName, sig.preparedRole)
+         + box('Reviewed by:', sig.reviewedName, sig.reviewedRole)
+         + '</div>';
+};
+
 window.generateFERReport = function() {
     const teachers = getData('teachers', []).filter(t => !t.deleted);
     const subjects = getData('subjects', []);
@@ -460,6 +485,7 @@ window.generateFERReport = function() {
         <tbody>${listRows(bottom) || '<tr><td colspan="4" class="muted">—</td></tr>'}</tbody></table>
 
         <p class="muted" style="margin-top:18px;">This report presents aggregated, de-identified results. Individual student responses remain anonymous per CMO §6.10. SET and SEF are reported separately (no combined score) per Annex D.</p>
+        ${preparedReviewedHtml()}
     </body></html>`;
 
     const w = window.open('', '_blank');

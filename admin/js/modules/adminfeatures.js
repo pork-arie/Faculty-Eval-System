@@ -1320,6 +1320,7 @@ window._doPrintTeacherFeedback = function(teacherId, scope) {
                 <tfoot><tr><td style="text-align:right;font-weight:700;">Overall Rating</td><td style="text-align:center;font-weight:700;">${scoreVal}</td></tr></tfoot>
             </table>
             <div class="ev-comment"><strong>Comment:</strong> ${commentHtml}</div>
+            ${typeof preparedReviewedHtml === 'function' ? preparedReviewedHtml(24) : ''}
         </div>`;
     };
 
@@ -1456,6 +1457,7 @@ window.printOneEvaluation = function(evalId) {
             <tfoot><tr><td style="text-align:right;font-weight:700;">Overall Rating</td><td style="text-align:center;font-weight:700;">${scoreVal}</td></tr></tfoot>
         </table>
         <div class="cbox"><strong style="font-style:normal;">Comment:</strong> ${commentHtml}</div>
+        ${typeof preparedReviewedHtml === 'function' ? preparedReviewedHtml() : ''}
     </body></html>`;
 
     const w = window.open('', '_blank');
