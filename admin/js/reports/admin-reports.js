@@ -14,6 +14,9 @@
 // inside it would reset the filter on every toggle.
 window._trackQuery = '';
 window._trackDept  = '';
+window._trackOpen    = new Set();   // faculty whose subject list is expanded
+window._trackShowAll = false;       // "View all" pressed (more than 10 faculty)
+const TRACK_PREVIEW_ROWS = 10;
 
 function renderEvalControl() {
   const period = getData('evalPeriod', { open: false, deadline: '' });
@@ -35,17 +38,17 @@ function renderEvalControl() {
     <div class="card">
       <div class="card-header-bar" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <h3>Submission Tracking</h3>
-        <input class="form-control" id="trackSearch" placeholder="Search subject code, name, or faculty..."
+        <input class="form-control" id="trackSearch" placeholder="Search faculty, ID, or subject..."
                value="${escapeHtml(window._trackQuery)}" oninput="filterTracking(this.value)"
                style="max-width:280px;margin:0;"/>
       </div>
       <div id="trackDeptBar" style="display:flex;gap:6px;flex-wrap:wrap;padding:12px 16px 0;"></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Subject</th><th>Faculty</th><th>Total Enrolled</th><th>Submitted</th><th>Pending</th><th>Progress</th></tr></thead>
+        <thead><tr><th>Faculty</th><th>Subjects</th><th>Ratings Expected</th><th>Submitted</th><th>Pending</th><th>Progress</th></tr></thead>
         <tbody id="trackTbody"></tbody>
       </table></div>
       <div style="padding:10px 16px 14px;font-size:0.74rem;color:var(--muted);">
-        Click any subject to see who has submitted and who has not.
+        Click a faculty member to see the progress of each of their subjects. Click a subject to see who has submitted and who has not.
       </div>
     </div>
   `;
@@ -53,26 +56,73 @@ function renderEvalControl() {
   renderTrackingRows();
 }
 
-// Department pills, same pattern as the Students page.
+// ============================================================
+// SUBMISSION TRACKING, BY FACULTY
+// ------------------------------------------------------------
+// One row per faculty member, with their progress across ALL their subjects:
+// how many student ratings they should receive this term (every student they
+// teach, in every subject) and how many have come in. Clicking a faculty row
+// opens their subjects underneath, each with its own progress; clicking a
+// subject opens the roster of who has and has not submitted.
+// More than 10 faculty: the first 10 show, with "View all" for the rest.
+// ============================================================
+
+// Progress for every faculty member who teaches at least one subject.
+function _trackFacultyStats() {
+  const students = getData('students', []).filter(s => !s.deleted);
+  const byId = {}; students.forEach(s => { byId[s.id] = s; });
+  const teachers = getData('teachers', []).filter(t => !t.deleted);
+  const evals    = getData('evaluations', []).filter(e => e.evaluatorType !== 'supervisor');
+  const subjects = getData('subjects', []);
+
+  const stats = {};
+  subjects.forEach(sub => {
+    const enrolledSt = (sub.enrolledIds || []).map(id => byId[id]).filter(Boolean);
+    subjectTeacherIds(sub).forEach(tid => {
+      const t = teachers.find(x => x.id === tid);
+      if (!t) return;
+      const mine = enrolledSt.filter(st => teacherTeachesStudent(sub, tid, st));
+      const mineIds = new Set(mine.map(st => st.id));
+      const submitted = evals.filter(e => e.subjectId === sub.id && mineIds.has(e.studentId)
+                                       && evalBelongsTo(e, sub, tid)).length;
+      const st = stats[tid] || (stats[tid] = { teacher: t, expected: 0, submitted: 0, subjects: [] });
+      st.expected  += mine.length;
+      st.submitted += Math.min(submitted, mine.length);
+      const secs = (subjectTeachers(sub).find(x => x.id === tid) || {}).sections || [];
+      st.subjects.push({ sub, secs, expected: mine.length, submitted: Math.min(submitted, mine.length) });
+    });
+  });
+  return Object.values(stats);
+}
+
+function _trackPct(submitted, expected) {
+  return expected ? Math.min(100, Math.round((submitted / expected) * 100)) : 0;
+}
+
+function _trackBar(pct) {
+  return `<div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;">
+            <div class="progress-fill" style="width:${pct}%"></div></div>
+            <span style="font-size:0.72rem;font-weight:700;">${pct}%</span></div>`;
+}
+
+// Department pills: faculty counted by their home department.
 function renderTrackDeptBar() {
   const bar = document.getElementById('trackDeptBar');
   if (!bar) return;
   const DEPT_CONFIG = getDepartments();
-  const subjects = getData('subjects', []);
+  const list = _trackFacultyStats();
 
   const counts = {};
-  subjects.forEach(s => { const d = s.dept || 'UNASSIGNED'; counts[d] = (counts[d] || 0) + 1; });
+  list.forEach(s => { const d = deptFilterKey(s.teacher.dept); counts[d] = (counts[d] || 0) + 1; });
 
   let html = `<button class="student-dept-filter-btn${window._trackDept === '' ? ' active' : ''}" data-dept="" onclick="filterTrackingByDept('')">
-      All <span class="dept-filter-count">${subjects.length}</span></button>`;
-
+      All <span class="dept-filter-count">${list.length}</span></button>`;
   Object.entries(DEPT_CONFIG).forEach(([code, cfg]) => {
     if (counts[code]) {
       html += `<button class="student-dept-filter-btn${window._trackDept === code ? ' active' : ''}" data-dept="${code}" onclick="filterTrackingByDept('${code}')">
           ${escapeHtml(cfg.short || code)} <span class="dept-filter-count">${counts[code]}</span></button>`;
     }
   });
-
   if (counts['UNASSIGNED']) {
     html += `<button class="student-dept-filter-btn${window._trackDept === 'UNASSIGNED' ? ' active' : ''}" data-dept="UNASSIGNED" onclick="filterTrackingByDept('UNASSIGNED')">
         No Dept <span class="dept-filter-count">${counts['UNASSIGNED']}</span></button>`;
@@ -87,49 +137,57 @@ window.filterTracking = function (q) {
 
 window.filterTrackingByDept = function (dept) {
   window._trackDept = dept;
+  window._trackShowAll = false;
   document.querySelectorAll('#trackDeptBar .student-dept-filter-btn').forEach(p => {
     p.classList.toggle('active', p.dataset.dept === dept);
   });
   renderTrackingRows();
 };
 
+// Open or close a faculty member's subject list.
+window.toggleTrackFaculty = function (tid) {
+  if (window._trackOpen.has(tid)) window._trackOpen.delete(tid);
+  else window._trackOpen.add(tid);
+  renderTrackingRows();
+};
+
+window.toggleTrackShowAll = function () {
+  window._trackShowAll = !window._trackShowAll;
+  renderTrackingRows();
+};
+
 // Rows only - the search box is never re-rendered, so typing does not lose focus.
-// Grouped by department, then by subject code within each group.
 function renderTrackingRows() {
   const tbody = document.getElementById('trackTbody');
   if (!tbody) return;
 
   const DEPT_CONFIG = getDepartments();
-  const students = getData('students', []).filter(s => !s.deleted);
-  const teachers = getData('teachers', []);
-  const evals    = getData('evaluations', []);
-  const q        = window._trackQuery.trim().toLowerCase();
+  const q = window._trackQuery.trim().toLowerCase();
 
-  const rows = getData('subjects', [])
-    .filter(sub => {
-      const dept = sub.dept || 'UNASSIGNED';
-      if (window._trackDept && dept !== window._trackDept) return false;
+  const rows = _trackFacultyStats()
+    .filter(s => {
+      if (window._trackDept && deptFilterKey(s.teacher.dept) !== window._trackDept) return false;
       if (!q) return true;
-      // Search every teacher on the subject, not just the first.
-      const tNames = subjectTeacherNames(sub, teachers).join(' ').toLowerCase();
-      return (sub.code || '').toLowerCase().includes(q)
-          || (sub.name || '').toLowerCase().includes(q)
-          || tNames.includes(q);
+      const t = s.teacher;
+      const subjText = s.subjects.map(x => (x.sub.code || '') + ' ' + (x.sub.name || '')).join(' ');
+      return ((t.name || '') + ' ' + (t.tid || '') + ' ' + subjText).toLowerCase().includes(q);
     })
     .sort((a, b) => {
-      const da = a.dept || 'UNASSIGNED', db = b.dept || 'UNASSIGNED';
+      const da = deptFilterKey(a.teacher.dept), db = deptFilterKey(b.teacher.dept);
       if (da !== db) return da.localeCompare(db);
-      return String(a.code || '').localeCompare(String(b.code || ''), undefined, { numeric: true });
+      return byName(a.teacher, b.teacher);           // last name A to Z
     });
 
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted);">No subjects match this filter.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted);">No faculty match this filter.</td></tr>`;
     return;
   }
 
+  const shown = window._trackShowAll ? rows : rows.slice(0, TRACK_PREVIEW_ROWS);
   let html = '', lastDept = null;
-  rows.forEach(sub => {
-    const dept = sub.dept || 'UNASSIGNED';
+  shown.forEach(s => {
+    const t = s.teacher;
+    const dept = deptFilterKey(t.dept);
     if (dept !== lastDept) {
       const cfg = DEPT_CONFIG[dept];
       const label = cfg ? ((cfg.short || dept) + ' — ' + cfg.name) : 'No Department';
@@ -139,35 +197,46 @@ function renderTrackingRows() {
       lastDept = dept;
     }
 
-    const enrolledSt = (sub.enrolledIds || []).map(eid => students.find(s => s.id === eid)).filter(Boolean);
-    const enrolled   = enrolledSt.length;
-    // With several teachers a student owes one rating PER teacher they have, so
-    // progress is measured against ratings expected, not students enrolled.
-    // Measuring against students let "submitted" pass the enrolment - pending
-    // going negative and progress past 100% - as soon as a subject had two.
-    const tIds      = subjectTeacherIds(sub);
-    const expected  = tIds.reduce((n, tid) =>
-        n + enrolledSt.filter(st => teacherTeachesStudent(sub, tid, st)).length, 0);
-    const submitted = evals.filter(e => e.subjectId === sub.id && e.evaluatorType !== 'supervisor'
-        && enrolledSt.some(st => st.id === e.studentId)
-        && tIds.some(tid => evalBelongsTo(e, sub, tid))).length;
-    const pending   = Math.max(0, expected - submitted);
-    const pct       = expected ? Math.min(100, Math.round((submitted / expected) * 100)) : 0;
-    const teacherNames = subjectTeacherNames(sub, teachers);
-
-    // Whole row opens the roster. annexSectionRoster with a blank section label
-    // covers every section of the subject - the same view Annex C column (3)
-    // opens, so there is one implementation of "who submitted", not two.
-    html += `<tr style="cursor:pointer;" title="Click to see who has submitted"
-                 onclick="annexSectionRoster('${sub.id}', &quot;&quot;)">
-      <td><strong>${escapeHtml(sub.code)}</strong> - ${escapeHtml(sub.name)}</td>
-      <td>${teacherNames.length ? teacherNames.map(n => escapeHtml(n)).join('<br>') : '—'}</td>
-      <td>${enrolled}</td>
-      <td><span class="badge badge-success">${submitted}</span></td>
+    const open    = window._trackOpen.has(t.id);
+    const pending = Math.max(0, s.expected - s.submitted);
+    const pct     = _trackPct(s.submitted, s.expected);
+    html += `<tr style="cursor:pointer;" title="${open ? 'Hide' : 'Show'} this faculty member's subjects"
+                 onclick="toggleTrackFaculty('${t.id}')">
+      <td><span style="display:inline-block;width:14px;font-size:0.7rem;color:var(--muted);transition:transform .15s;${open ? 'transform:rotate(90deg);' : ''}">&#9654;</span>
+          <strong>${escapeHtml(t.name)}</strong>
+          <span style="font-family:monospace;font-size:0.72rem;color:var(--muted);margin-left:4px;">${escapeHtml(t.tid || '')}</span></td>
+      <td>${s.subjects.length}</td>
+      <td>${s.expected}</td>
+      <td><span class="badge badge-success">${s.submitted}</span></td>
       <td><span class="badge badge-warning">${pending}</span></td>
-      <td style="min-width:120px;"><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="flex:1;"><div class="progress-fill" style="width:${pct}%"></div></div><span style="font-size:0.72rem;font-weight:700;">${pct}%</span></div></td>
+      <td style="min-width:120px;">${_trackBar(pct)}</td>
     </tr>`;
+
+    if (open) {
+      s.subjects
+        .slice()
+        .sort((a, b) => String(a.sub.code || '').localeCompare(String(b.sub.code || ''), undefined, { numeric: true }))
+        .forEach(x => {
+          const p = _trackPct(x.submitted, x.expected);
+          html += `<tr style="cursor:pointer;background:#fbfdfc;" title="Click to see who has submitted"
+                       onclick="annexSectionRoster('${x.sub.id}', &quot;&quot;)">
+            <td style="padding-left:40px;font-size:0.82rem;">
+                <strong>${escapeHtml(x.sub.code || '')}</strong> - ${escapeHtml(x.sub.name || '')}</td>
+            <td style="font-size:0.78rem;color:var(--muted);">${x.secs.length ? escapeHtml(x.secs.join(', ')) : 'All students'}</td>
+            <td style="font-size:0.82rem;">${x.expected}</td>
+            <td><span class="badge badge-success">${x.submitted}</span></td>
+            <td><span class="badge badge-warning">${Math.max(0, x.expected - x.submitted)}</span></td>
+            <td style="min-width:120px;">${_trackBar(p)}</td>
+          </tr>`;
+        });
+    }
   });
+
+  if (rows.length > TRACK_PREVIEW_ROWS) {
+    html += `<tr><td colspan="6" style="text-align:center;padding:10px;">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="toggleTrackShowAll()">
+          ${window._trackShowAll ? 'Show less' : `View all ${rows.length} faculty`}</button></td></tr>`;
+  }
   tbody.innerHTML = html;
 }
 
