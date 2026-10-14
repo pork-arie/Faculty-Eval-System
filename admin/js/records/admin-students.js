@@ -165,7 +165,7 @@ function openEditStudentModal(id) {
 // NwSSU uses TWO student ID formats, and both are accepted:
 //
 //   YY-NNNNN       e.g. 24-00001     two-digit year, hyphen, five digits
-//   YYYY-N-N       e.g. 2025-9902-1  four-digit year, a number of ONE TO FOUR
+//   YYYY-N-N       e.g. 2025-9902-1  four-digit year, a number of ONE TO FIVE
 //                  or 2024-652-1     digits, then one or two digits.
 //                  or 2024-56-1      The registrar does not zero-pad the middle
 //                                    part (class lists show 2024-652-1 and
@@ -183,7 +183,7 @@ function openEditStudentModal(id) {
 // For YY-NNNNN the zero padding is load-bearing - "22-1745" and "22-01745" are
 // the same person to a human but two different strings to the duplicate
 // check, so one mistyped entry creates a second record that looks identical.
-const STUDENT_ID_RE = /^(?:\d{2}-\d{5}|\d{4}-\d{1,4}-\d{1,2})$/;
+const STUDENT_ID_RE = /^(?:\d{2}-\d{5}|\d{4}-\d{1,5}-\d{1,2})$/;
 
 // Repairs the near-misses people actually type, and NOTHING else.
 //
@@ -200,7 +200,7 @@ function normalizeStudentId(raw) {
   // two-digit year of the old format. No padding - the registrar writes the
   // middle part unpadded (2024-652-1) - so only the separators are repaired
   // ("2025 9902 1", "2025\u20139902\u20131").
-  const n = v.match(new RegExp('^(\\d{4})' + SEP + '(\\d{1,4})' + SEP + '(\\d{1,2})$'));
+  const n = v.match(new RegExp('^(\\d{4})' + SEP + '(\\d{1,5})' + SEP + '(\\d{1,2})$'));
   if (n) return n[1] + '-' + n[2] + '-' + n[3];
 
   // YY-NNNNN, with the zero padding repaired ("22-1745" -> "22-01745").
