@@ -34,33 +34,42 @@ window.setStudentDeptFilter = function(dept) {
 };
 
 // ===== STUDENTS =====
-// One search word against one student. Every word typed must match, in any
-// order, so "bscs 2ndyr c" finds BSCS, 2nd Year, Section C.
-//   - a single letter is a SECTION ("c"), never part of a name - otherwise
-//     "c" would match every name or course containing that letter
-//   - a single digit is a YEAR ("2" = 2nd Year)
-//   - year spellings: "2nd", "2ndyr", "2nd-yr", "2nd year"
-//   - year + section together: "2c", "2-c"
-//   - anything else is a part of the name, ID, course (or its code), or dept
-function studentMatchesWord(s, w) {
-  const section = String(s.section || '').trim().toLowerCase();
-  const yearNum = (String(s.year || '').match(/\d/) || [''])[0];
-  if (w.length === 1) return w === section || (w === yearNum && /\d/.test(w));
-  const yr = yearNum ? yearNum + ({1:'st',2:'nd',3:'rd'}[yearNum] || 'th') : '';
-  const yearForms = yr ? [yr, yr + 'yr', yr + '-yr', yr + 'year', yr + '-year', yearNum + 'yr'] : [];
-  const combos = yearNum && section ? [yearNum + section, yearNum + '-' + section, yr + section, yr + '-' + section] : [];
-  if (w === section || yearForms.includes(w) || combos.includes(w)) return true;
+// Students search. Every term must match, in any order. A section letter
+// only counts as a section when it comes with a year level - on its own, a
+// single letter is just part of a name like any other word.
+//   "bscs 2ndyr c", "bscs 2nd year c", "2c", "2-c", "2nd c"  -> year 2, Sec C
+//   "2", "2nd", "2ndyr", "2nd year"                         -> year 2, any section
+//   anything else -> part of the name, ID, course (or its code) or department
+const YEAR_TERM_RE = /^([1-5])(?:st|nd|rd|th)?(?:-?(?:yr|year))?(?:-?([a-z]))?$/;
+function parseStudentSearch(search) {
+  const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = [];
+  for (let i = 0; i < words.length; i++) {
+    const m = words[i].match(YEAR_TERM_RE);
+    if (!m) { terms.push({ text: words[i] }); continue; }
+    const t = { year: m[1], section: m[2] || '' };
+    if (!t.section && /^(yr|year)$/.test(words[i + 1] || '')) i++;
+    if (!t.section && /^[a-z]$/.test(words[i + 1] || '')) t.section = words[++i];
+    terms.push(t);
+  }
+  return terms;
+}
+function studentMatchesTerm(s, t) {
+  if (t.year) {
+    const yearNum = (String(s.year || '').match(/\d/) || [''])[0];
+    return yearNum === t.year && (!t.section || String(s.section || '').trim().toLowerCase() === t.section);
+  }
   const code = typeof courseShorthand === 'function' ? courseShorthand(s.course) : '';
-  return [s.name, s.sid, s.dept, s.course, code, s.year].some(v => String(v || '').toLowerCase().includes(w));
+  return [s.name, s.sid, s.dept, s.course, code].some(v => String(v || '').toLowerCase().includes(t.text));
 }
 
 function renderStudents(search = '') {
   renderStudentDeptFilterBar();
   const deptActive = (document.getElementById('studentDeptFilterBar') || {}).dataset?.active || '';
   const students = getData('students', []).filter(s => !s.deleted);
-  const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = parseStudentSearch(search);
   const filtered = students.filter(s =>
-    words.every(w => studentMatchesWord(s, w)) &&
+    terms.every(t => studentMatchesTerm(s, t)) &&
     (!deptActive || s.dept === deptActive)
   ).sort(byName);
   const tbody = document.getElementById('studentsTbody');
