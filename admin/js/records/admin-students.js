@@ -34,6 +34,8 @@ window.setStudentDeptFilter = function(dept) {
 };
 
 // ===== STUDENTS =====
+// NOTE: renderStudents below is overridden by the one in adminfeatures.js
+// (loaded later). Both use parseStudentSearch / studentMatchesTerm.
 // Students search. Every term must match, in any order. A section letter
 // only counts as a section when it comes with a year level - on its own, a
 // single letter is just part of a name like any other word.

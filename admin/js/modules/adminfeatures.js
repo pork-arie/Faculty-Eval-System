@@ -213,11 +213,11 @@ window.renderStudents = function(search) {
     const allStudents = getData('students', []).filter(s => !s.deleted);
     const DEPT_CONFIG = getDepartments();
 
+    // Each word on its own; "2nd a" / "2a" = year + section. The rules live
+    // in parseStudentSearch / studentMatchesTerm (admin-students.js).
+    const terms = parseStudentSearch(query || '');
     const filtered = allStudents.filter(s => {
-        const matchSearch = !query ||
-            s.name.toLowerCase().includes(query.toLowerCase()) ||
-            s.sid.toLowerCase().includes(query.toLowerCase()) ||
-            (s.dept || '').toLowerCase().includes(query.toLowerCase());
+        const matchSearch = terms.every(t => studentMatchesTerm(s, t));
         const matchDept = !deptFilter || deptFilterKey(s.dept) === deptFilter;
         return matchSearch && matchDept;
     });
