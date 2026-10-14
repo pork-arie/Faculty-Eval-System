@@ -38,8 +38,9 @@ function renderStudents(search = '') {
   renderStudentDeptFilterBar();
   const deptActive = (document.getElementById('studentDeptFilterBar') || {}).dataset?.active || '';
   const students = getData('students', []).filter(s => !s.deleted);
+  const q = search.toLowerCase();
   const filtered = students.filter(s =>
-    (s.name.toLowerCase().includes(search.toLowerCase()) || s.sid.includes(search) || (s.dept||'').toLowerCase().includes(search.toLowerCase())) &&
+    [s.name, s.sid, s.dept, s.course, s.year, s.section].some(v => String(v || '').toLowerCase().includes(q)) &&
     (!deptActive || s.dept === deptActive)
   ).sort(byName);
   const tbody = document.getElementById('studentsTbody');
