@@ -213,11 +213,11 @@ window.renderStudents = function(search) {
     const allStudents = getData('students', []).filter(s => !s.deleted);
     const DEPT_CONFIG = getDepartments();
 
+    // Each word on its own; "2nd a" / "2a" = year + section. The rules live
+    // in parseStudentSearch / studentMatchesTerm (admin-students.js).
+    const terms = parseStudentSearch(query || '');
     const filtered = allStudents.filter(s => {
-        const matchSearch = !query ||
-            s.name.toLowerCase().includes(query.toLowerCase()) ||
-            s.sid.toLowerCase().includes(query.toLowerCase()) ||
-            (s.dept || '').toLowerCase().includes(query.toLowerCase());
+        const matchSearch = terms.every(t => studentMatchesTerm(s, t));
         const matchDept = !deptFilter || deptFilterKey(s.dept) === deptFilter;
         return matchSearch && matchDept;
     });
@@ -1858,6 +1858,7 @@ window.showDeptFullList = function(deptCode, type) {
         + '</div>').join('');
       return {
         id: st.id,
+        student: st,
         s: ((st.sid || '') + ' ' + (st.name || '') + ' ' + courseFull + ' ' + courseShort
             + ' ' + subs.map(x => x.code).join(' ')).toLowerCase(),
         cells: [mono(st.sid), strong(st.name), esc(courseShort), esc(ys), summary],
@@ -1923,9 +1924,17 @@ window.showDeptFullList = function(deptCode, type) {
   if (searchEl) {
     searchEl.addEventListener('input', function() {
       const q = this.value.trim().toLowerCase();
+      // Enrolled students search like the Students page (parseStudentSearch in
+      // admin-students.js): each word on its own, "2nd c" / "2c" = year +
+      // section. Rows line up with window._dflExport.rows, as in the export.
+      const terms = (type === 'enrolled' && typeof parseStudentSearch === 'function') ? parseStudentSearch(q) : null;
       let shown = 0;
-      Array.prototype.forEach.call(bodyEl.querySelectorAll('tr[data-s]'), tr => {
-        const hit = !q || tr.getAttribute('data-s').indexOf(q) > -1;
+      Array.prototype.forEach.call(bodyEl.querySelectorAll('tr[data-s]'), (tr, i) => {
+        const st = rows[i] && rows[i].student;
+        const hay = tr.getAttribute('data-s');
+        const hit = !q || (terms && st
+          ? terms.every(t => t.year ? studentMatchesTerm(st, t) : hay.indexOf(t.text) > -1)
+          : hay.indexOf(q) > -1);
         tr.style.display = hit ? '' : 'none';
         if (hit) shown++;
       });
