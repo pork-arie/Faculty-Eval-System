@@ -35,6 +35,7 @@ function renderEvalControl() {
 
       </div>
     </div>
+    <div id="trackDeptSummary"></div>
     <div class="card">
       <div class="card-header-bar" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <h3>Submission Tracking</h3>
@@ -52,8 +53,94 @@ function renderEvalControl() {
       </div>
     </div>
   `;
+  renderTrackDeptSummary();
   renderTrackDeptBar();
   renderTrackingRows();
+}
+
+// ============================================================
+// DEPARTMENT PROGRESS
+// ------------------------------------------------------------
+// One card per department: student ratings submitted vs expected across all
+// its faculty (faculty counted by home department, as in the table below).
+// Clicking a card filters the table to that department. Hidden when only one
+// department has a teaching load - the card would just repeat the total.
+// ============================================================
+function _trackDaysLeft(deadline) {
+  if (!deadline) return null;
+  const end = new Date(deadline + 'T23:59:59');
+  if (isNaN(end)) return null;
+  return Math.ceil((end - new Date()) / 86400000);
+}
+
+// 'danger' / 'warning' when a department is behind with the deadline close.
+function _trackRisk(pct, daysLeft) {
+  if (daysLeft === null || pct >= 100) return '';
+  if (daysLeft <= 7 && pct < 50) return 'danger';
+  if (daysLeft <= 14 && pct < 75) return 'warning';
+  return '';
+}
+
+function renderTrackDeptSummary() {
+  const box = document.getElementById('trackDeptSummary');
+  if (!box) return;
+  const DEPT_CONFIG = getDepartments();
+  const period = getData('evalPeriod', { open: false, deadline: '' });
+  const daysLeft = _trackDaysLeft(period.deadline);
+
+  const byDept = {};
+  let expected = 0, submitted = 0;
+  _trackFacultyStats().forEach(s => {
+    const d = deptFilterKey(s.teacher.dept);
+    const g = byDept[d] || (byDept[d] = { expected: 0, submitted: 0, faculty: 0 });
+    g.expected += s.expected; g.submitted += s.submitted; g.faculty++;
+    expected += s.expected; submitted += s.submitted;
+  });
+
+  const codes = Object.keys(DEPT_CONFIG).filter(c => byDept[c]);
+  if (byDept['UNASSIGNED']) codes.push('UNASSIGNED');
+  if (codes.length < 2) { box.innerHTML = ''; return; }
+
+  const colors = { danger: 'var(--danger,#dc2626)', warning: 'var(--warning,#d97706)' };
+  const overallPct = _trackPct(submitted, expected);
+  const deadlineText = daysLeft === null ? 'No deadline set'
+    : daysLeft < 0 ? 'Deadline passed'
+    : daysLeft === 0 ? 'Due today'
+    : daysLeft + ' day' + (daysLeft !== 1 ? 's' : '') + ' to deadline';
+
+  const cards = codes.map(code => {
+    const g = byDept[code];
+    const cfg = DEPT_CONFIG[code];
+    const pct = _trackPct(g.submitted, g.expected);
+    const risk = _trackRisk(pct, daysLeft);
+    const fill = risk ? `background:${colors[risk]};` : '';
+    const active = window._trackDept === code;
+    const name = cfg ? (cfg.short || code) : 'No Dept';
+    return `<button type="button" onclick="filterTrackingByDept('${active ? '' : code}')"
+        title="${escapeHtml(cfg ? cfg.name : 'No Department')} - click to ${active ? 'show all' : 'filter the table'}"
+        style="text-align:left;cursor:pointer;background:var(--white,#fff);border:1.5px solid ${active ? 'var(--primary,#064e3b)' : 'var(--border,#e2e8f0)'};
+               border-radius:var(--radius,10px);padding:12px 14px;font:inherit;color:inherit;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px;">
+          <strong style="font-size:0.9rem;">${escapeHtml(name)}</strong>
+          <span style="font-weight:700;font-size:0.95rem;${risk ? 'color:' + colors[risk] + ';' : ''}">${pct}%</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;${fill}"></div></div>
+        <div style="font-size:0.72rem;color:var(--muted);margin-top:6px;">
+          ${g.submitted.toLocaleString()} / ${g.expected.toLocaleString()} ratings &middot; ${g.faculty} faculty</div>
+      </button>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header-bar" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <h3>Department Progress</h3>
+        <span style="font-size:0.8rem;color:var(--muted);">Overall <strong>${overallPct}%</strong>
+          (${submitted.toLocaleString()} / ${expected.toLocaleString()}) &middot; ${deadlineText}</span>
+      </div>
+      <div class="card-body" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;">
+        ${cards}
+      </div>
+    </div>`;
 }
 
 // ============================================================
@@ -141,6 +228,7 @@ window.filterTrackingByDept = function (dept) {
   document.querySelectorAll('#trackDeptBar .student-dept-filter-btn').forEach(p => {
     p.classList.toggle('active', p.dataset.dept === dept);
   });
+  renderTrackDeptSummary();
   renderTrackingRows();
 };
 
@@ -254,6 +342,7 @@ function updatePeriodSettings() {
   period.deadline = document.getElementById('deadlineInput').value;
   setData('evalPeriod', period);
   addAudit('Update Eval Settings', `Deadline: ${period.deadline}`);
+  renderTrackDeptSummary();   // days-to-deadline and the at-risk colours depend on it
 }
 
 // ===== REPORTS - CMO 19 COMPLIANT =====
@@ -592,6 +681,7 @@ window._openRptViewAllPage = function(tableType) {
     // Stash what we need so renderRptViewAll can read it
     window._rptViewAllType = tableType;
     window._rptViewAllDept = window._reportsDeptFilter || '';
+    window._rptViewAllSearch = '';
 
     // Use showPage — registers the page as active, runs its renderer
     showPage('rptViewAll');
@@ -615,49 +705,37 @@ function renderRptViewAll() {
         ? (DEPT_CONFIG[dept] ? escapeHtml(DEPT_CONFIG[dept].short || dept) : escapeHtml(dept))
         : 'All Departments';
 
-    const title    = (isFaculty ? 'Faculty Performance' : 'Supervisors') + ' — ' + deptLabel;
-    const subtitle = list.length + ' ' + (isFaculty ? 'faculty member' : 'supervisor') + (list.length !== 1 ? 's' : '');
+    const title = (isFaculty ? 'Faculty Performance' : 'Supervisors') + ' — ' + deptLabel;
 
-    let tbody;
-    if (isFaculty) {
-        tbody = `<thead>
-                    <tr>
-                        <th>Faculty Name</th>
-                        <th>Department</th>
-                        <th style="text-align:center;">Classes</th>
-                        <th style="text-align:center;">Evals</th>
-                        <th style="color:#16a34a;text-align:center;">SET Rating</th>
-                        <th style="color:#d97706;text-align:center;">SEF Rating</th>
-                    </tr>
-                </thead>
-                <tbody>${list.length
-                    ? list.map(t => _buildFacultyRow(t)).join('')
-                    : _rptEmptyRow(6, `No faculty yet${dept ? ' in ' + deptLabel : ''}.`,
-                        'Assign faculty to a department and give them a teaching load to see them here.')}</tbody>`;
-    } else {
-        tbody = `<thead>
-                    <tr>
-                        <th>Faculty Name</th>
-                        <th>Department</th>
-                        <th style="color:#16a34a;text-align:center;">SET Rating</th>
-                        <th style="color:#d97706;text-align:center;">SEF Rating</th>
-                        <th style="text-align:center;">Status</th>
-                    </tr>
-                </thead>
-                <tbody>${list.length
-                    ? list.map(t => _buildSupervisorRow(t)).join('')
-                    : _rptEmptyRow(5, `No supervisors yet${dept ? ' in ' + deptLabel : ''}.`,
-                        'Designate a faculty member as a program chair to see them here.')}</tbody>`;
-    }
+    const thead = isFaculty
+        ? `<thead>
+                <tr>
+                    <th>Faculty Name</th>
+                    <th>Department</th>
+                    <th style="text-align:center;">Classes</th>
+                    <th style="text-align:center;">Evals</th>
+                    <th style="color:#16a34a;text-align:center;">SET Rating</th>
+                    <th style="color:#d97706;text-align:center;">SEF Rating</th>
+                </tr>
+            </thead>`
+        : `<thead>
+                <tr>
+                    <th>Faculty Name</th>
+                    <th>Department</th>
+                    <th style="color:#16a34a;text-align:center;">SET Rating</th>
+                    <th style="color:#d97706;text-align:center;">SEF Rating</th>
+                    <th style="text-align:center;">Status</th>
+                </tr>
+            </thead>`;
 
     document.getElementById('rptViewAllContent').innerHTML = `
         <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;">
             <div class="page-title">
                 <h1>${title}</h1>
-                <p>${subtitle}</p>
+                <p id="rpt-viewall-subtitle"></p>
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
-                <button class="btn btn-ghost btn-sm" ${list.length ? '' : 'disabled style="opacity:.5;cursor:not-allowed;"'} onclick="_exportRptViewAllPDF('${tableType}', window._rptViewAllList, '${deptLabel}', '${escapeHtml(dept || '')}')">
+                <button id="rpt-viewall-export-btn" class="btn btn-ghost btn-sm" onclick="_exportRptViewAllPDF('${tableType}', window._rptViewAllList, '${deptLabel}', '${escapeHtml(dept || '')}')">
                     <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export PDF
                 </button>
                 <button class="btn btn-ghost btn-sm" onclick="showPage('reports')">
@@ -665,14 +743,69 @@ function renderRptViewAll() {
                 </button>
             </div>
         </div>
+        <div class="search-box" style="margin-bottom:12px;">
+            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="rptViewAllSearchInput" placeholder="Search by name or ID..." value="${escapeHtml(window._rptViewAllSearch || '')}" oninput="_rptViewAllSetSearch(this.value)"/>
+        </div>
         <div class="card">
             <div class="table-wrap">
-                <table class="data-table">${tbody}</table>
+                <table class="data-table">${thead}<tbody id="rpt-viewall-tbody"></tbody></table>
             </div>
         </div>
     `;
-    // Cache for CSV export
-    window._rptViewAllList = list;
+
+    // Full (unsearched) list; the search box narrows it in _rptViewAllRenderRows.
+    window._rptViewAllBase = { list, isFaculty, dept, deptLabel };
+    _rptViewAllRenderRows();
+}
+
+window._rptViewAllSetSearch = function(q) {
+    window._rptViewAllSearch = q || '';
+    _rptViewAllRenderRows();
+};
+
+// Redraws only the rows and subtitle, so the search box keeps focus while typing.
+function _rptViewAllRenderRows() {
+    const base = window._rptViewAllBase;
+    const tbodyEl = document.getElementById('rpt-viewall-tbody');
+    if (!base || !tbodyEl) return;
+    const { list, isFaculty, dept, deptLabel } = base;
+
+    const q = (window._rptViewAllSearch || '').trim().toLowerCase();
+    const shown = q
+        ? list.filter(t => (t.name || '').toLowerCase().includes(q) || String(t.tid || '').toLowerCase().includes(q))
+        : list;
+
+    const noun = isFaculty ? 'faculty member' : 'supervisor';
+    const plural = n => n + ' ' + noun + (n !== 1 ? 's' : '');
+    document.getElementById('rpt-viewall-subtitle').textContent =
+        q ? `${shown.length} of ${plural(list.length)}` : plural(list.length);
+
+    const cols = isFaculty ? 6 : 5;
+    let rows;
+    if (shown.length) {
+        rows = shown.map(t => isFaculty ? _buildFacultyRow(t) : _buildSupervisorRow(t)).join('');
+    } else if (q) {
+        rows = _rptEmptyRow(cols, `No ${isFaculty ? 'faculty' : 'supervisors'} match "${escapeHtml(window._rptViewAllSearch.trim())}".`,
+            'Try a different name or ID.');
+    } else if (isFaculty) {
+        rows = _rptEmptyRow(cols, `No faculty yet${dept ? ' in ' + deptLabel : ''}.`,
+            'Assign faculty to a department and give them a teaching load to see them here.');
+    } else {
+        rows = _rptEmptyRow(cols, `No supervisors yet${dept ? ' in ' + deptLabel : ''}.`,
+            'Designate a faculty member as a program chair to see them here.');
+    }
+    tbodyEl.innerHTML = rows;
+
+    const exportBtn = document.getElementById('rpt-viewall-export-btn');
+    if (exportBtn) {
+        exportBtn.disabled = !shown.length;
+        exportBtn.style.opacity = shown.length ? '' : '.5';
+        exportBtn.style.cursor = shown.length ? '' : 'not-allowed';
+    }
+
+    // Export PDF prints what is on screen, search applied.
+    window._rptViewAllList = shown;
 }
 
 // "Prepared by" and "Approved by" at the foot of the printed list. Names and
