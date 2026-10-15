@@ -35,6 +35,7 @@ function renderEvalControl() {
 
       </div>
     </div>
+    <div id="trackDeptSummary"></div>
     <div class="card">
       <div class="card-header-bar" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <h3>Submission Tracking</h3>
@@ -52,8 +53,94 @@ function renderEvalControl() {
       </div>
     </div>
   `;
+  renderTrackDeptSummary();
   renderTrackDeptBar();
   renderTrackingRows();
+}
+
+// ============================================================
+// DEPARTMENT PROGRESS
+// ------------------------------------------------------------
+// One card per department: student ratings submitted vs expected across all
+// its faculty (faculty counted by home department, as in the table below).
+// Clicking a card filters the table to that department. Hidden when only one
+// department has a teaching load - the card would just repeat the total.
+// ============================================================
+function _trackDaysLeft(deadline) {
+  if (!deadline) return null;
+  const end = new Date(deadline + 'T23:59:59');
+  if (isNaN(end)) return null;
+  return Math.ceil((end - new Date()) / 86400000);
+}
+
+// 'danger' / 'warning' when a department is behind with the deadline close.
+function _trackRisk(pct, daysLeft) {
+  if (daysLeft === null || pct >= 100) return '';
+  if (daysLeft <= 7 && pct < 50) return 'danger';
+  if (daysLeft <= 14 && pct < 75) return 'warning';
+  return '';
+}
+
+function renderTrackDeptSummary() {
+  const box = document.getElementById('trackDeptSummary');
+  if (!box) return;
+  const DEPT_CONFIG = getDepartments();
+  const period = getData('evalPeriod', { open: false, deadline: '' });
+  const daysLeft = _trackDaysLeft(period.deadline);
+
+  const byDept = {};
+  let expected = 0, submitted = 0;
+  _trackFacultyStats().forEach(s => {
+    const d = deptFilterKey(s.teacher.dept);
+    const g = byDept[d] || (byDept[d] = { expected: 0, submitted: 0, faculty: 0 });
+    g.expected += s.expected; g.submitted += s.submitted; g.faculty++;
+    expected += s.expected; submitted += s.submitted;
+  });
+
+  const codes = Object.keys(DEPT_CONFIG).filter(c => byDept[c]);
+  if (byDept['UNASSIGNED']) codes.push('UNASSIGNED');
+  if (codes.length < 2) { box.innerHTML = ''; return; }
+
+  const colors = { danger: 'var(--danger,#dc2626)', warning: 'var(--warning,#d97706)' };
+  const overallPct = _trackPct(submitted, expected);
+  const deadlineText = daysLeft === null ? 'No deadline set'
+    : daysLeft < 0 ? 'Deadline passed'
+    : daysLeft === 0 ? 'Due today'
+    : daysLeft + ' day' + (daysLeft !== 1 ? 's' : '') + ' to deadline';
+
+  const cards = codes.map(code => {
+    const g = byDept[code];
+    const cfg = DEPT_CONFIG[code];
+    const pct = _trackPct(g.submitted, g.expected);
+    const risk = _trackRisk(pct, daysLeft);
+    const fill = risk ? `background:${colors[risk]};` : '';
+    const active = window._trackDept === code;
+    const name = cfg ? (cfg.short || code) : 'No Dept';
+    return `<button type="button" onclick="filterTrackingByDept('${active ? '' : code}')"
+        title="${escapeHtml(cfg ? cfg.name : 'No Department')} - click to ${active ? 'show all' : 'filter the table'}"
+        style="text-align:left;cursor:pointer;background:var(--white,#fff);border:1.5px solid ${active ? 'var(--primary,#064e3b)' : 'var(--border,#e2e8f0)'};
+               border-radius:var(--radius,10px);padding:12px 14px;font:inherit;color:inherit;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px;">
+          <strong style="font-size:0.9rem;">${escapeHtml(name)}</strong>
+          <span style="font-weight:700;font-size:0.95rem;${risk ? 'color:' + colors[risk] + ';' : ''}">${pct}%</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;${fill}"></div></div>
+        <div style="font-size:0.72rem;color:var(--muted);margin-top:6px;">
+          ${g.submitted.toLocaleString()} / ${g.expected.toLocaleString()} ratings &middot; ${g.faculty} faculty</div>
+      </button>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header-bar" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <h3>Department Progress</h3>
+        <span style="font-size:0.8rem;color:var(--muted);">Overall <strong>${overallPct}%</strong>
+          (${submitted.toLocaleString()} / ${expected.toLocaleString()}) &middot; ${deadlineText}</span>
+      </div>
+      <div class="card-body" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;">
+        ${cards}
+      </div>
+    </div>`;
 }
 
 // ============================================================
@@ -141,6 +228,7 @@ window.filterTrackingByDept = function (dept) {
   document.querySelectorAll('#trackDeptBar .student-dept-filter-btn').forEach(p => {
     p.classList.toggle('active', p.dataset.dept === dept);
   });
+  renderTrackDeptSummary();
   renderTrackingRows();
 };
 
@@ -254,6 +342,7 @@ function updatePeriodSettings() {
   period.deadline = document.getElementById('deadlineInput').value;
   setData('evalPeriod', period);
   addAudit('Update Eval Settings', `Deadline: ${period.deadline}`);
+  renderTrackDeptSummary();   // days-to-deadline and the at-risk colours depend on it
 }
 
 // ===== REPORTS - CMO 19 COMPLIANT =====
