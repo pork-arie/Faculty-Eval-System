@@ -592,6 +592,7 @@ window._openRptViewAllPage = function(tableType) {
     // Stash what we need so renderRptViewAll can read it
     window._rptViewAllType = tableType;
     window._rptViewAllDept = window._reportsDeptFilter || '';
+    window._rptViewAllSearch = '';
 
     // Use showPage — registers the page as active, runs its renderer
     showPage('rptViewAll');
@@ -615,49 +616,37 @@ function renderRptViewAll() {
         ? (DEPT_CONFIG[dept] ? escapeHtml(DEPT_CONFIG[dept].short || dept) : escapeHtml(dept))
         : 'All Departments';
 
-    const title    = (isFaculty ? 'Faculty Performance' : 'Supervisors') + ' — ' + deptLabel;
-    const subtitle = list.length + ' ' + (isFaculty ? 'faculty member' : 'supervisor') + (list.length !== 1 ? 's' : '');
+    const title = (isFaculty ? 'Faculty Performance' : 'Supervisors') + ' — ' + deptLabel;
 
-    let tbody;
-    if (isFaculty) {
-        tbody = `<thead>
-                    <tr>
-                        <th>Faculty Name</th>
-                        <th>Department</th>
-                        <th style="text-align:center;">Classes</th>
-                        <th style="text-align:center;">Evals</th>
-                        <th style="color:#16a34a;text-align:center;">SET Rating</th>
-                        <th style="color:#d97706;text-align:center;">SEF Rating</th>
-                    </tr>
-                </thead>
-                <tbody>${list.length
-                    ? list.map(t => _buildFacultyRow(t)).join('')
-                    : _rptEmptyRow(6, `No faculty yet${dept ? ' in ' + deptLabel : ''}.`,
-                        'Assign faculty to a department and give them a teaching load to see them here.')}</tbody>`;
-    } else {
-        tbody = `<thead>
-                    <tr>
-                        <th>Faculty Name</th>
-                        <th>Department</th>
-                        <th style="color:#16a34a;text-align:center;">SET Rating</th>
-                        <th style="color:#d97706;text-align:center;">SEF Rating</th>
-                        <th style="text-align:center;">Status</th>
-                    </tr>
-                </thead>
-                <tbody>${list.length
-                    ? list.map(t => _buildSupervisorRow(t)).join('')
-                    : _rptEmptyRow(5, `No supervisors yet${dept ? ' in ' + deptLabel : ''}.`,
-                        'Designate a faculty member as a program chair to see them here.')}</tbody>`;
-    }
+    const thead = isFaculty
+        ? `<thead>
+                <tr>
+                    <th>Faculty Name</th>
+                    <th>Department</th>
+                    <th style="text-align:center;">Classes</th>
+                    <th style="text-align:center;">Evals</th>
+                    <th style="color:#16a34a;text-align:center;">SET Rating</th>
+                    <th style="color:#d97706;text-align:center;">SEF Rating</th>
+                </tr>
+            </thead>`
+        : `<thead>
+                <tr>
+                    <th>Faculty Name</th>
+                    <th>Department</th>
+                    <th style="color:#16a34a;text-align:center;">SET Rating</th>
+                    <th style="color:#d97706;text-align:center;">SEF Rating</th>
+                    <th style="text-align:center;">Status</th>
+                </tr>
+            </thead>`;
 
     document.getElementById('rptViewAllContent').innerHTML = `
         <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;">
             <div class="page-title">
                 <h1>${title}</h1>
-                <p>${subtitle}</p>
+                <p id="rpt-viewall-subtitle"></p>
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
-                <button class="btn btn-ghost btn-sm" ${list.length ? '' : 'disabled style="opacity:.5;cursor:not-allowed;"'} onclick="_exportRptViewAllPDF('${tableType}', window._rptViewAllList, '${deptLabel}', '${escapeHtml(dept || '')}')">
+                <button id="rpt-viewall-export-btn" class="btn btn-ghost btn-sm" onclick="_exportRptViewAllPDF('${tableType}', window._rptViewAllList, '${deptLabel}', '${escapeHtml(dept || '')}')">
                     <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right:4px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export PDF
                 </button>
                 <button class="btn btn-ghost btn-sm" onclick="showPage('reports')">
@@ -665,14 +654,69 @@ function renderRptViewAll() {
                 </button>
             </div>
         </div>
+        <div class="search-box" style="margin-bottom:12px;">
+            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="rptViewAllSearchInput" placeholder="Search by name or ID..." value="${escapeHtml(window._rptViewAllSearch || '')}" oninput="_rptViewAllSetSearch(this.value)"/>
+        </div>
         <div class="card">
             <div class="table-wrap">
-                <table class="data-table">${tbody}</table>
+                <table class="data-table">${thead}<tbody id="rpt-viewall-tbody"></tbody></table>
             </div>
         </div>
     `;
-    // Cache for CSV export
-    window._rptViewAllList = list;
+
+    // Full (unsearched) list; the search box narrows it in _rptViewAllRenderRows.
+    window._rptViewAllBase = { list, isFaculty, dept, deptLabel };
+    _rptViewAllRenderRows();
+}
+
+window._rptViewAllSetSearch = function(q) {
+    window._rptViewAllSearch = q || '';
+    _rptViewAllRenderRows();
+};
+
+// Redraws only the rows and subtitle, so the search box keeps focus while typing.
+function _rptViewAllRenderRows() {
+    const base = window._rptViewAllBase;
+    const tbodyEl = document.getElementById('rpt-viewall-tbody');
+    if (!base || !tbodyEl) return;
+    const { list, isFaculty, dept, deptLabel } = base;
+
+    const q = (window._rptViewAllSearch || '').trim().toLowerCase();
+    const shown = q
+        ? list.filter(t => (t.name || '').toLowerCase().includes(q) || String(t.tid || '').toLowerCase().includes(q))
+        : list;
+
+    const noun = isFaculty ? 'faculty member' : 'supervisor';
+    const plural = n => n + ' ' + noun + (n !== 1 ? 's' : '');
+    document.getElementById('rpt-viewall-subtitle').textContent =
+        q ? `${shown.length} of ${plural(list.length)}` : plural(list.length);
+
+    const cols = isFaculty ? 6 : 5;
+    let rows;
+    if (shown.length) {
+        rows = shown.map(t => isFaculty ? _buildFacultyRow(t) : _buildSupervisorRow(t)).join('');
+    } else if (q) {
+        rows = _rptEmptyRow(cols, `No ${isFaculty ? 'faculty' : 'supervisors'} match "${escapeHtml(window._rptViewAllSearch.trim())}".`,
+            'Try a different name or ID.');
+    } else if (isFaculty) {
+        rows = _rptEmptyRow(cols, `No faculty yet${dept ? ' in ' + deptLabel : ''}.`,
+            'Assign faculty to a department and give them a teaching load to see them here.');
+    } else {
+        rows = _rptEmptyRow(cols, `No supervisors yet${dept ? ' in ' + deptLabel : ''}.`,
+            'Designate a faculty member as a program chair to see them here.');
+    }
+    tbodyEl.innerHTML = rows;
+
+    const exportBtn = document.getElementById('rpt-viewall-export-btn');
+    if (exportBtn) {
+        exportBtn.disabled = !shown.length;
+        exportBtn.style.opacity = shown.length ? '' : '.5';
+        exportBtn.style.cursor = shown.length ? '' : 'not-allowed';
+    }
+
+    // Export PDF prints what is on screen, search applied.
+    window._rptViewAllList = shown;
 }
 
 // "Prepared by" and "Approved by" at the foot of the printed list. Names and
