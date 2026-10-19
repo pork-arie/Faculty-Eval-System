@@ -248,6 +248,7 @@ window.getTeacherOverallRating = function(teacherId) {
         e.teacherId === teacherId && e.evaluatorType === 'supervisor'
         && evalInActiveTerm(e)
     );
+    // formula sa pag rate (SEF): sum of supervisor ratings / no. of supervisors
     const sefScore = supervisorEvals.length > 0
         ? (supervisorEvals.reduce((a, b) => a + b.totalScore, 0) / supervisorEvals.length).toFixed(2)
         : '—';

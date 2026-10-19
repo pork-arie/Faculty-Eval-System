@@ -160,6 +160,7 @@ function _setSectionRows(sub, classEvals, students) {
 
     return labels.map(label => {
         const given = scores[label] || [];
+        // formula sa pag rate (SET): section average = sum of student scores / no. of responses
         const avg   = given.length ? given.reduce((a, b) => a + b, 0) / given.length : 0;
         const count = byEnrolled ? (roll[label] || 0) : given.length;
         return {
@@ -167,6 +168,7 @@ function _setSectionRows(sub, classEvals, students) {
             count:         count,
             avgScore:      avg.toFixed(2),
             // Unanswered sections are listed but add nothing to the TOTAL.
+            // formula sa pag rate (SET): section weighted score = average x no. of students
             weightedScore: given.length ? (avg * count).toFixed(2) : '0.00',
             rated:         given.length > 0
         };
@@ -175,6 +177,7 @@ function _setSectionRows(sub, classEvals, students) {
 
 // CMO 19 8.3 - the single weighted-SET computation used by every report.
 // Skips unrated classes; subtracts exempted students (8.2).
+// formula sa pag rate (SET): overall SET = total weighted score / total students (max 100)
 window.computeWeightedSET = function(facultyId, termFilter) {
     const inTerm = (typeof termFilter === 'function') ? termFilter
                  : ((typeof annexEvalInTerm === 'function') ? annexEvalInTerm : () => true);
@@ -344,6 +347,7 @@ window.sigLine = function(label, value, width) {
 };
 
 // CMO 19 9.3 - mean of the supervisors' ratings.
+// formula sa pag rate (SEF): overall SEF = sum of supervisor ratings / no. of supervisors
 window.getSEFForTeacher = function(teacherId, termFilter) {
     const list = getData('evaluations', [])
         .filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor')
@@ -368,6 +372,7 @@ window.calculateFinalRating = function(teacherId, termFilter) {
     const hasSEF = sefData.length > 0;
     const supervisorScore = hasSEF ? sefAgg.average : null;   // mean of ALL supervisors
 
+    // formula sa pag rate (SET + SEF): final = SET x 60% + SEF x 40%
     const finalPercentage = (hasSET && hasSEF)
         ? Math.min(100, (studentPercentage * 0.60) + (supervisorScore * 0.40))
         : null;

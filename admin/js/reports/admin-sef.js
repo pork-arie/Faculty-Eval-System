@@ -69,6 +69,7 @@ window.saveSEFRating = function(teacherId, setId) {
     }
 
     // Percentage of the maximum possible (5 per item), not a fixed /75.
+    // formula sa pag rate (SEF): rating = total score / (no. of items x 5) x 100
     const computedRating = ((totalScore / (items.length * 5)) * 100).toFixed(2);
     // Full list: it is written back whole just below.
     const evals = getData('evaluations', [], { includeHidden: true });
