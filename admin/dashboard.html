@@ -40,10 +40,8 @@ try {
   firebase.initializeApp(window.firebaseConfig);
   window.db     = firebase.firestore();
 
-  // Campus and office networks often break Firestore's default streaming
-  // transport; reads hang instead of failing and the dashboard keeps showing
-  // its cached copy. Detect that and fall back to long polling. Must run
-  // before any read or write.
+  // Fall back to long polling where networks break Firestore's streaming.
+  // Must run before any read or write.
   try {
     window.db.settings({ experimentalAutoDetectLongPolling: true, merge: true });
   } catch (e) {
@@ -56,9 +54,8 @@ try {
   throw e;
 }
 
-// Keep STRICT_ADMIN in sync with index.html. true = production (only users with
-// an /admins/{uid} doc pass the gate). Requires the deployed firestore.rules and
-// a first-admin doc created in the Firebase console.
+// Keep STRICT_ADMIN in sync with index.html. true = only users with an
+// /admins/{uid} doc pass (needs deployed firestore.rules).
 const STRICT_ADMIN = true;
 document.documentElement.style.visibility = 'hidden';
 
@@ -73,8 +70,7 @@ try { fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function
 fbAuth.onAuthStateChanged(async (user) => {
   clearTimeout(_authWatchdog);
   if (!user) {
-    // No session on this page. Right after login the session can lag a moment
-    // (IndexedDB still flushing), so retry ONCE before concluding anything.
+    // No session yet: retry ONCE, since it can lag right after login.
     if (!sessionStorage.getItem('_dashRetried')) {
       sessionStorage.setItem('_dashRetried', '1');
       setTimeout(function(){ window.location.reload(); }, 1500);
@@ -91,10 +87,7 @@ fbAuth.onAuthStateChanged(async (user) => {
     return;
   }
   sessionStorage.removeItem('_dashRetried');
-  // Three outcomes, not two. 'unknown' - Firestore could not be reached - used
-  // to be treated as a refusal, so a brief network drop signed the admin out
-  // mid-session. onAuthStateChanged also fires on the hourly token refresh, so
-  // one blip at that moment ended the session with no explanation.
+  // Three outcomes: 'unknown' (Firestore unreachable) must not sign the admin out.
   let verdict = 'unknown';
   try {
     const ref = db.collection('admins').doc(user.uid);
@@ -147,9 +140,7 @@ async function syncCollectionToFirestore(key, val) {
     evaluations: 'evaluations', schoolYears: 'schoolYears',
     auditLog: 'auditLog', evalPeriod: 'settings'
   };
-  // FIX: 'customDepartments' was a legacy key written by an old version of saveEditDept in adminfeatures.js.
-  // It had no MAP entry, so Firestore received a blank document. Now that saveEditDept writes to 'departments',
-  // we guard here to silently discard any residual writes to the old key and prevent phantom Firestore docs.
+  // Discard writes to the legacy 'customDepartments' key (no MAP entry).
   if (key === 'customDepartments') return;
 
   try {
@@ -162,9 +153,7 @@ async function syncCollectionToFirestore(key, val) {
       await batch.commit();
       return;
     }
-    // FIX: customCourses — write each dept as its own document in the top-level
-    // 'courses' collection so it is clearly visible in Firestore.
-    // Structure: courses/{DEPT_CODE} → { dept: "COED", courses: ["BSED", ...] }
+    // customCourses: one doc per dept, courses/{DEPT_CODE} → { dept, courses: [...] }
     if (key === 'customCourses') {
       const coursesMap = val || {};
       const entries = Object.entries(coursesMap);
@@ -185,10 +174,7 @@ async function syncCollectionToFirestore(key, val) {
     if (!col) return;
     if (Array.isArray(val)) {
       let items = val;
-      // The audit log is append-only in the security rules. addAudit() re-sends the
-      // WHOLE log (up to 500 entries) on every save, so all the existing ones arrive
-      // as UPDATEs — which are denied — and a single denied write rejects the entire
-      // batch, taking the teacher/student record down with it. Send only new entries.
+      // Audit log is append-only in the rules; send only new entries.
       if (col === 'auditLog') {
         let sent = [];
         try { sent = JSON.parse(localStorage.getItem('_auditSyncedIds') || '[]'); } catch (e) {}
@@ -209,19 +195,7 @@ async function syncCollectionToFirestore(key, val) {
 }
 
 
-// ============================================================
-// LEGACY CREDENTIAL PURGE
-// ------------------------------------------------------------
-// An older version of this site stored the admin username and
-// password in localStorage under 'adminCreds'. Nothing reads it
-// any more - sign-in goes through Firebase Auth - but the value
-// stays in the browser of every machine that ever loaded that
-// version, in plain text, visible under DevTools > Application.
-//
-// Removing it here clears it from those machines the next time
-// anyone opens the site. Safe to keep indefinitely: on a browser
-// that never had it, this does nothing.
-// ============================================================
+// LEGACY CREDENTIAL PURGE: remove the old plaintext 'adminCreds' from localStorage.
 (function purgeLegacyCredentials() {
   ['adminCreds', 'adminUser', 'adminPassword', 'currentAdmin'].forEach(function (k) {
     try { if (localStorage.getItem(k) !== null) { localStorage.removeItem(k); console.warn('Removed legacy credential key:', k); } }
@@ -231,30 +205,22 @@ async function syncCollectionToFirestore(key, val) {
 
 let _staleCollections = [];
 
-// Whether the last pull from Firestore was COMPLETE.
-//
-// adminrate.js checks this before pushing localStorage back up. Pushing a
-// half-loaded copy overwrites good records with older ones - and now that
-// the sync also deletes documents missing locally, it would remove them.
+// Whether the last Firestore pull was COMPLETE; adminrate.js checks it before syncing.
 window._firestoreLoadClean = false;
 
 async function loadFromFirebase() {
   updateFirebaseStatus('loading');
   _staleCollections = [];
   window._firestoreLoadClean = false;   // re-earned on every load
-  // Placeholders while the fetch is in flight. Only fills EMPTY containers,
-  // so a warm cache still shows real data instantly.
+  // Placeholders for EMPTY containers while fetching.
   if (typeof showSkeleton === 'function') showSkeleton();
   try {
     const collections = ['students','teachers','subjects','evaluations','schoolYears','auditLog'];
     for (const col of collections) {
-      // Per-collection try/catch. Without it, one denied read (auditLog is the
-      // usual one — its rules are stricter than the rest) threw out of the whole
-      // loop, so every collection after it in this list was never loaded at all.
+      // Per-collection try/catch so one denied read doesn't skip the rest.
       let snap;
       try {
-        // A blocked network can leave a read pending forever. Without a ceiling
-        // the badge stays on "Connecting..." and stale data is never reported.
+        // Timeout so a blocked read can't hang forever.
         snap = await Promise.race([
           db.collection(col).get(),
           new Promise((_, reject) =>
@@ -263,9 +229,7 @@ async function loadFromFirebase() {
       } catch (e) {
         console.warn('Could not load "' + col + '" from Firestore:', e.code || e.message,
                      '— keeping whatever is already in localStorage.');
-        // Remember WHICH ones failed. Previously the failure was swallowed and
-        // the badge still said "Firebase Live", so the dashboard could render a
-        // stale Annex C from old localStorage while claiming to be up to date.
+        // Remember which collections failed, for the status badge.
         _staleCollections.push(col);
         continue;
       }
@@ -276,8 +240,7 @@ async function loadFromFirebase() {
           if (col === 'teachers' && !data.facultyType) data.facultyType = 'regular';
           return data;
         });
-        // Students and teachers carry passwords. They go into the in-memory
-        // vault (admin-core.js); only a stripped copy is written to storage.
+        // Passwords go to the in-memory vault (admin-core.js), not storage.
         if ((col === 'students' || col === 'teachers') && typeof _stripPasswords === 'function') {
           localStorage.setItem(col, JSON.stringify(_stripPasswords(col, docs)));
           if (window._pwVaultReady) window._pwVaultReady[col] = true;
@@ -288,15 +251,11 @@ async function loadFromFirebase() {
     }
     const evalPeriodDoc = await db.collection('settings').doc('evalPeriod').get();
     if (evalPeriodDoc.exists) localStorage.setItem('evalPeriod', JSON.stringify(evalPeriodDoc.data()));
-    // NOTE: legacy 'adminCreds' (a plaintext admin password) is no longer read
-    // or stored — admin authentication is handled entirely by Firebase Auth.
-    // FIX: Load customCourses from Firestore 'courses' collection on startup
-    // so all clients (admin + students) always get the latest courses.
+    // Admin auth is Firebase Auth only; 'adminCreds' is never read.
+    // Load customCourses from Firestore 'courses' on startup.
     const coursesSnap = await db.collection('courses').get();
 
-    // A deleted department's courses must stay deleted too. Read the shared
-    // tombstones here, so a courses document re-uploaded by a device holding an
-    // old copy is dropped - and removed from Firestore - rather than loaded.
+    // Drop (and delete) courses of tombstoned departments.
     const deadDepts = new Set();
     try {
       (await db.collection('deletedDepts').get()).forEach(t => deadDepts.add(t.id));
@@ -315,9 +274,7 @@ async function loadFromFirebase() {
       localStorage.setItem('customCourses', JSON.stringify(customCourses));
       if (typeof reloadCoursesByDept === 'function') reloadCoursesByDept();
     } else if (deadDepts.size) {
-      // Firestore holds no courses at all, so nothing above overwrote this
-      // browser's copy. Strip deleted departments from it anyway - otherwise
-      // the next course edit here would sync them straight back up.
+      // No courses in Firestore: still strip deleted departments locally.
       try {
         const local = JSON.parse(localStorage.getItem('customCourses') || '{}');
         let changed = false;
@@ -338,8 +295,7 @@ async function loadFromFirebase() {
         const { code, ...cfg } = d.data();
         const localCfg = localDepts[d.id] || {};
 
-        // If the local copy has a custom color that Firestore doesn't know about yet
-        // (e.g. saved while offline), keep the local color and push it to Firestore now.
+        // Keep a local-only custom color and push it to Firestore.
         const localHasCustomColor = localCfg.colorClass === 'dept-custom' && localCfg.color;
         const firestoreHasCustomColor = cfg.colorClass === 'dept-custom' && cfg.color;
 
@@ -364,24 +320,8 @@ async function loadFromFirebase() {
         deptsFromDB[d.id] = cfg;
       });
 
-      // FIX: Race condition — addDepartment() fires an async Firestore .set() but does NOT
-      // await it. loadFromFirebase() can run a GET before that write lands, so the new dept
-      // never appears in deptSnap. deptsFromDB is then written back to localStorage, silently
-      // wiping any dept that exists locally but hasn't been confirmed by Firestore yet.
-      // Solution: merge any local-only custom departments back in so they survive the overwrite.
-      // A department that is local-only can be one of two OPPOSITE things:
-      // just created and not yet confirmed by Firestore, or just deleted from
-      // Firestore and not yet gone from this browser. Re-uploading both is why
-      // a deleted department kept coming back - the delete removed the
-      // document, and the next page load put it straight back.
-      //
-      // removeDepartment() now records the code, so the two cases can be told
-      // apart: a tombstoned code is dropped, anything else is re-synced as
-      // before.
-      // Tombstones from BOTH places: this browser's own list, and the shared
-      // one in Firestore that every device can see. The local list alone only
-      // stopped the machine that did the deleting; another machine still
-      // holding the department re-uploaded it here on its next load.
+      // Local-only departments: re-sync ones not yet confirmed by Firestore,
+      // drop tombstoned ones (local and Firestore tombstones).
       let tombstones = [];
       try { tombstones = JSON.parse(localStorage.getItem('deletedDepts') || '[]'); } catch (e) {}
       try {
@@ -391,9 +331,7 @@ async function loadFromFirebase() {
         console.warn('Could not read the deleted-department list:', e.message);
       }
 
-      // A tombstoned department is dropped even if Firestore still has the
-      // document - another device may have re-uploaded it before this fix
-      // reached it.
+      // Tombstoned departments are dropped even if Firestore still has them.
       tombstones.forEach(code => { delete deptsFromDB[code]; });
 
       Object.entries(localDepts).forEach(([code, cfg]) => {
@@ -410,11 +348,7 @@ async function loadFromFirebase() {
         }
       });
 
-      // The local list is no longer cleaned up here. It used to be dropped as
-      // soon as the department was gone from both sides, which left nothing to
-      // stop a second device re-uploading it later. The Firestore tombstone is
-      // the lasting record now, and addDepartment() removes it if the same code
-      // is ever created again.
+      // The Firestore tombstone is the lasting record; addDepartment() clears it.
 
       localStorage.setItem('departments', JSON.stringify(deptsFromDB));
     } else {
@@ -437,12 +371,9 @@ async function loadFromFirebase() {
       try { localStorage.setItem('_lastSync', new Date().toISOString()); } catch (e) {}
     }
     updateFirebaseStatus(_staleCollections.length ? 'stale' : 'connected');
-    // Re-run the migration after Firebase data overwrites localStorage.
-    // This assigns facultyType to any legacy Firestore records that lack it,
-    // without ever overriding records that already have facultyType set.
+    // Re-run the facultyType migration after Firebase data loads.
     if (typeof migrateSupervisorRecords === 'function') migrateSupervisorRecords();
-    // FIX: re-sync sidebar + dept cards after Firestore writes authoritative
-    // departments into localStorage — fixes disappear-on-reload and ghost cards
+    // Re-sync sidebar + dept cards after Firestore departments load.
     if (typeof refreshDeptConfig === 'function') refreshDeptConfig();
     if (typeof renderDeptManagePage === 'function') renderDeptManagePage();
     _rerenderCurrentPage();
@@ -479,8 +410,7 @@ function updateFirebaseStatus(status) {
     error:     { icon: '⚠️', text: 'Offline Mode',   color: '#dc2626', tip: 'No connection. Showing the copy saved ' + _lastSyncText() + '. Click to retry.' }
   };
   const c = cfg[status] || cfg.error;
-  // Clickable: a flaky connection at boot used to leave the dashboard showing
-  // old records with no way to reload short of pressing F5.
+  // Clickable badge to reload data.
   el.style.cursor = status === 'loading' ? 'default' : 'pointer';
   el.title = c.tip;
   el.onclick = status === 'loading' ? null : function () { refreshFromCloud(); };
@@ -490,8 +420,7 @@ function updateFirebaseStatus(status) {
 // Manual re-pull. Re-renders the page you are actually on afterwards.
 window.refreshFromCloud = async function () {
   showToast('Refreshing from Firestore…', 'info');
-  // Forced: the person asked for this, so show the placeholders even over real
-  // data. Otherwise a refresh on a warm cache looks like nothing happened.
+  // Forced refresh: show placeholders even over real data.
   if (typeof showSkeleton === 'function') showSkeleton(true);
   await loadFromFirebase();
   _liveRetries = 0;
@@ -503,11 +432,9 @@ window.refreshFromCloud = async function () {
       : 'Data refreshed.', _staleCollections.length ? 'warning' : 'success');
 };
 
-// After a reload the open page must be redrawn, or the admin keeps looking at
-// the records that were on screen before the refresh.
+// Redraw the open page after a reload.
 function _rerenderCurrentPage() {
-  // Read the open page from the DOM. There is no page-state variable to consult
-  // - showPage only toggles the .active class - and the id is "page-<name>".
+  // Open page from the DOM: the .active "page-<name>" element.
   const el = document.querySelector('.page.active');
   const page = el ? el.id.replace(/^page-/, '') : 'dashboard';
   const fn = {
@@ -517,38 +444,20 @@ function _rerenderCurrentPage() {
     supervisor: 'renderSupervisorList', rptViewAll: 'renderRptViewAll',
     dept: 'renderDeptPage', deptManage: 'renderDeptManagePage'
   }[page];
-  // renderDeptPage needs the department code to redraw. Clicking Firebase
-  // Live on a department page called it with none, so the page could not
-  // rebuild and only a full browser reload worked. The open department is
-  // on window.currentDept (set by showDeptPage).
+  // Department pages need window.currentDept to redraw.
   const arg = (page === 'dept') ? window.currentDept : undefined;
   if (page === 'dept' && !arg) { if (typeof renderDashboard === 'function') renderDashboard(); return; }
   if (fn && typeof window[fn] === 'function') { try { window[fn](arg); return; } catch (e) {} }
   if (typeof renderDashboard === 'function') renderDashboard();
 }
 
-// ============================================================
-// LIVE DATA (students, teachers, evaluations)
-// ------------------------------------------------------------
-// loadFromFirebase() reads everything ONCE. With several laptops open, each
-// kept the data as it was when the page loaded. These listeners keep this
-// browser's copy current:
-//   - a student or teacher changed on ANY laptop shows up here in a second
-//     or two;
-//   - an evaluation submitted from the app or the student portal appears
-//     on the dashboard, Evaluation Control, department and feedback pages
-//     without pressing refresh.
-//
-// The listeners only ever READ. They never call setData() - if they did,
-// every laptop would start re-uploading every other laptop's changes.
-// ============================================================
+// LIVE DATA (students, teachers, evaluations): read-only listeners keep this
+// browser current. They never call setData().
 
-// Which open pages are redrawn when each collection changes. Reports and
-// "View full list" are NOT redrawn automatically - a redraw there resets the
-// department filter the admin picked - so they get a small notice instead.
+// Pages redrawn per collection. Reports / "View full list" get a notice
+// instead, to keep their filters.
 const LIVE_COLLECTIONS = {
-  // Students and teachers also redraw the evaluation pages: deleting someone
-  // hides the ratings they gave (countedEvaluations in admin-core.js).
+  // Students/teachers also redraw evaluation pages (countedEvaluations).
   students:    { redraw: ['students', 'dashboard', 'supervisor', 'dept', 'evalControl', 'feedback'] },
   teachers:    { redraw: ['teachers', 'dashboard', 'supervisor', 'dept', 'evalControl', 'feedback'] },
   evaluations: { redraw: ['dashboard', 'evalControl', 'dept', 'supervisor', 'feedback'],
@@ -564,8 +473,7 @@ let _liveLastNotice = 0;
 
 function startRosterListeners() {
   if (_liveUnsubs || !db) return;                        // once per page
-  // The page can finish loading before the sign-in is restored. A listener
-  // started then is refused, so wait for the user first.
+  // Wait for sign-in before starting listeners.
   if (!fbAuth.currentUser) {
     const off = fbAuth.onAuthStateChanged(u => { if (u) { off(); startRosterListeners(); } });
     return;
@@ -595,17 +503,14 @@ function startRosterListeners() {
       _scheduleLiveRedraw();
     }, err => {
       console.warn('Live updates for ' + col + ' stopped:', (err && (err.code || err.message)));
-      // Stop them all and try again shortly - a first-time admin's /admins doc
-      // may still be being created. Gives up after a few tries; clicking the
-      // status badge (refreshFromCloud) starts them again.
+      // Stop all and retry shortly (a few tries); the status badge restarts them.
       if (_liveUnsubs) { _liveUnsubs.forEach(u => { try { u(); } catch (e) {} }); _liveUnsubs = null; }
       if (_liveRetries++ < 3) setTimeout(startRosterListeners, 5000);
     });
   });
 }
 
-// Debounced, because a bulk import or a class submitting at once fires many
-// snapshots in a row.
+// Debounced for bursts of snapshots.
 function _scheduleLiveRedraw() {
   clearTimeout(_liveRedrawTimer);
   _liveRedrawTimer = setTimeout(_liveRedraw, 400);
@@ -615,18 +520,12 @@ function _liveRedraw() {
   const el = document.querySelector('.page.active');
   const page = el ? el.id.replace(/^page-/, '') : '';
 
-  // Never redraw under someone's cursor. If a field on this page has focus
-  // (typing a deadline, a search), wait until they are done. The Students and
-  // Teachers search boxes are the exception: those redraws replace only the
-  // table rows, never the box itself.
+  // Don't redraw while a field has focus (except Students/Teachers search).
   const focused = document.activeElement;
   const typingHere = focused && el && el.contains(focused) &&
                      /^(INPUT|TEXTAREA|SELECT)$/.test(focused.tagName) &&
                      !/^(studentSearchInput|teacherSearchInput)$/.test(focused.id);
-  // Nor while a pop-up is open over the page (a form, or the Print Ratings
-  // chooser). Redrawing the page underneath shifts the layout, and the browser
-  // closes an open dropdown when that happens - so a live update arriving at
-  // the wrong moment made the dropdown snap shut as it was being used.
+  // Nor while a pop-up is open, which would close open dropdowns.
   const popupOpen = document.querySelector(
     '.fb-print-overlay, .modal-overlay.open, .modal-overlay.active, .modal.open, #sefAuditOverlay');
   if (typingHere || popupOpen) { _liveRedrawTimer = setTimeout(_liveRedraw, 1500); return; }
@@ -976,16 +875,7 @@ window.addEventListener('load', async () => {
 
     <!-- REPORTS -->
     <div class="page" id="page-reports">
-      <!-- Title and toolbar share one row. Two things used to stop that:
-           1. The five action buttons plus the term selector measured 1024px
-              against roughly 1100px of content width, so the title never had
-              room. They now live in the "Actions" menu below, which takes the
-              toolbar to about 330px.
-           2. flex:1 1 auto made the browser measure the toolbar at its FULL
-              content width when deciding where to break the header's flex
-              line, so min-width:0 never got a chance to shrink it. The basis
-              is 0 now. Sizing lives in .reports-header / .reports-toolbar in
-              admin-styles.css rather than inline, so the two stay in step. -->
+      <!-- Title and toolbar share one row; sizing lives in .reports-header / .reports-toolbar. -->
       <div class="page-header reports-header">
         <div class="page-title"><h1>Reports & Analytics</h1><p>View teacher ratings and evaluation results</p></div>
         <div class="reports-toolbar">
@@ -994,11 +884,7 @@ window.addEventListener('load', async () => {
             <select id="reportTermSelect" onchange="setReportTerm(this.value)" title="View ratings for a school year & semester"></select>
             <svg class="term-chevron" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
-          <!-- Sliders icon rather than a hamburger on purpose: the hamburger is
-               already the sidebar toggle on mobile (.mobile-menu-btn), and two
-               hamburgers on one screen meaning different things is a trap. The
-               menu groups the two everyday report actions apart from the three
-               setup ones, which is the real distinction between them. -->
+          <!-- Sliders icon, since the hamburger is already the mobile sidebar toggle. -->
           <div class="reports-actions" id="reportsActions">
             <button type="button" class="btn btn-toolbar reports-actions-btn" id="reportsActionsBtn"
                     onclick="toggleReportsMenu(event)"
@@ -1033,9 +919,7 @@ window.addEventListener('load', async () => {
               </button>
             </div>
           </div>
-          <!-- Backup and Restore moved out: they wipe or replace every collection,
-               which is system maintenance, not a reporting action. Sitting one click
-               from Export CSV made a destructive mis-click far too easy. -->
+          <!-- Backup and Restore live elsewhere: they are destructive maintenance actions. -->
           <input type="file" id="restoreFileInput" accept="application/json,.json" style="display:none;" onchange="importSystemBackup(this)"/>
         </div>
       </div>
@@ -1261,8 +1145,7 @@ window.addEventListener('load', async () => {
         <div class="page-title"><h1>Student Feedback</h1><p>Student comments submitted during instructor evaluations</p></div>
         <div style="display:flex;gap:10px;align-items:center;">
           <div id="feedbackStats"></div>
-          <!-- Only appears when there is something to clean up; see
-               renderFeedbackPage in adminfeatures.js -->
+          <!-- Only shown when there is something to clean up (renderFeedbackPage). -->
           <button class="btn btn-ghost btn-sm" id="feedbackPurgeBtn" onclick="purgeOrphanFeedback()" style="display:none;color:var(--danger,#dc2626);border-color:#fecaca;"></button>
         </div>
       </div>
@@ -1374,9 +1257,7 @@ window.addEventListener('load', async () => {
               </select>
             </div>
             <div class="form-group">
-              <!-- Printed on Annex C section A ("Current Faculty Rank"). It was
-                   read from t.rank but nothing ever set it, so the form always
-                   showed a dash. -->
+              <!-- Printed on Annex C section A ("Current Faculty Rank"). -->
               <label class="form-label">Current Faculty Rank</label>
               <select class="form-control" id="tchRank">
                 <option value="">-- Select Rank --</option>
@@ -1422,8 +1303,7 @@ window.addEventListener('load', async () => {
               + Add department
             </button>
 
-            <!-- Kept so any code still reading a single role keeps working; it
-                 mirrors the FIRST row above. -->
+            <!-- Legacy single role; mirrors the FIRST row above. -->
             <input type="hidden" id="tchDeptRole"/>
 
             <small style="color:var(--muted);font-size:0.72rem;margin-top:8px;display:block;">
@@ -1455,8 +1335,7 @@ window.addEventListener('load', async () => {
             <div class="form-group"><label class="form-label">Subject Code</label><input class="form-control" id="subCode" placeholder="CS301"/></div>
             <div class="form-group"><label class="form-label">Subject Name</label><input class="form-control" id="subName" placeholder="Data Structures"/></div>
           </div>
-          <!-- Category and Year Level describe what KIND of subject this is, so they
-               sit together on one line. -->
+          <!-- Category and Year Level share one line. -->
           <div class="form-row">
             <div class="form-group"><label class="form-label">Category</label><select class="form-control" id="subCategory"><option value="">-- Select Category --</option><option value="Major">Major</option><option value="Minor">Minor</option><option value="GE">General Education</option><option value="PE">Physical Education</option><option value="NSTP">NSTP</option><option value="Elective">Elective</option></select></div>
             <div class="form-group">
@@ -1475,11 +1354,7 @@ window.addEventListener('load', async () => {
             </select>
           </div>
 
-          <!-- One subject is often shared by several courses in the same department
-               (BSIT and BSCS both take Computer Programming 1), so this is a
-               multi-select. It sits AFTER Department because the available courses
-               depend on it, and takes the full row width so a department with five
-               or six courses does not wrap into an unreadable block. -->
+          <!-- Multi-select: a subject can be shared by several courses. Depends on Department. -->
           <div class="form-group">
             <label class="form-label" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               Offered to Course(s)
@@ -1510,9 +1385,7 @@ window.addEventListener('load', async () => {
 
           <div class="form-group">
             <label class="form-label">Assign Teacher</label>
-            <!-- A plain <select> got unusable once faculty from every department were
-                 listed. This is a search-and-filter picker instead; the hidden input
-                 keeps the id `subTeacher` so saveSubject() reads it unchanged. -->
+            <!-- Search-and-filter picker; hidden input keeps id `subTeacher` for saveSubject(). -->
             <input type="hidden" id="subTeacher" value=""/>
             <div id="teacherPicker" class="tp-wrap"></div>
           </div>
@@ -1521,9 +1394,7 @@ window.addEventListener('load', async () => {
       </div>
     </div>
 
-    <!-- WHO TEACHES THIS SUBJECT - the list behind the MULTIPLE tag. Each
-         teacher is a button showing their sections and how many students they
-         rate; enrolment is here too, since the two jobs go together. -->
+    <!-- WHO TEACHES THIS SUBJECT - the list behind the MULTIPLE tag, plus enrolment. -->
     <div class="modal-overlay" id="subjectTeacherListModal">
       <div class="modal modal-lg">
         <div class="modal-header">
@@ -1546,9 +1417,7 @@ window.addEventListener('load', async () => {
       </div>
     </div>
 
-    <!-- Teachers & sections for ONE subject. Separate from Edit Subject because
-         sections only exist once students are enrolled: you enrol first, then
-         come here to say which teacher takes which section. -->
+    <!-- Teachers & sections for ONE subject (after students are enrolled). -->
     <div class="modal-overlay" id="subjectTeachersModal">
       <div class="modal modal-lg">
         <div class="modal-header">
@@ -1753,15 +1622,9 @@ window.addEventListener('load', async () => {
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <!-- shared/js/data.js removed: everything it defined was unused or replaced by
-         the admin scripts below, and it held old demo accounts with plain-text passwords. -->
-    <!-- ================================================================
-         LOAD ORDER IS LOAD-BEARING. Do not reorder these.
-         Later files deliberately redefine functions defined earlier and the
-         LAST definition wins. Folders group by purpose, not by load position -
-         this list is the only place the real order lives.
-
-         Which file actually owns an overridden function:
+    <!-- shared/js/data.js removed (unused, held demo passwords). -->
+    <!-- LOAD ORDER MATTERS - do not reorder. The LAST definition wins.
+         Owners of overridden functions:
            renderTeachers, renderSubjects, renderStudents, saveSubject,
            populateTeacherSelect, syncCollectionToFirestore,
            checkAndAutoFinalize .......................... modules/adminrate.js
@@ -1769,13 +1632,8 @@ window.addEventListener('load', async () => {
            openEditDeptModal, saveEditDept ........... modules/adminfeatures.js
            exportEnhancedReport .......................... modules/adminEval.js
            mcLoadDept* ................................... modules/admindept.js
-         (* wraps the earlier definition and calls it - do not delete that one.)
-
-         renderTeachers / renderSubjects / renderStudents in adminrate.js are
-         guarded by `if (typeof window.X === 'function')`, so the earlier
-         definitions in js/records/ must keep existing even though their bodies
-         never run. They are marked in those files.
-         ================================================================ -->
+         (* wraps the earlier definition - keep it. Earlier render* definitions
+         in js/records/ must also stay: adminrate.js checks they exist.) -->
     <script src="js/core/admin-core.js"></script>
     <script src="js/core/admin-scoring.js"></script>
     <script src="js/core/admin-nav.js"></script>

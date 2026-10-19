@@ -28,21 +28,8 @@ window.getActiveSY = function() {
     return null;
 };
 
-// DEFENCE POINT. Column (3) of Annex C: 'respondents' or 'enrolled'.
-//
-// CMO 19 assumes full participation (8.1 makes evaluation mandatory), so the
-// memorandum never has to choose and does not settle the case.
-//
-// 'respondents' - column (3) counts the students who actually submitted, so
-//   avg x count is the sum of the ratings really collected and every printed
-//   figure traces back to a real response.
-// 'enrolled'    - column (3) matches the class roll, the literal reading of
-//   "No. of Students". But with 1 of 2 answering, that one rating is weighted
-//   as though both students gave it - the absent student is assumed to agree.
-//
-// Set to 'respondents' so nothing is assumed. Participation is still visible:
-// the count in column (3) opens a roster showing who has and has not
-// submitted (annexSectionRoster in admin-annex.js).
+// Annex C column (3): 'respondents' (who actually submitted) or 'enrolled'
+// (class roll). 'respondents' assumes nothing about non-respondents.
 const SET_WEIGHT_BY = 'respondents';
 
 // Year/Section label, e.g. BSIT 4A.
@@ -56,32 +43,12 @@ function _sectionLabel(st) {
 }
 
 // One Annex C row per section. Rows always sum to the class total.
-// ============================================================
-// MULTIPLE TEACHERS PER SUBJECT
-// ------------------------------------------------------------
-// A subject can have several teachers, the way schools actually
-// run one course across sections or with a lecture and a lab.
-//
-//   sub.teachers = [ { id: 'tch1', sections: ['BSIT 1A'] },
-//                    { id: 'tch2', sections: ['BSIT 1B'] },
-//                    { id: 'tch3', sections: [] } ]
-//
-// A teacher WITH sections is rated only by students in those
-// sections (the course split across sections). A teacher with
-// NO sections is rated by every student in the subject (team
-// teaching - lecture and lab).
-//
-// Older subjects only have the single `teacherId`. They keep
-// working unchanged: subjectTeachers() treats that as a list of
-// one teacher who teaches everyone. `teacherId` is also kept in
-// step with the FIRST teacher on every save, so any code not yet
-// moved over still sees a sensible value.
-// ============================================================
+// MULTIPLE TEACHERS PER SUBJECT: sub.teachers = [{ id, sections }].
+// With sections, a teacher is rated only by those sections; with none,
+// by every student. Legacy `teacherId` is treated as one teacher for all
+// and kept in step with the first teacher on save.
 window.subjectTeachers = function (sub) {
-    // Deleted teachers are dropped here, in the one place every screen and
-    // report reads the list from. Deleting a teacher now takes them off each
-    // subject, but a subject saved before that still holds them - this keeps
-    // those subjects correct without anyone having to re-save them.
+    // Deleted teachers are dropped here, for every screen and report.
     let live = null;
     try {
         if (typeof getData === 'function') {
@@ -96,8 +63,7 @@ window.subjectTeachers = function (sub) {
             .filter(t => t && t.id && alive(t.id) && !seen.has(t.id) && seen.add(t.id))
             .map(t => ({ id: t.id, sections: Array.isArray(t.sections) ? t.sections.filter(Boolean) : [] }));
         if (list.length) return list;
-        // Every teacher on the list is gone: fall through to teacherId, which
-        // may still name someone who exists.
+        // All listed teachers gone: fall back to teacherId.
     }
     return (sub && sub.teacherId && alive(sub.teacherId)) ? [{ id: sub.teacherId, sections: [] }] : [];
 };
@@ -119,9 +85,8 @@ window.subjectTeacherNames = function (sub, teachers) {
         .filter(Boolean);
 };
 
-// Which teacher an evaluation belongs to. New ratings record it; very old ones
-// may not, and those go to the subject's FIRST teacher - never to all of them,
-// or one rating would be counted once per teacher.
+// Teacher an evaluation belongs to; old ratings without one go to the
+// FIRST teacher only, so they're never counted twice.
 window.evalBelongsTo = function (e, sub, teacherId) {
     if (e.teacherId) return e.teacherId === teacherId;
     return !!sub && (subjectTeacherIds(sub)[0] === teacherId);
@@ -135,12 +100,8 @@ window.teacherTeachesStudent = function (sub, teacherId, student) {
     return !!student && t.sections.indexOf(_sectionLabel(student)) !== -1;
 };
 
-// Enrolled students that NO teacher takes, once sections are split.
-// If every teacher is limited to specific sections, a student outside all of
-// them has nobody to rate - they should not stay enrolled. If any teacher is
-// on "All students", everyone is covered and nothing is removed.
-// `teachers` is the list about to be saved: [{ id, sections: [] }].
-// Returns { keep: [ids], removed: [students] }.
+// Enrolled students no teacher covers once sections are split.
+// `teachers` = [{ id, sections }]. Returns { keep: [ids], removed: [students] }.
 window.splitUncoveredStudents = function (sub, teachers) {
     const ids = (sub && sub.enrolledIds) || [];
     const list = Array.isArray(teachers) ? teachers : [];
@@ -170,11 +131,7 @@ function _setSectionRows(sub, classEvals, students) {
 
     const scores = {};
     classEvals.forEach(e => {
-        // Skip an evaluation whose student is no longer on file - deleted, or
-        // moved out of this class. `students` is already the non-deleted list,
-        // so a missing byId entry means the student is gone. Without this, that
-        // rating fell into the blank "\u2014" section, showed as a phantom row
-        // on Annex C, and was counted into the TOTAL.
+        // Skip evaluations whose student is deleted or left this class.
         const st = byId[e.studentId];
         if (!st) return;
         const label = _sectionLabel(st);
@@ -190,14 +147,8 @@ function _setSectionRows(sub, classEvals, students) {
         roll[label] = (roll[label] || 0) + 1;
     });
 
-    // One row per section on the roll, even when the class has no responses at
-    // all. The old code collapsed an unevaluated class into a single row
-    // listing every section in one cell - "BSIT 1A, BSIT 1B, BSIT 2A, ..." -
-    // which was unreadable and showed 0 where the reader expects a head count.
-    // Always list every section on the roll, plus any section that answered but
-    // is no longer on it (a transferred student). Listing only the sections
-    // that answered made an unevaluated class vanish from the form entirely,
-    // and the reader could not tell the class existed.
+    // One row per section on the roll, plus any section that answered but
+    // is no longer on it.
     const labels = Array.from(new Set(
         Object.keys(roll).concat(Object.keys(scores))
     )).sort();
@@ -215,19 +166,14 @@ function _setSectionRows(sub, classEvals, students) {
             yearSection:   label,
             count:         count,
             avgScore:      avg.toFixed(2),
-            // A section nobody answered has no average, so there is nothing to
-            // weight. It is listed for completeness but contributes neither a
-            // score nor a head count to the TOTAL - counting its students while
-            // contributing zero would drag the faculty's rating down for a
-            // class that was simply never rated.
+            // Unanswered sections are listed but add nothing to the TOTAL.
             weightedScore: given.length ? (avg * count).toFixed(2) : '0.00',
             rated:         given.length > 0
         };
     });
 }
 
-// CMO 19 8.3 - THE single weighted-SET computation.
-// Annex C, Annex D, FER and Reports all call this, so they agree.
+// CMO 19 8.3 - the single weighted-SET computation used by every report.
 // Skips unrated classes; subtracts exempted students (8.2).
 window.computeWeightedSET = function(facultyId, termFilter) {
     const inTerm = (typeof termFilter === 'function') ? termFilter
@@ -248,10 +194,7 @@ window.computeWeightedSET = function(facultyId, termFilter) {
     );
 
     const classes = subjects.map((fullSub, idx) => {
-        // THIS teacher's part of the subject: only the students they teach.
-        // A teacher split to one section is weighed against that section alone;
-        // a teacher with no sections set teaches - and is weighed against -
-        // everyone enrolled.
+        // Only the students THIS teacher teaches in the subject.
         const sub = Object.assign({}, fullSub, {
             enrolledIds: (fullSub.enrolledIds || []).filter(id =>
                 teacherTeachesStudent(fullSub, facultyId, byStudent[id]))
@@ -269,9 +212,7 @@ window.computeWeightedSET = function(facultyId, termFilter) {
 
         const sections = _setSectionRows(sub, classEvals, students);
 
-        // Only sections that actually have responses are weighted. A section
-        // listed with no responses shows its head count on the form but adds
-        // nothing to either total, so it cannot pull the rating down.
+        // Only sections with responses are weighted.
         const weight   = sections.reduce((n, r) => n + (r.rated ? r.count : 0), 0);
         const weighted = sections.reduce((n, r) => n + (r.rated ? parseFloat(r.weightedScore) : 0), 0);
 
@@ -334,8 +275,7 @@ window.getSignatories = function() {
         preparedRole: d.preparedRole || '',
         reviewedName: d.reviewedName || '',
         reviewedRole: d.reviewedRole || '',
-        // "Approved by" - printed on the Faculty Performance / Supervisors
-        // lists (Reports > View all > Export PDF).
+        // "Approved by" on the Faculty Performance / Supervisors PDF lists.
         approvedName: d.approvedName || '',
         approvedRole: d.approvedRole || ''
     };

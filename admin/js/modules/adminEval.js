@@ -1,21 +1,13 @@
 // ===== ENHANCED EVALUATION FEATURES (CMO 19 Compliant) =====
 
-// ---- Rating-period scoping (CMO §4.3) ----------------------------------
-// Results should reflect the CURRENT rating period. An evaluation is counted
-// if it is tagged with the active school year + semester. Records with NO
-// term tag are treated as legacy and always included, so nothing that already
-// exists disappears. For this to fully work, the mobile app should stamp each
-// evaluation it writes with `schoolYear` (e.g. "2025-2026") and `semester`
-// (e.g. "2nd Semester"), matching the values in getActiveSY().
-//
-// The admin can also BROWSE HISTORY: setReportTerm() picks a past term (or
-// "ALL"), and every rating computation then reflects that chosen term instead
-// of the active one. null = follow the active term.
+// ---- Rating-period scoping (CMO §4.3) ----
+// Counts evaluations tagged with the active school year + semester; untagged
+// (legacy) ones are always included. setReportTerm() can pick a past term or
+// "ALL"; null = follow the active term.
 window._selectedTerm = null; // null = active term; 'ALL' = every term; or { year, sem }
 
-// When the Annex is opened from a screen OTHER than Reports, it must show the
-// present term — not whatever history term is selected on the Reports page.
-// 'ACTIVE' forces the active term; null follows the Reports selection.
+// 'ACTIVE' forces the active term (Annex opened outside Reports);
+// null follows the Reports selection.
 window._annexTermOverride = null;
 
 // Core matcher: does `ev` belong to `selected` (null=active, 'ALL'=any, or {year,sem})?
@@ -30,10 +22,7 @@ function _evalMatchesTerm(ev, selected) {
     if (!term) return true;
     // Untagged legacy records only appear when viewing the ACTIVE term.
     if (!ev.schoolYear && !ev.semester) return selected === null;
-    // Compare only the fields the record actually carries. SEF records written
-    // before the fix in admin-sef.js have a semester and no schoolYear;
-    // demanding both made them match nothing at all, so every existing SEF
-    // vanished from Annex C. A half-tagged record matches on what it has.
+    // Match only the fields the record has, so half-tagged SEF records still count.
     const yearOk = !term.year || !ev.schoolYear || ev.schoolYear === term.year;
     const semOk  = !term.sem  || !ev.semester   || ev.semester   === term.sem;
     return yearOk && semOk;
@@ -43,15 +32,13 @@ window.evalInActiveTerm = function(ev) {
     return _evalMatchesTerm(ev, window._selectedTerm);
 };
 
-// Term matcher for Annex C/D — follows the Reports selection ONLY when opened
-// from Reports; otherwise forces the active/present term.
+// Annex C/D term matcher: Reports selection only when opened from Reports.
 window.annexEvalInTerm = function(ev) {
     const sel = (window._annexTermOverride === 'ACTIVE') ? null : window._selectedTerm;
     return _evalMatchesTerm(ev, sel);
 };
 
-// List every term that has evaluation data (plus the defined school years), so
-// the Reports page can offer a history dropdown.
+// Every term with evaluation data, for the Reports history dropdown.
 window.listEvaluationTerms = function() {
     const terms = new Map(); // key -> { year, sem, label }
     const add = (year, sem) => {
@@ -67,14 +54,10 @@ window.listEvaluationTerms = function() {
     return [...terms.values()];
 };
 
-// -- Reports header "Actions" menu --------------------------------------
-// The five report buttons used to sit loose in the header and never fitted
-// beside the page title. They live in this dropdown now. The .open class goes
-// on the wrapper rather than the panel so the trigger button and its chevron
-// can react to the state too.
+// -- Reports header "Actions" menu --
+// .open goes on the wrapper so the trigger can style itself too.
 window.toggleReportsMenu = function(e) {
-    // Without this the document listener below sees the very same click and
-    // closes the menu in the tick it was opened.
+    // Stop the document listener from closing it on the same click.
     if (e) e.stopPropagation();
     const wrap = document.getElementById('reportsActions');
     if (!wrap) return;
@@ -91,9 +74,7 @@ window.closeReportsMenu = function() {
     if (btn) btn.setAttribute('aria-expanded', 'false');
 };
 
-// A click anywhere outside closes the menu. Clicks inside are left alone so the
-// panel cannot vanish mid-interaction - each item closes it explicitly in its
-// own onclick before running its action.
+// Click outside closes the menu; items close it themselves.
 document.addEventListener('click', function(e) {
     const wrap = document.getElementById('reportsActions');
     if (!wrap || !wrap.classList.contains('open')) return;
@@ -128,8 +109,7 @@ window._refreshReportTermLabel = function() {
     sel.value = cur;
 };
 
-// Set which term the Reports page shows. '' / 'ACTIVE' = active term,
-// 'ALL' = full history, otherwise a "year|sem" key from listEvaluationTerms().
+// Set the Reports term: '' / 'ACTIVE' = active, 'ALL' = all, or "year|sem".
 window.setReportTerm = function(value) {
     if (!value || value === 'ACTIVE') {
         window._selectedTerm = null;
@@ -169,9 +149,7 @@ window.setReportTerm = function(value) {
     }, 550);
 };
 
-// Returns info about the term the Reports page is currently showing — used so
-// Annex C/D and other views label themselves with the SELECTED term (not always
-// the active one). label is formatted "Semester / Year".
+// Term the Reports page is showing; label is "Semester / Year".
 window.getReportTermInfo = function() {
     const sel = window._selectedTerm;
     const sy = (typeof getActiveSY === 'function') ? getActiveSY() : null;
@@ -184,8 +162,7 @@ window.getReportTermInfo = function() {
     return { year: sy ? sy.year : '', sem: sy ? sy.activeSem : '', label: sy ? `${sy.activeSem} / ${sy.year}` : '—', isHistory: false, all: false };
 };
 
-// Term info for the Annex — active/present term unless opened from Reports
-// (then it follows the Reports selection).
+// Annex term: active term unless opened from Reports.
 window.annexTermInfo = function() {
     if (window._annexTermOverride === 'ACTIVE') {
         const sy = (typeof getActiveSY === 'function') ? getActiveSY() : null;
@@ -194,9 +171,8 @@ window.annexTermInfo = function() {
     return getReportTermInfo();
 };
 
-// ---- Evaluation exemptions (CMO §8.2) ----------------------------------
-// A student unable to evaluate (illness, valid reason) can be exempted for a
-// subject so they don't block completion. Stored as { studentId, subjectId }.
+// ---- Evaluation exemptions (CMO §8.2) ----
+// Stored as { studentId, subjectId }.
 window.isStudentExempted = function(studentId, subjectId) {
     return getData('exemptions', []).some(x =>
         x.studentId === studentId && x.subjectId === subjectId);
@@ -217,8 +193,7 @@ window.setStudentExemption = function(studentId, subjectId, exempt, reason) {
     return ex;
 };
 
-// Number of students actually expected to evaluate a subject = enrolled minus
-// exempted. Used so response-rate/completion math is fair (CMO §8.2).
+// Students expected to evaluate = enrolled minus exempted (CMO §8.2).
 window.getExpectedEvaluatorCount = function(subject) {
     const enrolled = (subject && subject.enrolledIds) ? subject.enrolledIds : [];
     return enrolled.filter(id => !isStudentExempted(id, subject.id)).length;
@@ -260,9 +235,7 @@ window.canStudentEvaluate = function(studentId, subjectId) {
 
 // Get teacher's SET and SEF ratings separately (CMO 19 — no combined score)
 window.getTeacherOverallRating = function(teacherId) {
-    // All of the §8.3 maths lives in computeWeightedSET (admin-scoring.js) so that
-    // Reports, the FER, Annex C and Annex D cannot disagree about one faculty.
-    // It skips classes with no evaluations and subtracts exempted students (§8.2).
+    // §8.3 maths lives in computeWeightedSET (admin-scoring.js).
     const agg          = computeWeightedSET(teacherId, evalInActiveTerm);
     const classRatings = agg.classes;          // same field names the CSV export reads
     const overallSET   = agg.overallSET;
@@ -270,10 +243,7 @@ window.getTeacherOverallRating = function(teacherId) {
         subjectHasTeacher(s, teacherId) && s.loadType !== 'Overload' && !s.isLabSchool);
     const evalCount    = agg.classes.reduce((n, c) => n + c.evalCount, 0);
 
-    // SEF rating (already 0-100 from saveSEFRating formula).
-    // CMO §9.3 — a faculty teaching across programs is rated by each program
-    // chair; the overall SEF is the AVERAGE of those supervisor ratings (not
-    // just the latest). Scoped to the active rating period (§4.3).
+    // SEF (0-100): AVERAGE of all supervisor ratings this term (CMO §9.3, §4.3).
     const supervisorEvals = getData('evaluations', []).filter(e =>
         e.teacherId === teacherId && e.evaluatorType === 'supervisor'
         && evalInActiveTerm(e)
@@ -323,15 +293,8 @@ window.exportEnhancedReport = function() {
 };
 
 // ===== FACULTY EVALUATION REPORT (FER) — CMO §6.8 =====
-// Institutional summary for the President / VPAA: statistical trends, key
-// insights, and notable patterns across all faculty for the active term.
-// ============================================================
-// "PREPARED BY" / "REVIEWED BY" FOR PRINTED REPORTS
-// ------------------------------------------------------------
-// Names and positions come from Reports > Actions > Signatories. A blank name
-// prints as an empty line to sign by hand. Styled inline so it looks the same
-// on every printed page that uses it (the FER and the Feedback prints).
-// ============================================================
+// "Prepared by" / "Reviewed by" from Reports > Actions > Signatories;
+// blank names print as an empty signing line.
 window.preparedReviewedHtml = function(marginTop) {
     const sig = (typeof getSignatories === 'function') ? getSignatories() : {};
     const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s == null ? '' : s));
@@ -356,8 +319,7 @@ window.generateFERReport = function() {
     const DEPT = (typeof getDepartments === 'function') ? getDepartments() : {};
     const esc = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s));
 
-    // Report the SAME term the Reports page is currently showing, so the header
-    // label always matches the numbers below it.
+    // Use the term the Reports page is showing.
     const sel = window._selectedTerm;
     const sy = (typeof getActiveSY === 'function') ? getActiveSY() : null;
     let termLabel, isHistoryView;
@@ -394,10 +356,7 @@ window.generateFERReport = function() {
     const overallAvg = avg(rated.map(r => r.set)).toFixed(2);
     const totalEvals = rows.reduce((a, r) => a + r.evals, 0);
 
-    // Expected evaluations vs received → response rate (§8.2-aware).
-    // Enrollment rosters are per-term, so a response rate is only meaningful for
-    // the ACTIVE term. For past terms or full-history views we mark it N/A rather
-    // than compare against the current roster.
+    // Response rate (§8.2-aware); N/A outside the active term.
     let responseRate = '—';
     if (!isHistoryView) {
         const expected = subjects.reduce((a, s) =>
@@ -497,10 +456,8 @@ window.generateFERReport = function() {
     showToast('Faculty Evaluation Report generated!', 'success');
 };
 
-// ===== FULL SYSTEM BACKUP & RESTORE =====
-// Exports every collection to one JSON file the admin can keep, and restores
-// from it. Complements the CSV export (which is report-only) — this is a true
-// data backup for institutional record-keeping (CMO §6.9).
+// ===== FULL SYSTEM BACKUP & RESTORE (CMO §6.9) =====
+// Every collection to/from one JSON file.
 window._backupKeys = ['students','teachers','subjects','evaluations','schoolYears',
     'auditLog','evalPeriod','customDepartments','customCourses','finalReports',
     'developmentPlans','exemptions'];
@@ -508,8 +465,7 @@ window._backupKeys = ['students','teachers','subjects','evaluations','schoolYear
 window.exportSystemBackup = function() {
     const backup = { _meta: { app: 'Faculty Evaluation System', exportedAt: new Date().toISOString(), version: 1 } };
     window._backupKeys.forEach(k => {
-        // Full data - including ratings from deleted people - so a backup
-        // never loses anything.
+        // Full data, including ratings from deleted people.
         const v = getData(k, null, { includeHidden: true });
         if (v !== null && v !== undefined) backup[k] = v;
     });

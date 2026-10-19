@@ -1,13 +1,10 @@
 // ===== FIREBASE SYNC & FIXES =====
 
-// Fix: Ensure getData works with localStorage
-// REMOVED duplicate getData() — byte-identical to the copy in admin.js.
+// getData() lives in admin.js.
 
-// Fix: Add audit log function if missing
-// REMOVED duplicate addAudit() — byte-identical to the copy in admin.js.
+// addAudit() lives in admin.js.
 
-// Fix: Show toast function
-// REMOVED duplicate showToast() — byte-identical to the copy in admin.js.
+// showToast() lives in admin.js.
 
 // Add animation styles if not present
 if (!document.querySelector('#toastStyles')) {
@@ -39,14 +36,11 @@ window.SUPERVISOR_CATEGORIES = [
     { id: 'sef_assessment', label: 'Assessment Practices', max: 5, weight: 0.40 }
 ];
 
-// Updated Remarks based on percentage
-// CMO 19 compliant interpretation scale
-// REMOVED duplicate getRemarks() — byte-identical to the copy in admin.js.
+// getRemarks() lives in admin.js.
 
 // REMOVED duplicate getRemarksColor() — byte-identical to the copy in admin.js.
 
-// Calculate final rating: institutional 60/40 composite (NOT a CMO 19 formula —
-// the CMO reports SET and SEF separately). Owned by admin-scoring.js.
+// Final 60/40 composite (not CMO 19) lives in admin-scoring.js.
 
 
 // Check and auto-finalize evaluation period
@@ -88,26 +82,16 @@ window.generateFinalReports = function() {
     return finalReports;
 };
 
-// Run auto-finalize check every hour
-// Late-bound for the same reason as admin-scoring.js: a name resolved at load
-// time freezes whichever definition happened to exist then.
+// Auto-finalize check every hour (late-bound).
 setInterval(function () {
     if (typeof window.checkAndAutoFinalize === 'function') window.checkAndAutoFinalize();
 }, 3600000);
 
-// Fix: Add missing getActiveSY function
-// REMOVED duplicate getActiveSY() — byte-identical to the copy in admin.js.
+// getActiveSY() lives in admin.js.
 
 // ===== TEACHER PICKER =====
-// A native <select> was fine while the list was filtered to one department. Now
-// that any faculty can teach any subject (part-timers, cross-department loads),
-// the list runs to the whole institution and a dropdown is unusable: no search,
-// no way to scan by department, and optgroups collapse into an undifferentiated
-// scroll on mobile.
-//
-// This replaces it with a search box, department filter pills, and a scrollable
-// list. The selected value still lives in a hidden input with id `subTeacher`,
-// so saveSubject() and every other reader work unchanged.
+// Search box, department pills and a scrollable list. The value still lives
+// in hidden input #subTeacher.
 
 let _tpSearch = '';
 let _tpDept   = '';          // '' = all departments
@@ -116,12 +100,10 @@ function _tpTeachers() {
     return getData('teachers', []).filter(t => !t.deleted && t.status !== 'archived');
 }
 
-// The teachers chosen for the subject being edited: [{ id, sections: [] }].
-// Several can be chosen - see MULTIPLE TEACHERS PER SUBJECT in admin-scoring.js.
+// Teachers chosen for the subject being edited: [{ id, sections: [] }].
 window._tpChosen = [];
 
-// Accepts the subject being edited, a single teacher id (older callers), or
-// nothing for a new subject.
+// Accepts a subject, a single teacher id, or nothing (new subject).
 window.populateTeacherSelect = function(arg) {
     // Default to the form's own picker unless the standalone modal set its own.
     if (!window._tpHost) window._tpHost = 'teacherPicker';
@@ -133,9 +115,7 @@ window.populateTeacherSelect = function(arg) {
         _tpChosen = [];
     }
     _tpSyncHidden();
-    // Start on "All" so out-of-department faculty are visible without the admin
-    // having to know they are being hidden. The subject's own department is
-    // still sorted to the top, and the pills narrow it on demand.
+    // Start on "All"; the subject's department is sorted to the top.
     _tpDept   = '';
     _tpSearch = '';
     renderTeacherPicker();
@@ -144,8 +124,7 @@ window.populateTeacherSelect = function(arg) {
 window.tpSetDept = function(dept) { _tpDept = dept; renderTeacherPicker(); };
 window.tpSetSearch = function(q)  { _tpSearch = q;  renderTeacherPicker(true); };
 
-// The hidden field still carries ONE id - the first teacher - for any older
-// code that reads it. saveSubject() reads _tpChosen for the full list.
+// Hidden field holds the first teacher id; saveSubject() reads _tpChosen.
 function _tpSyncHidden() {
     const hidden = document.getElementById('subTeacher');
     if (hidden) hidden.value = _tpChosen.length ? _tpChosen[0].id : '';
@@ -166,8 +145,7 @@ window.tpRemove = function(id) {
     renderTeacherPicker();
 };
 
-// Tick or untick a section for one teacher. No sections ticked means the
-// teacher is rated by every student in the subject.
+// Toggle a section for a teacher; none ticked = rated by every student.
 window.tpToggleSection = function(id, label) {
     const t = _tpChosen.find(x => x.id === id);
     if (!t) return;
@@ -176,9 +154,7 @@ window.tpToggleSection = function(id, label) {
     renderTeacherPicker();
 };
 
-// "All students" - clears this teacher's sections, so they are rated by
-// everyone in the subject. Untick the last section and it comes back on by
-// itself, so there is no state where a teacher is rated by nobody.
+// "All students": clear this teacher's sections.
 window.tpAllSections = function(id) {
     const t = _tpChosen.find(x => x.id === id);
     if (!t) return;
@@ -186,8 +162,7 @@ window.tpAllSections = function(id) {
     renderTeacherPicker();
 };
 
-// The sections actually present in the subject being edited, from the
-// students enrolled in it. A brand-new subject has none yet.
+// Sections present among the subject's enrolled students.
 function _tpSubjectSections() {
     const editingId = window._tpSubjectId
         || ((typeof editSubjectId !== 'undefined') ? editSubjectId : null);
@@ -202,14 +177,12 @@ function _tpSubjectSections() {
 }
 
 window.renderTeacherPicker = function(keepFocus) {
-    // Either host: the Add/Edit Subject form, or the standalone
-    // Teachers & Sections modal. _tpHost says which one is open.
+    // Host: the Subject form or the Teachers & Sections modal (_tpHost).
     const host = document.getElementById(window._tpHost || 'teacherPicker');
     if (!host) return;
 
     const chosenIds  = _tpChosen.map(t => t.id);
-    // From the form when it is open; from the subject itself in the standalone
-    // modal, where there is no department dropdown.
+    // From the form if open, else from the subject itself.
     const subDept    = window._tpSubDept !== undefined
         ? window._tpSubDept
         : ((document.getElementById('subDept') || {}).value || '');
@@ -219,18 +192,12 @@ window.renderTeacherPicker = function(keepFocus) {
     const counts = {};
     all.forEach(t => { const d = t.dept || 'No dept'; counts[d] = (counts[d] || 0) + 1; });
 
-    // How many classes each faculty already carries this term. Faculty with none
-    // are surfaced first: when an admin is assigning a subject, the useful answer
-    // is almost always "who is still free", and an unassigned lecturer buried
-    // alphabetically between two people already carrying four classes is exactly
-    // the person you want to find. The load count is shown on every row so a
-    // heavier assignment is a deliberate choice rather than an accident.
+    // Classes each faculty carries this term; free faculty are listed first.
     const subjects = getData('subjects', []).filter(x => !x.deleted);
     const editingId = (typeof editSubjectId !== 'undefined') ? editSubjectId : null;
     const loadOf = {};
     subjects.forEach(x => {
-        // Don't count the subject currently being edited - reassigning it would
-        // otherwise make its own teacher look busier than they are.
+        // Don't count the subject being edited.
         const skipId = window._tpSubjectId
             || ((typeof editSubjectId !== 'undefined') ? editSubjectId : null);
         if (skipId && x.id === skipId) return;
@@ -240,12 +207,8 @@ window.renderTeacherPicker = function(keepFocus) {
     });
 
     const q = _tpSearch.trim().toLowerCase();
-    // Faculty from other departments are LISTED, not filtered out. Hiding them
-    // meant a part-timer teaching one class outside their college was simply
-    // absent from the picker and looked like a missing record - the admin had to
-    // know to tap "All" first. They now appear after the department's own staff
-    // with a "from <DEPT>" tag, so assigning one is a visible, deliberate choice.
-    // The department pills still narrow the list when you want them to.
+    // Other-department faculty are listed after the department's own, tagged
+    // "from <DEPT>".
     const isHome = t => !subDept || (t.dept || '') === subDept;
     const list = all
         .filter(t => !_tpDept || (t.dept || 'No dept') === _tpDept)
@@ -261,9 +224,7 @@ window.renderTeacherPicker = function(keepFocus) {
     const sections = _tpSubjectSections();
     const chosenRows = _tpChosen.map(c => {
         const t = all.find(x => x.id === c.id) || { id: c.id, name: '(removed teacher)', tid: '', dept: '' };
-        // Who rates this teacher, stated plainly, then the choices as chips.
-        // Each teacher has their own row of chips: two teachers on one subject
-        // can take completely different sections.
+        // Who rates this teacher, then per-teacher section chips.
         const chosenSecs = c.sections.filter(l => sections.indexOf(l) !== -1);
         const summary = chosenSecs.length
             ? 'Rated by ' + chosenSecs.map(escapeHtml).join(', ')
@@ -294,9 +255,7 @@ window.renderTeacherPicker = function(keepFocus) {
           </div>`;
     }).join('');
 
-    // Same classes as the Teachers page filter bar (.student-dept-filter-btn /
-    // .dept-filter-count) so both bars stay visually identical by construction,
-    // rather than through two copies of the same CSS that can drift apart.
+    // Reuses the Teachers page filter-bar classes so both look the same.
     const pill = (label, value, n, isActive) =>
         `<button type="button" class="student-dept-filter-btn${isActive ? ' active' : ''}" onclick="tpSetDept('${value}')">`
         + escapeHtml(label) + (n != null ? ` <span class="dept-filter-count">${n}</span>` : '') + `</button>`;
@@ -347,8 +306,7 @@ window.renderTeacherPicker = function(keepFocus) {
     }
 };
 
-// Changing the subject's department re-sorts the pills but never clears the
-// chosen teacher - the whole point is that they need not match.
+// Changing department re-sorts pills but keeps the chosen teacher.
 document.addEventListener('DOMContentLoaded', function() {
     const subDeptSelect = document.getElementById('subDept');
     if (subDeptSelect) {
@@ -359,21 +317,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// REMOVED: the saveTeacher override that used to live here.
-// It read the old single 'tchName' box, which is now a hidden field — so every
-// save failed with "Fill all fields" no matter what was typed. It had also
-// drifted behind admin.js's version, losing the supervisor password field, the
-// category field, the deptRole reset on demote, and the pushTeacherToCloud call.
-// admin.js's saveTeacher is now the only definition.
+// REMOVED: stale saveTeacher override; admin.js's is the only definition.
 
-// ============================================================
-// TEACHERS & SECTIONS - one subject, on its own
-// ------------------------------------------------------------
-// Assigning sections needs the students to be enrolled first, and
-// enrolment happens after the subject is created. Having this on
-// the row means: add subject -> enrol students -> assign each
-// teacher their sections, without reopening the whole form.
-// ============================================================
+// TEACHERS & SECTIONS - assign sections per teacher after enrolment,
+// without reopening the subject form.
 window.openSubjectTeachersModal = function (subId) {
     const sub = getData('subjects', []).find(s => s.id === subId);
     if (!sub) { showToast('Subject not found.', 'error'); return; }
@@ -390,15 +337,8 @@ window.openSubjectTeachersModal = function (subId) {
     openModal('subjectTeachersModal');
 };
 
-// ============================================================
-// WHO TEACHES THIS SUBJECT
-// ------------------------------------------------------------
-// The list behind the MULTIPLE tag. Every teacher is a button
-// showing the sections they take; pressing one opens their
-// section chips. Enrol students is here too, because the two
-// jobs belong together: you enrol a section, then say which
-// teacher takes it.
-// ============================================================
+// WHO TEACHES THIS SUBJECT - list behind the MULTIPLE tag, with each
+// teacher's sections and enrolment.
 window.openSubjectTeacherList = function (subId) {
     const sub = getData('subjects', []).find(s => s.id === subId);
     if (!sub) { showToast('Subject not found.', 'error'); return; }
@@ -515,10 +455,7 @@ window.saveSubjectTeachers = function () {
     else commit();
 };
 
-// The chosen teachers as they will be saved. Sections no longer present in the
-// subject (their students were unenrolled) are dropped, so what is saved matches
-// the chips on screen - otherwise a teacher could show "All students" while
-// actually being saved against a section with nobody in it.
+// Chosen teachers as saved; sections no longer in the subject are dropped.
 function _tpTeachersToSave() {
     const present = _tpSubjectSections();
     return _tpChosen.map(t => ({
@@ -575,8 +512,7 @@ window.saveSubject = function() {
 
     if (typeof editSubjectId !== 'undefined' && editSubjectId) {
         const idx = subjects.findIndex(s => s.id === editSubjectId);
-        // Same rule as the Teachers & Sections modal: students outside every
-        // teacher's sections are unenrolled, after asking.
+        // Students outside every teacher's sections are unenrolled, after asking.
         const { keep, removed } = splitUncoveredStudents(subjects[idx], teachers);
         if (removed.length && !window._subUnenrolOk) {
             _tpConfirmUnenrol(removed, () => { window._subUnenrolOk = true; window.saveSubject(); });
@@ -584,12 +520,7 @@ window.saveSubject = function() {
         }
         window._subUnenrolOk = false;
         subjects[idx].enrolledIds = keep;
-        // REMOVED: changing the teacher used to DELETE the subject's student
-        // evaluations, so students could rate the new teacher. That was needed
-        // only because a student could hold one rating per subject. Ratings are
-        // now kept per teacher, so adding or changing a teacher leaves every
-        // existing rating in place - and each still counts for the teacher it
-        // was given to.
+        // Ratings are kept per teacher, so changing teachers keeps existing ratings.
         Object.assign(subjects[idx], { code, name, teacherId, teachers, dept, loadType, isLabSchool,
                                        category, courses, yearLevel });
         addAudit('Edit Subject', `Updated: ${name} (${code})`);
@@ -611,10 +542,7 @@ window.saveSubject = function() {
     renderSubjects();
 };
 
-// REMOVED: the openEditTeacherModal and openEditSubjectModal wrappers that used to
-// live here. Both only re-set a department dropdown that the originals in admin.js
-// already fill via populateDeptDropdown(), so they did nothing but add a second
-// definition of each function.
+// REMOVED: redundant openEditTeacherModal / openEditSubjectModal wrappers.
 
 // Ensure Firestore sync works properly
 window.syncCollectionToFirestore = async function(key, value) {
@@ -631,9 +559,7 @@ window.syncCollectionToFirestore = async function(key, value) {
                 batch.set(db.collection('departments').doc(code), { code, ...cfg });
             });
 
-            // Same resurrection bug as everywhere else in this function: only
-            // the remaining departments were written, so a deleted one kept its
-            // document and came back on the next page load.
+            // Delete removed departments too, or they come back on reload.
             const existing = await db.collection('departments').get();
             let removed = 0;
             existing.forEach(doc => {
@@ -647,16 +573,13 @@ window.syncCollectionToFirestore = async function(key, value) {
         return;
     }
 
-    // customCourses — each dept is its own doc in the top-level 'courses' collection
-    // so it shows up clearly in the Firestore console as: courses/{DEPT_CODE}
+    // customCourses: one doc per dept in 'courses' (courses/{DEPT_CODE}).
     if (key === 'customCourses') {
         try {
             const coursesMap = value || {};
             const entries = Object.entries(coursesMap);
 
-            // No early return on an empty map. Clearing the last department's
-            // courses used to skip the write entirely, so Firestore kept the
-            // old list and the next load restored it.
+            // No early return on an empty map, so clearing the last one still saves.
             const batch = db.batch();
             const keep  = new Set(entries.map(([deptCode]) => String(deptCode)));
             entries.forEach(([deptCode, list]) => {
@@ -666,9 +589,7 @@ window.syncCollectionToFirestore = async function(key, value) {
                 });
             });
 
-            // Remove departments dropped from the map, for the same reason the
-            // array branch does: writing only what remains leaves the deleted
-            // document in place, and the next page load brings it back.
+            // Delete departments dropped from the map.
             const existing = await db.collection('courses').get();
             let removed = 0;
             existing.forEach(doc => {
@@ -692,9 +613,7 @@ window.syncCollectionToFirestore = async function(key, value) {
         evalPeriod: 'settings', 
         finalReports: 'finalReports',
         customDepartments: 'customDepartments',
-        // These were missing, so the data never left this browser. questionSets in
-        // particular MUST reach Firestore - it is where the Android app reads the
-        // published instrument from.
+        // questionSets must reach Firestore - the Android app reads it.
         questionSets: 'questionSets',
         developmentPlans: 'developmentPlans',
         exemptions: 'exemptions',
@@ -710,10 +629,7 @@ window.syncCollectionToFirestore = async function(key, value) {
             value.forEach(item => {
                 if (item && item.id) {
                     keep.add(String(item.id));
-                    // Merge for student and teacher records: a copy that arrives
-                    // without its password (it never reaches localStorage) must
-                    // not erase the one stored here. A password that IS present -
-                    // a real change - still overwrites.
+                    // Merge students/teachers so a copy without a password doesn't erase it.
                     if (key === 'students' || key === 'teachers') {
                         batch.set(db.collection(col).doc(item.id), item, { merge: true });
                     } else {
@@ -722,18 +638,8 @@ window.syncCollectionToFirestore = async function(key, value) {
                 }
             });
 
-            // DELETE what is no longer in the local copy.
-            //
-            // This sync only ever wrote the items that remain. Removing one
-            // locally left its document untouched in Firestore, and the next
-            // page load pulled every document back down - so a deleted
-            // department or subject reappeared by itself, looking exactly like
-            // a stale cache. It was not: the delete never left the browser.
-            //
-            // Collections that are appended to rather than managed as a whole
-            // are excluded. auditLog and evaluations hold records this browser
-            // has no business removing, and a partial local copy would wipe
-            // everyone else's.
+            // DELETE documents no longer in the local copy, except append-only
+            // collections (auditLog, evaluations).
             const MANAGED_AS_A_WHOLE = ['students', 'teachers', 'subjects',
                                         'schoolYears', 'customDepartments',
                                         'questionSets', 'exemptions'];
@@ -749,9 +655,7 @@ window.syncCollectionToFirestore = async function(key, value) {
             await batch.commit();
             console.log(`✅ Synced ${value.length} items to ${col}`);
         } else if (value && typeof value === 'object') {
-            // An object keyed by id - customDepartments is stored this way -
-            // needs the same treatment: one document per key, and anything no
-            // longer present must go.
+            // Keyed objects (customDepartments): one doc per key, delete missing ones.
             const byId = Object.keys(value).every(k => value[k] && typeof value[k] === 'object');
             if (byId && key === 'customDepartments') {
                 const batch = db.batch();
@@ -779,24 +683,9 @@ window.syncCollectionToFirestore = async function(key, value) {
 // Force a full sync of all data to Firebase on page load
 window.fullSyncToFirebase = async function() {
     console.log('🔄 Performing full sync to Firebase...');
-    // 'questionSets' matters as much as any of these: the Android app reads the
-    // published SET/SEF instrument straight out of that collection. setData()
-    // pushes it on every publish, but that push only console.warn's on failure -
-    // so without it here, one failed write left the dashboard showing v2 as
-    // published while every phone kept serving v1, with nothing to retry it.
-    // developmentPlans and exemptions were the last two collections with no
-    // retry: setData pushes them once and only console.warn's on failure, so a
-    // single failed write left a saved FEDAF sitting in one browser forever.
-    // This list is now every key MAP knows about.
-    // 'students' and 'teachers' are NOT in this list any more. Every save now
-    // writes its own record (commitRecords in admin-core.js), so there is
-    // nothing left for a full push to catch up on - and pushing this laptop's
-    // whole list was how a stale copy undid another laptop's changes, or
-    // brought back a record deleted in the Firebase console.
-    // 'evaluations' is out too. Students and supervisors write those, not the
-    // admin, and the dashboard now receives them live. Re-sending every
-    // evaluation on every page load was one write per evaluation per load, and
-    // could bring back an evaluation another laptop had just deleted.
+    // Collections retried by full sync. questionSets is read by the Android app.
+    // students/teachers use per-record saves (commitRecords) and evaluations
+    // arrive live, so they're excluded.
     const keys = ['subjects', 'schoolYears', 'auditLog', 'evalPeriod', 'finalReports', 'customDepartments', 'customCourses', 'questionSets', 'developmentPlans', 'exemptions', 'reportSignatories'];
     
     for (const key of keys) {
@@ -816,18 +705,8 @@ window.fullSyncToFirebase = async function() {
 window.originalSetData = window.setData;
 // REMOVED duplicate setData() — byte-identical to the copy in admin.js.
 
-// Call full sync ONLY after a clean load from Firestore.
-//
-// This used to fire on a blind 2-second timer, which races loadFromFirebase()
-// and loses on a slow connection: the pull is still in flight, localStorage
-// still holds the previous session's data, and this pushes that stale copy
-// over the top of Firestore. An unenrolled student reappeared, a deleted
-// department came back - not because the delete failed, but because a later
-// page load re-uploaded the old state and overwrote the correct one.
-//
-// Now that the sync also DELETES documents missing from the local copy, running
-// it on stale data would remove real records, so the guard is not optional.
-// dashboard.html sets _firestoreLoadClean only when every collection loaded.
+// Full sync ONLY after a clean load from Firestore (_firestoreLoadClean),
+// since it also deletes documents missing locally.
 setTimeout(() => {
     if (typeof firebase === 'undefined' || !firebase.firestore) return;
     if (window._firestoreLoadClean !== true) {
@@ -838,22 +717,12 @@ setTimeout(() => {
     fullSyncToFirebase();
 }, 2000);
 
-// REMOVED: the saveStudent override that used to live here.
-// Same problem — it read the hidden 'stuName' box, so adding or editing a student
-// always reported "Fill all required fields". admin.js's saveStudent already reads
-// the split First/Middle/Last/Suffix inputs and stores them as separate fields.
+// REMOVED: stale saveStudent override; admin.js's is used.
 
-// REMOVED: the openEditStudentModal wrapper that used to live here. It was worse
-// than redundant. admin.js deliberately derives a department when the student record
-// has none:
-//     const stuDeptCode = s.dept || deptForCourse(s.course);
-// This wrapper ran afterwards and overwrote the dropdown with `student.dept || ''`,
-// throwing that fallback away — so editing a student whose dept field was blank
-// showed no department even though the course could determine it.
+// REMOVED: openEditStudentModal wrapper that discarded admin.js's
+// dept-from-course fallback.
 
-// Helper escape function
-// REMOVED dead escapeHtml() — it sat behind `if (typeof escapeHtml === 'undefined')`,
-// but admin.js always defines escapeHtml first, so this block never ran.
+// REMOVED dead escapeHtml(); admin.js defines it.
 
 const DEPT_NAMES = {
     COED: 'College of Education',
@@ -896,8 +765,7 @@ if (typeof window.renderStudents === 'function') {
   };
 }
 
-// Fix renderTeachers
-// Fix renderTeachers: Group Regular Faculty by Department and exclude Supervisors
+// renderTeachers: regular faculty grouped by department, no supervisors.
 if (typeof window.renderTeachers === 'function') {
     window.renderTeachers = function(search = '') {
         // 1. Sync search input (same pattern as admin.js)
@@ -908,8 +776,7 @@ if (typeof window.renderTeachers === 'function') {
         // 2. Rebuild dept filter pills (delegates to adminfeatures.js)
         if (typeof buildTeacherDeptPills === 'function') buildTeacherDeptPills();
 
-        // 3. Read active dept filter — prefer the _teacherDeptFilter variable from
-        //    adminfeatures.js; fall back to the dataset attribute on the bar element.
+        // 3. Active dept filter: _teacherDeptFilter, else the bar's dataset.
         const deptActive = (typeof _teacherDeptFilter !== 'undefined' ? _teacherDeptFilter : null)
             ?? (document.getElementById('teacherDeptFilterBar')?.dataset.active || '');
 
@@ -930,8 +797,7 @@ if (typeof window.renderTeachers === 'function') {
             const matchesDept = !deptActive || deptFilterKey(t.dept) === deptActive;
             return matchesSearch && matchesDept;
         });
-        // In the order picked with the ID / Name column headers - see
-        // teacherListCompare in admin-teachers.js (default: name A to Z).
+        // Order from the ID / Name headers (teacherListCompare, admin-teachers.js).
         filtered.sort(typeof teacherListCompare === 'function' ? teacherListCompare : byName);
         if (typeof paintTeacherSortArrows === 'function') paintTeacherSortArrows();
         
@@ -1020,9 +886,7 @@ if (typeof window.renderTeachers === 'function') {
     };
 }
 
-// BUG FIX: The previous renderSubjects override stripped out dept filtering and
-// buildSubjectDeptPills(), breaking the dept filter pills completely.
-// This version restores full dept-filter support and the grouped table layout.
+// renderSubjects with dept filter pills and grouped table layout.
 if (typeof window.renderSubjects === 'function') {
     window.renderSubjects = function(search = '') {
         // Rebuild dept filter pill bar with correct active state
@@ -1062,14 +926,11 @@ if (typeof window.renderSubjects === 'function') {
               ${escapeHtml(dept)}<span class="dept-group-count">${subs.length} subject${subs.length !== 1 ? 's' : ''}</span>
             </div></td></tr>`;
             subs.forEach(sub => {
-                // The teacher cell OPENS Teachers & Sections, so a subject with
-                // five teachers is one line you can click rather than a stack of
-                // names pushing every other row out of line.
+                // Teacher cell opens Teachers & Sections.
                 const tIds = (typeof subjectTeacherIds === 'function') ? subjectTeacherIds(sub)
                            : (sub.teacherId ? [sub.teacherId] : []);
                 const names = tIds.map(id => (teachers.find(t => t.id === id) || {}).name).filter(Boolean);
-                // Several teachers show as one MULTIPLE tag rather than a stack of
-                // names, so every row stays the same height. Click it for the list.
+                // Several teachers show as one MULTIPLE tag.
                 const teacherCell = names.length > 1
                     ? `<span class="tcell-multi">MULTIPLE</span>`
                       + `<span class="tcell-count">${names.length} teachers</span>`

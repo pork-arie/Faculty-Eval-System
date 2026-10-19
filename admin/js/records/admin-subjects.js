@@ -1,14 +1,6 @@
-// ============================================================================
-// admin-subjects.js
-// ----------------------------------------------------------------------------
-// Subjects, their curriculum slot (courses[] + yearLevel) and enrolment.
-// NOTE: saveSubject, renderSubjects and populateTeacherSelect here are DEAD -
-// adminrate.js loads later and redefines all three. Edit them there.
-//
-// Split out of the original 4,441-line admin.js. Load order is load-bearing:
-// keep these in the order listed in dashboard.html - later files redefine
-// functions defined earlier, and the last definition wins.
-// ============================================================================
+// admin-subjects.js - subjects, curriculum slot (courses[] + yearLevel) and enrolment.
+// saveSubject, renderSubjects and populateTeacherSelect live in adminrate.js.
+// Load order matters (see dashboard.html): the last definition wins.
 
 // ===== SUBJECTS =====
 function renderSubjects(search = '') {
@@ -61,13 +53,8 @@ function renderSubjects(search = '') {
 }
 
 // ===== SUBJECT CURRICULUM SLOT (course + year level) =====
-// A department runs several courses, and one subject is frequently shared by more
-// than one of them - BSIT and BSCS both take Computer Programming 1. So `courses`
-// is a LIST, not a single value. An empty list means "every course in the
-// department", which is how GE, PE and NSTP work.
-//
-// Recording the slot is what lets the enrolment list pre-tick the right cohort
-// instead of showing every student in the college.
+// `courses` is a LIST (shared subjects); empty = every course in the
+// department. Used to pre-tick the cohort on enrolment.
 let _subCourses = [];        // courses selected in the currently open modal
 
 window.renderSubCourseChips = function() {
@@ -101,8 +88,7 @@ window.renderSubCourseChips = function() {
     const n = _subCourses.length;
     const allSelected = n === courses.length;
 
-    // "None selected" and "all selected" behave identically, but read very
-    // differently to an admin, so the summary states the effect in plain words.
+    // Summary states the effect in plain words.
     setSummary(n === 0
         ? '<span class="sc-summary-all">All ' + courses.length + ' courses</span>'
         : '<span class="sc-summary-some">' + n + ' of ' + courses.length + ' selected</span>');
@@ -139,9 +125,7 @@ window.setSubCourses = function(list) {
 
 window.getSubCourses = function() { return _subCourses.slice(); };
 
-// Does this student sit in the subject's curriculum slot? Used to pre-tick the
-// cohort on the enrolment screen. A suggestion only - irregular students take
-// subjects off their year level legitimately, so this must never be enforced.
+// Is this student in the subject's curriculum slot? Pre-tick suggestion only.
 window.studentMatchesSubject = function(student, sub) {
     if (!sub) return false;
     const courses  = Array.isArray(sub.courses) ? sub.courses : [];
@@ -181,22 +165,15 @@ function openEditSubjectModal(id) {
   setSubCourses(sub.courses || []);
   document.getElementById('subLoad').value = sub.loadType || 'Regular';
   document.getElementById('subIsLab').checked = sub.isLabSchool || false;
-  // The whole subject, so every assigned teacher and their sections load -
-  // not just the first teacherId.
+  // Pass the whole subject so every teacher and section loads.
   window._tpHost = 'teacherPicker'; window._tpSubjectId = null; window._tpSubDept = undefined;
   populateTeacherSelect(sub);
   openModal('addSubjectModal');
 }
 
-// REMOVED (dead code): populateTeacherSelect
-// Replaced unconditionally by adminrate.js:114.
-// The 15 lines that were here never executed - the definition below in the
-// load order replaced this one before anything could call it.
+// REMOVED (dead code): populateTeacherSelect - defined in adminrate.js.
 
-// REMOVED (dead code): saveSubject
-// Replaced unconditionally by adminrate.js:256.
-// The 38 lines that were here never executed - the definition below in the
-// load order replaced this one before anything could call it.
+// REMOVED (dead code): saveSubject - defined in adminrate.js.
 
 function deleteSubject(id) {
   const sub = getData('subjects', []).find(s => s.id === id);
@@ -204,15 +181,11 @@ function deleteSubject(id) {
   showConfirm('Delete Subject', `Delete "${sub.name}"?`, () => {
     const subjects = getData('subjects', []);
     const idx = subjects.findIndex(s => s.id === id);
-    // findIndex returns -1 when the id is not found, and splice(-1, 1) removes
-    // the LAST element - so a stale id silently deleted the wrong subject and
-    // left the intended one in place. Exactly the "I deleted it and it is still
-    // there" symptom, with a second subject quietly gone.
+    // Guard -1: splice(-1, 1) would delete the wrong subject.
     if (idx === -1) { showToast('That subject no longer exists.', 'error'); return; }
     subjects.splice(idx, 1);
     setData('subjects', subjects);
-    // setData only WRITES to Firestore, so without this the document survived
-    // and the Android app kept listing the deleted subject.
+    // Delete the Firestore document too.
     deleteDocFromFirestore('subjects', id);
     addAudit('Delete Subject', `Deleted: ${sub.name}`);
     renderSubjects();
@@ -220,13 +193,8 @@ function deleteSubject(id) {
   });
 }
 
-// A subject belongs to exactly one department, so the enrolment list is scoped
-// to that department's students. Showing the whole student body made it easy to
-// enrol, say, a CCIS student into a COED subject — which then puts that student
-// into the faculty's SET denominator and skews the CMO 19 response rate.
-//
-// Students already enrolled are always shown even if their department no longer
-// matches, so a transfer can be seen and unchecked rather than silently orphaned.
+// Enrolment list is scoped to the subject's department, plus anyone
+// already enrolled (so transfers can be unchecked).
 function enrollCandidates(sub, showAll) {
   const all = getData('students', []).filter(s => !s.deleted && s.status === 'active');
   if (showAll || !sub || !sub.dept) return all;
@@ -279,23 +247,9 @@ window.toggleEnrollShowAll = function() {
   renderEnrollList(enrollCandidates(sub, window._enrollShowAll), sub.enrolledIds || [], search);
 };
 
-// ============================================================
-// MANAGE ENROLLMENT  -  Course -> Year -> Section
-// ------------------------------------------------------------
-// Replaces a flat checklist of every student in the department. At NwSSU a
-// subject is offered to a cohort, so the office thinks in terms of "BSIT, 3rd
-// Year, Section A" - not a list of 200 names to hunt through.
-//
-// Step 1  course buttons
-// Step 2  year levels within the chosen course
-// Step 3  sections within the chosen year, with Enrol all / Remove all
-//
-// Selections are kept in window._enrollChecked across all three steps, so
-// moving between sections never loses a tick. Irregular students are handled by
-// the search box, which looks across the WHOLE department regardless of the
-// course/year/section drilled into - that is the manual path for a student
-// sitting in a subject outside their own cohort.
-// ============================================================
+// MANAGE ENROLLMENT - Course -> Year -> Section drill-down.
+// Ticks persist in window._enrollChecked across steps; the search box looks
+// across the whole department for irregular students.
 
 window._enrollChecked = new Set();
 window._enrollStep    = { course: '', year: '' };
@@ -309,9 +263,7 @@ function openEnrollModal(subId) {
   if (searchEl) searchEl.value = '';
   renderEnrollDeptNotice(sub);
 
-  // First time this subject is enrolled, pre-tick the cohort it is offered to.
-  // Once enrolment has been saved, the saved list wins - irregular students and
-  // deliberate exclusions must survive reopening the modal.
+  // Pre-tick the cohort only on first enrolment; afterwards the saved list wins.
   let preselected = sub.enrolledIds || [];
   if (!preselected.length) {
     const matches = enrollCandidates(sub, false).filter(st => studentMatchesSubject(st, sub));
@@ -325,9 +277,7 @@ function openEnrollModal(subId) {
   openModal('enrollModal');
 }
 
-// Students this subject may draw from: the department roster, plus anyone
-// already enrolled (so a student moved out of the department is not silently
-// dropped when the modal is reopened).
+// Pool: the department roster plus anyone already enrolled.
 function _enrollPool() {
   const sub = getData('subjects', []).find(s => s.id === enrollSubjectId);
   return enrollCandidates(sub, window._enrollShowAll);
@@ -352,8 +302,7 @@ window.enrollBack = function (to) {
   renderEnrollPicker();
 };
 
-// Ticking is remembered in the Set, not read back off the DOM, so a student
-// stays enrolled after you navigate to another section and back.
+// Ticks live in the Set, not the DOM.
 window.enrollToggle = function (id, on) {
   if (on) window._enrollChecked.add(id); else window._enrollChecked.delete(id);
   _enrollUpdateCount();
@@ -402,8 +351,7 @@ function renderEnrollPicker() {
   const pool = _enrollPool();
   const chosen = window._enrollChecked;
 
-  // Search overrides the drill-down entirely and looks across the whole pool.
-  // This is the manual path for an irregular student who is not in the cohort.
+  // Search overrides the drill-down and covers the whole pool.
   _enrollUpdateCount();   // footer count was stuck at 0 until a box was ticked
   if (search) {
     const hits = pool.filter(st =>
@@ -461,18 +409,12 @@ function renderEnrollPicker() {
   inYear.forEach(x => { (bySec[_enrollSecOf(x)] = bySec[_enrollSecOf(x)] || []).push(x); });
   const secs = Object.keys(bySec).sort();
 
-  // Each section is a collapsible block: click its header to show or hide the
-  // students. With several sections they all start CLOSED, so every section
-  // is visible at a glance instead of one long list to scroll through; a
-  // single section starts open. Open/closed is remembered while the window is
-  // open, so ticking a student or "Enrol all" does not fold everything back.
+  // Collapsible sections: all start closed when there are several;
+  // open state is remembered while the window is open.
   if (!window._enrollOpenSecs) window._enrollOpenSecs = new Set();
   const openSet = window._enrollOpenSecs;
 
-  // Sections no teacher of this subject takes. If every teacher is limited to
-  // particular sections (Teachers & Sections), a student outside all of them
-  // has nobody to rate, so the section is marked here and saveEnrollment()
-  // leaves those students out.
+  // Sections no teacher of this subject takes; saveEnrollment() skips them.
   const subNow   = getData('subjects', []).find(s => s.id === enrollSubjectId);
   const tList    = subNow ? subjectTeachers(subNow) : [];
   const coverAll = !tList.length || tList.some(t => !t.sections.length);
@@ -512,8 +454,7 @@ function renderEnrollPicker() {
       }).join('');
 }
 
-// Header click: show/hide that section's students. Done on the page directly
-// (no redraw), so the list does not jump back to the top.
+// Toggle the section in place (no redraw).
 window.enrollToggleSectionEl = function (head) {
   const body = head && head.nextElementSibling;
   if (!body) return;
@@ -537,8 +478,7 @@ function _enrollRow(s) {
     </label>`;
 }
 
-// "Select cohort" - re-applies the curriculum match ON TOP of what is ticked,
-// so it never wipes a manual selection.
+// "Select cohort" adds the curriculum match on top of current ticks.
 window.enrollSelectCohort = function() {
   const sub = getData('subjects', []).find(s => s.id === enrollSubjectId);
   if (!sub) return;
@@ -553,17 +493,13 @@ window.enrollSelectCohort = function() {
 function filterEnrollList() { renderEnrollPicker(); }
 
 function saveEnrollment() {
-  // Read the Set, not the DOM. Only the section currently drilled into is
-  // rendered, so querying the DOM would save just those and silently unenrol
-  // every other section.
+  // Read the Set, not the DOM (only one section is rendered).
   const checked = [...window._enrollChecked];
   const subjects = getData('subjects', []);
   const idx = subjects.findIndex(s => s.id === enrollSubjectId);
   if (idx === -1) { showToast('Subject not found.', 'error'); return; }
 
-  // Students in a section that no teacher of this subject takes would see the
-  // subject in the app with nobody to rate. Saving Teachers & Sections already
-  // unenrols them; enrolment has to follow the same rule, or they slip back in.
+  // Skip students in sections no teacher takes.
   const teachers = subjectTeachers(subjects[idx]);
   const { keep, removed } = splitUncoveredStudents(
       Object.assign({}, subjects[idx], { enrolledIds: checked }), teachers);

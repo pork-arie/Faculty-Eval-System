@@ -1,21 +1,12 @@
-// ============================================================================
-// admin-sef.js
-// ----------------------------------------------------------------------------
-// Supervisor SEF entry (Annex B), audit log, modal helpers.
-//
-// Split out of the original 4,441-line admin.js. Load order is load-bearing:
-// keep these in the order listed in dashboard.html - later files redefine
-// functions defined earlier, and the last definition wins.
-// ============================================================================
+// admin-sef.js - supervisor SEF entry (Annex B), audit log, modal helpers.
+// Load order matters (see dashboard.html): the last definition wins.
 
 // ===== SUPERVISOR EVALUATION (SEF) - ANNEX B =====
 window.openSEFModal = function(teacherId) {
     const t = getData('teachers', []).find(item => item.id === teacherId);
     if (!t) return;
     
-    // Read the published SEF instrument rather than a second hardcoded copy.
-    // Two lists that must agree is one list too many: editing the questions here
-    // would silently diverge from what the app asks supervisors.
+    // Use the published SEF instrument, not a hardcoded copy.
     const _sefSet = (typeof getPublishedQuestionSet === 'function')
         ? getPublishedQuestionSet('SEF') : null;
     const sefItems = (_sefSet ? _sefSet.questions : []).map(q => ({
@@ -55,10 +46,7 @@ window.openSEFModal = function(teacherId) {
 };
 
 window.saveSEFRating = function(teacherId, setId) {
-    // Iterate the PUBLISHED instrument rather than a hardcoded 1..15 loop, so a
-    // version with a different number of items still saves correctly. Answers are
-    // keyed by the question's own id, and the version is stamped on the record so
-    // reports can resolve the exact wording this supervisor answered.
+    // Iterate the PUBLISHED instrument; answers keyed by question id, version stamped.
     const set = setId ? getQuestionSetById(setId) : getPublishedQuestionSet('SEF');
     const items = (set && set.questions) || [];
     if (!items.length) { showToast('No SEF questions published.', 'error'); return; }
@@ -92,10 +80,7 @@ window.saveSEFRating = function(teacherId, setId) {
         questionSetId: set.id,        // which version these answers belong to
         totalScore: parseFloat(computedRating),
         timestamp: new Date().toISOString(),
-        // BOTH fields, not just semester. A record with a semester and no
-        // schoolYear fails the term test outright (yearOk compares undefined
-        // against the term year), which is why Annex C section C came up blank
-        // while section B - whose records carry neither field - displayed fine.
+        // Stamp BOTH semester and schoolYear so term filters match.
         schoolYear: getActiveSY()?.year,
         semester: getActiveSY()?.activeSem
     });
@@ -115,12 +100,7 @@ function renderAuditLog(search = '') {
   const q = String(search || '').toLowerCase();
   const raw = getData('auditLog', []);
 
-  // Defensive on two counts:
-  //   1. An entry with no `action` or `detail` used to throw on .toLowerCase(),
-  //      and one bad entry killed the whole render — the page just stayed blank
-  //      with no error visible to the user.
-  //   2. Entries arriving from Firestore come back in document-id order, not
-  //      newest-first, so they need re-sorting by timestamp.
+  // Tolerate entries missing action/detail, and sort newest-first by timestamp.
   const log = raw
     .filter(l => l && typeof l === 'object')
     .filter(l => {

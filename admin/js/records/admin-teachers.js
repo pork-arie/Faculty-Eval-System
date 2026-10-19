@@ -1,18 +1,9 @@
-// ============================================================================
-// admin-teachers.js
-// ----------------------------------------------------------------------------
-// Faculty and supervisor records, tabs, multi-department assignments.
-// The largest module. Supervisors carry supervisedDepts: [{dept, role}], which
-// is why the assignment code is bulkier than the plain faculty table.
-//
-// Split out of the original 4,441-line admin.js. Load order is load-bearing:
-// keep these in the order listed in dashboard.html - later files redefine
-// functions defined earlier, and the last definition wins.
-// ============================================================================
+// admin-teachers.js - faculty and supervisor records, tabs, multi-department
+// assignments (supervisedDepts: [{dept, role}]).
+// Load order matters (see dashboard.html): the last definition wins.
 
 // ===== TEACHER DEPT FILTER PILLS =====
-// Rebuilt by adminfeatures.js buildTeacherDeptFilterBar — these are kept as
-// pass-through stubs so any legacy callers still work.
+// Pass-through stubs; adminfeatures.js builds the real bar.
 function buildTeacherDeptPills() {
   if (typeof buildTeacherDeptFilterBar === 'function') buildTeacherDeptFilterBar();
   if (typeof buildSupervisorDeptFilterBar === 'function') buildSupervisorDeptFilterBar();
@@ -121,14 +112,11 @@ window._updateTeacherTabCounts = function() {
 // ===== RENDER TEACHERS =====
 window.renderTeachers = function(search = '') {
   const searchInput = document.getElementById('teacherSearchInput');
-  // If a search string was passed in, sync it to the input.
-  // Then always read the live input value so filtering is consistent
-  // regardless of which call site triggered the render.
+  // Sync a passed search string to the input, then read the live value.
   if (searchInput && search && searchInput.value !== search) {
     searchInput.value = search;
   }
-  // Always use the live input value — this makes dept pill clicks work correctly
-  // even when called from toggleTeacherStatus / deleteTeacher with no args.
+  // Always use the live input value.
   const liveSearch = searchInput ? searchInput.value : search;
 
   // Rebuild dept filter bar (delegates to adminfeatures.js)
@@ -251,8 +239,7 @@ window.renderSupervisorTable = function(search) {
   // Rebuild supervisor dept filter bar so pills stay in sync
   if (typeof buildSupervisorDeptFilterBar === 'function') buildSupervisorDeptFilterBar();
 
-  // Use the supervisor-specific search input; ignore the passed value so it
-  // doesn't bleed over from the faculty search box.
+  // Use the supervisor search input only.
   const supInput = document.getElementById('supervisorSearchInput');
   if (supInput && search !== undefined && supInput.value !== search) {
     supInput.value = search;
@@ -297,11 +284,7 @@ window.renderSupervisorTable = function(search) {
       t.tid.toLowerCase().includes(sq) ||
       deptCode.includes(sq) ||
       deptFull.includes(sq);
-    // The supervisor pills are counted by the departments each person
-    // SUPERVISES (buildSupervisorDeptFilterBar), so filter the same way.
-    // Comparing the home department instead meant a CCIS teacher who chairs
-    // GS was counted in the GS pill but missing when you clicked it, and a
-    // supervisor with no department never matched "No Dept".
+    // Filter by SUPERVISED departments, matching the pill counts.
     const sup = getSupervisedDepts(t).filter(a => a.dept);
     const matchesDept = !deptActive ||
       (deptActive === 'UNASSIGNED' ? sup.length === 0 : sup.some(a => a.dept === deptActive));
@@ -378,10 +361,7 @@ window.renderTeacherDetailsContent = function(teacherId) {
   const subjects = getData('subjects', []).filter(s => subjectHasTeacher(s, teacherId) && s.loadType !== 'Overload' && !s.isLabSchool);
   const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor');
 
-  // Same §8.3 computation as every other screen (admin-scoring.js). This block
-  // used to do its own, with NO term filter at all and no exemption subtraction,
-  // so the figure in this expander could differ from the one in Reports and from
-  // the one printed on Annex C for the same faculty member.
+  // Same §8.3 computation as every other screen (admin-scoring.js).
   const agg = computeWeightedSET(teacherId, evalInActiveTerm);
   const classBreakdown = agg.classes.map(c => ({
     sub: c.sub, enrolledCount: c.enrolledCount,
@@ -464,9 +444,7 @@ function openAddTeacherModal() {
   if (drGrp) drGrp.style.display = 'none';
   const ftGrp = document.getElementById('tchFacultyTypeGroup');
   if (ftGrp) ftGrp.style.display = '';
-  // Regular faculty never sign in, so no password box. It stayed visible here
-  // after the Add Supervisor form had been opened, because this function
-  // never hid it again.
+  // Regular faculty never sign in: hide the password box.
   const pwGrp = document.getElementById('tchPasswordGroup');
   const pwEl  = document.getElementById('tchPassword');
   if (pwGrp) pwGrp.style.display = 'none';
@@ -475,8 +453,7 @@ function openAddTeacherModal() {
   openModal('addTeacherModal');
 }
 
-// Role cell for a supervisor. Shows every department they oversee, not just the
-// first — a Dean of COED who also chairs a CCIS program should read as both.
+// Supervisor role cell: every department they oversee.
 window.supRoleCellHtml = function(t) {
   const ROLE = {
     dean:        { label: '\ud83c\udf93 Dean',        color: '#7c3aed' },
@@ -493,13 +470,8 @@ window.supRoleCellHtml = function(t) {
 };
 
 // ===== SUPERVISORY ASSIGNMENTS (multi-department) =====
-// A supervisor is not always tied to one department. A Dean of COED may also
-// chair a CCIS program, and a part-time program chair may cover two or three.
-// Assignments are therefore stored as a list:
-//     supervisedDepts: [ { dept: 'COED', role: 'dean' },
-//                        { dept: 'CCIS', role: 'chairperson' } ]
-// `dept` and `deptRole` on the teacher record are kept in sync with the FIRST
-// entry so older code (and the Android app until it is updated) still works.
+// supervisedDepts: [{ dept: 'COED', role: 'dean' }, ...]. `dept`/`deptRole`
+// mirror the FIRST entry for older code and the Android app.
 
 const SUP_ROLES = [
   { value: 'dean',        label: '\ud83c\udf93 Dean' },
@@ -507,21 +479,11 @@ const SUP_ROLES = [
   { value: 'supervisor',  label: '\ud83d\udc64 General Supervisor' }
 ];
 
-// Read whatever the record has, old shape or new, as a normalised list.
-// Is this person FACULTY of deptCode - someone whose teaching is rated there?
-//   - regular faculty: their department;
-//   - a supervisor: their home department, unless they also supervise it
-//     (a CCIS chair is listed as CCIS's supervisor, not as its faculty).
-// So a CCIS teacher who is Dean of COED counts as CCIS faculty.
-// ============================================================
-// FACULTY / SUPERVISORS TABLE ORDER
-// ------------------------------------------------------------
-// Click the ID or Name header to sort by it; click again to reverse.
-//   Name - A to Z by LAST name, then first name (byName in admin-core.js):
-//          "Reman Alejan" under A, "Dr. Nancy Lanuza" under L.
-//   ID   - in Teacher ID order, numbers compared as numbers (T00002 < T00010).
-// The choice is remembered on this computer and used by both tables.
-// ============================================================
+// Normalise old or new shape into a list.
+// FACULTY of deptCode: regular faculty's dept, or a supervisor's home dept
+// unless they also supervise it.
+// TABLE ORDER: click ID or Name header to sort/reverse (Name = by last name,
+// ID = numeric). Remembered on this computer.
 window._teacherSort = (function () {
   try { return JSON.parse(localStorage.getItem('teacherSortPref')) || { key: 'name', dir: 1 }; }
   catch (e) { return { key: 'name', dir: 1 }; }
@@ -659,11 +621,7 @@ window.openAddSupervisorModal = function() {
 };
 
 window.onFacultyTypeChange = function(val) {
-  // Assign the BARE identifier, not window._pendingFacultyType. This file declares
-  // `let _pendingFacultyType` at the top, and a top-level let/const in a classic
-  // <script> does NOT become a window property — so `window._pendingFacultyType`
-  // created a SEPARATE variable that saveTeacher never read. The dropdown showed
-  // "Supervisor" while the save quietly kept the teacher as Regular.
+  // Assign the BARE identifier: a top-level `let` is not a window property.
   _pendingFacultyType = val;
   const hidden = document.getElementById('tchFacultyTypeHidden');
   if (hidden) hidden.value = val;
@@ -717,19 +675,9 @@ function openEditTeacherModal(id) {
   openModal('addTeacherModal');
 }
 
-// ============================================================
-// HOME DEPARTMENT vs SUPERVISED DEPARTMENTS
-// ------------------------------------------------------------
-// A supervisor has two separate things:
-//   - dept             - their HOME department: where they teach and are
-//                        counted as faculty (CCIS, say);
-//   - supervisedDepts  - where they are Dean / Chair (COED, say).
-// They used to be forced to match: saving a supervisor overwrote the home
-// department with the first supervised one, so a CCIS teacher who is Dean of
-// COED stopped being CCIS faculty and the CCIS chair could no longer rate
-// her. Now the home department is kept as chosen. Leaving it blank still
-// falls back to the first supervised department, as before.
-// ============================================================
+// HOME vs SUPERVISED DEPARTMENTS: `dept` is where they teach (counted as
+// faculty); supervisedDepts is where they're Dean/Chair. Blank home dept
+// falls back to the first supervised one.
 function _setHomeDeptLabel(type) {
   const sel = document.getElementById('tchDept');
   const lbl = sel && sel.closest('.form-group') && sel.closest('.form-group').querySelector('.form-label');
@@ -756,8 +704,7 @@ window.forceSetSupervisor = function(id) {
   renderTeachers();
 };
 
-// Set while a save is waiting on the database, so a double-click on
-// "Add Teacher" cannot create the same teacher twice.
+// Guards against double-click creating the same teacher twice.
 let _savingTeacher = false;
 
 async function saveTeacher() {
@@ -768,20 +715,14 @@ async function saveTeacher() {
   const nameParts = tchNameParts();
   const name = buildName(nameParts);
   const dept = document.getElementById('tchDept').value;
-  // #tchCategory does not exist in dashboard.html - the field was removed from
-  // the modal but these reads were left behind, so `category` was always ''.
-  // Harmless on ADD; on EDIT it silently WIPED whatever category the record
-  // already had, every single save. Read it only if the element is really
-  // there, and leave the stored value alone otherwise (see saveTeacher below).
+  // #tchCategory may not exist; only read it if present, else keep the stored value.
   const catEl_    = document.getElementById('tchCategory');
   const category  = catEl_ ? (catEl_.value || '') : null;
   const rank = (document.getElementById('tchRank') || {}).value || '';
   const facultyType = _pendingFacultyType || 'regular';
 
-  // Supervisory assignments, one per department. `dept` and `deptRole` mirror the
-  // first entry so anything still reading the old single-department fields keeps
-  // working. Saving as regular faculty clears both, otherwise a stale deptRole
-  // makes migrateSupervisorRecords() re-promote them on the next page load.
+  // `dept`/`deptRole` mirror the first assignment; regular faculty clears
+  // both so migrateSupervisorRecords() won't re-promote them.
   const supervisedDepts = facultyType === 'supervisor' ? readSupRows() : [];
   const deptRole = supervisedDepts.length ? supervisedDepts[0].role : '';
   
@@ -816,8 +757,7 @@ async function saveTeacher() {
 
   _savingTeacher = true;
   try {
-    // Then ask the DATABASE - another laptop may have added this ID, and this
-    // browser may still hold records deleted elsewhere.
+    // Then check the DATABASE.
     let matches = [];
     if (!tidUnchanged) {
       try {
@@ -851,15 +791,12 @@ async function saveTeacher() {
       teachers[idx].facultyType = facultyType;
       teachers[idx].deptRole = deptRole;
       teachers[idx].supervisedDepts = supervisedDepts;
-      // The home department is kept as chosen - it is where they TEACH, and it
-      // can differ from where they supervise (see _setHomeDeptLabel). Only a
-      // blank home department falls back to the first supervised one.
+      // Keep the chosen home department (see _setHomeDeptLabel).
       if (!teachers[idx].dept && supervisedDepts.length) teachers[idx].dept = supervisedDepts[0].dept;
 
       if (facultyType === 'supervisor') {
         if (pwFieldVal) {
-          // Save the other edits, then route the password through the proper
-          // reset path (resetLoginPassword in admin-core.js).
+          // Save other edits, then reset the password via resetLoginPassword.
           await commitRecords('teachers', teachers, [{ before, after: teachers[idx] }]);
           addAudit('Edit Supervisor', `Updated: ${name} (${tid}) — password reset requested`);
           await resetLoginPassword('supervisor', teachers[idx], pwFieldVal);
@@ -893,13 +830,10 @@ async function saveTeacher() {
         status:'active',
         deleted: false
       };
-      // Use the password field value if provided, otherwise default to TID.
-      // The password is deliberately NOT written to the audit log (it is
-      // readable by anyone who can read the log); the toast shows it once.
+      // Password defaults to TID. Never written to the audit log.
       if (facultyType === 'supervisor') fresh.password = pwFieldVal || tid;
 
-      // A deleted teacher with this ID stays deleted and untouched - this is a
-      // brand-new record (same rule as students).
+      // A deleted teacher with this ID stays deleted; this is a new record.
       const rec = Object.assign({ id: 'tch' + Date.now() }, fresh);
       teachers.push(rec);
       changes = [{ before: null, after: rec }];
@@ -907,8 +841,7 @@ async function saveTeacher() {
       addAudit(facultyType === 'supervisor' ? 'Add Supervisor' : 'Add Teacher', `Added: ${name} (${tid})`);
     }
 
-    // Awaited, so the toast reports what actually reached the database. A
-    // supervisor who is not in Firestore cannot sign in to the app.
+    // Awaited, so the toast reflects what reached the database.
     const ok = await commitRecords('teachers', teachers, changes);
     if (ok) {
       if (!editingId && facultyType === 'supervisor') {
@@ -963,9 +896,7 @@ function deleteTeacher(id) {
         ' and will be removed from them.'
       : '';
 
-  // SEF ratings this supervisor GAVE stop counting once they are deleted
-  // (getData filters them - see countedEvaluations in admin-core.js). They
-  // stay in the database; nothing is destroyed.
+  // SEF ratings they gave stop counting (countedEvaluations) but are kept.
   const sefGiven = evaluationsSubmittedBy(id, 'teacher').length;
   const sefNote = sefGiven
       ? ` The ${sefGiven} SEF rating${sefGiven === 1 ? '' : 's'} they gave to faculty will stop counting` +
@@ -980,17 +911,12 @@ function deleteTeacher(id) {
     teachers[tIdx].deleted = true;
     commitRecords('teachers', teachers, [{ before, after: teachers[tIdx] }]);
 
-    // Take them off every subject as well. Marking the teacher deleted used to
-    // leave them on the subject, so the subject still counted them - a subject
-    // with two teachers went on showing MULTIPLE after one was deleted, and the
-    // rating lists still expected students to rate someone who no longer exists.
+    // Remove them from every subject too.
     if (onSubjects.length) {
       const subjects = getData('subjects', []);
       let changed = false;
       subjects.forEach(sub => {
-        // The RAW list, not subjectTeachers(): that one already hides deleted
-        // teachers, so by this point it would report nothing to remove and the
-        // stale entry would stay in the record for ever.
+        // Use the RAW list; subjectTeachers() already hides deleted teachers.
         const raw = Array.isArray(sub.teachers) && sub.teachers.length
             ? sub.teachers
             : (sub.teacherId ? [{ id: sub.teacherId, sections: [] }] : []);

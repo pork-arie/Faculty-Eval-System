@@ -1,33 +1,17 @@
-// ============================================================================
-// admin-courses.js
-// ----------------------------------------------------------------------------
-// Supervisor data migration, course-by-department map, page bootstrap.
-// NOTE: syncCollectionToFirestore is NOT defined here - adminrate.js redefines it
-// and its MAP does include a customCourses key, so custom courses DO reach
-// Firestore (one doc per department in the top-level `courses` collection).
-//
-// Split out of the original 4,441-line admin.js. Load order is load-bearing:
-// keep these in the order listed in dashboard.html - later files redefine
-// functions defined earlier, and the last definition wins.
-// ============================================================================
+// admin-courses.js - supervisor data migration, course-by-department map, page bootstrap.
+// syncCollectionToFirestore lives in adminrate.js. Load order matters: the last definition wins.
 
 // ===== SUPERVISOR DATA MIGRATION =====
-// IMPORTANT: Only touches records where facultyType was NEVER set (null/undefined).
-// If facultyType is already 'regular' or 'supervisor' it means an admin explicitly
-// chose that value — we must never override it, or a supervisor demoted to regular
-// will flip back every page load.
+// Only touches records where facultyType was never set; never overrides an admin's choice.
 window.migrateSupervisorRecords = function() {
   const teachers = getData('teachers', []);
-  // Only the records this migration actually changes are written - it runs on
-  // every page load on every laptop, and pushing the whole list each time let
-  // a stale copy overwrite other laptops' edits.
+  // Writes only the records it changes.
   const changes = [];
   teachers.forEach(t => {
     if (t.deleted) return;
     // Skip any record that already has an explicit facultyType — admin set it intentionally.
     if (t.facultyType === 'regular' || t.facultyType === 'supervisor') return;
-    // Only here: facultyType is missing/null (old record from before the field existed).
-    // Use deptRole to decide what it should be.
+    // facultyType missing: derive it from deptRole.
     const hasSupervisorRole = t.deptRole === 'dean' || t.deptRole === 'chairperson' || t.deptRole === 'supervisor';
     const before = cloneRecord(t);
     t.facultyType = hasSupervisorRole ? 'supervisor' : 'regular';
@@ -35,8 +19,7 @@ window.migrateSupervisorRecords = function() {
     changes.push({ before, after: t });
   });
   if (changes.length) {
-    // Before the first load, passwords are not known yet and commitRecords
-    // refuses - the migration runs again once Firestore data is in.
+    // Before first load commitRecords refuses; this re-runs after load.
     commitRecords('teachers', teachers, changes);
     console.log('Migration: assigned facultyType to legacy records that lacked it.');
   }
@@ -47,14 +30,9 @@ migrateSupervisorRecords();
 // Initialize Dashboard
 renderDashboard();
 
-// REMOVED (dead code): syncCollectionToFirestore
-// Replaced unconditionally by adminrate.js:316, whose MAP handles customCourses
-// by writing one document per department into the top-level `courses` collection.
-// The 71 lines that were here never executed - the definition below in the
-// load order replaced this one before anything could call it.
+// REMOVED (dead code): syncCollectionToFirestore - defined in adminrate.js.
 // ===== COURSE-BY-DEPARTMENT MAP =====
-// All courses are stored in localStorage under 'customCourses' — no hardcoded defaults.
-// Use the Excel bulk-upload template (downloadable from Manage Courses) to populate courses.
+// Courses live in localStorage 'customCourses'; populate via the bulk-upload template.
 let COURSES_BY_DEPT = getData('customCourses', {});
 
 // Reload from localStorage (call after any save/delete)
@@ -65,8 +43,7 @@ window.reloadCoursesByDept = function() {
 let _stuCourseActiveDept = '';
 let _stuPendingCourse    = '';   // course to re-select once the list loads (edit mode)
 
-// Department dropdown -> course list. Picking a department fills in its code
-// automatically and loads only that department's courses.
+// Department dropdown -> its code and course list.
 window.loadStuCourses = function(deptCode) {
   const sel  = document.getElementById('stuCourse');
   const chip = document.getElementById('stuCourseDeptChip');
@@ -84,8 +61,7 @@ window.loadStuCourses = function(deptCode) {
 
   const courses = COURSES_BY_DEPT[deptCode];
   if (!courses || !courses.length) {
-    // Same reasoning as populateStuCourseDropdown: preserve what the record
-    // already has rather than offering only a blank.
+    // Keep the record's existing value, as in populateStuCourseDropdown.
     sel.innerHTML = '<option value="">— No courses set up for ' + deptCode + ' —</option>'
       + (_stuPendingCourse ? `<option value="${_stuPendingCourse}" selected>${_stuPendingCourse} (not registered)</option>` : '');
     _stuPendingCourse = '';
@@ -114,11 +90,8 @@ function populateStuCourseDropdown(deptCode, selected) {
   if (!sel) return;
   const courses = (COURSES_BY_DEPT[deptCode] || []).slice();
 
-  // Keep a course the student already has even when it is not registered under
-  // this department. Without this the <select> has no matching <option>, so it
-  // falls back to the blank one - and saving then writes that blank straight
-  // over a course the record already held. Editing anything at all, a password
-  // included, silently wiped the course.
+  // Keep the student's current course even if not under this department,
+  // or saving would wipe it.
   if (selected && courses.indexOf(selected) === -1) {
     sel.innerHTML = `<option value="">— Select Course —</option>`
       + `<option value="${selected}" selected>${selected} (not registered)</option>`
@@ -293,17 +266,8 @@ window.mcHandleBulkUpload = function(event) {
 };
 
 // ── Download the bulk-upload template ──
-// This used to link to '../courses_bulk_upload_template.xlsx', a file that was
-// never in the project. The server answered with its "page not found" page,
-// which the browser saved under the .xlsx name - so the download was an empty
-// or broken spreadsheet. The template is now built right here with SheetJS
-// (already loaded for the upload), so there is no separate file to go missing.
-//
-// Sheet 1 "Courses" is what the upload reads: a "Department Code | Course Name"
-// header, then one row per department with the course name left blank. Rows
-// with a blank course are skipped on upload, so unused rows do no harm.
-// Sheet 2 "Instructions" holds the explanation and examples - kept off sheet 1
-// so an example can never be imported by accident.
+// Built with SheetJS. Sheet 1 "Courses" is what the upload reads (blank
+// course rows are skipped); sheet 2 "Instructions" holds the examples.
 window.mcDownloadTemplate = function() {
   if (typeof XLSX === 'undefined') {
     showToast('The spreadsheet tool has not loaded. Check your internet connection and reload the page.', 'error');
@@ -339,14 +303,8 @@ window.mcDownloadTemplate = function() {
   XLSX.utils.book_append_sheet(wb, wsHelp, 'Instructions');
   XLSX.writeFile(wb, 'courses_bulk_upload_template.xlsx');
 };
-// ============================================================
-// SEF RECORDS AUDIT  (find & clean stray supervisor evaluations)
-// ------------------------------------------------------------
-// Lists every evaluation tagged evaluatorType:'supervisor', resolves the
-// faculty + supervisor behind it, and labels its source so test/orphaned
-// records can be removed safely. Deletions also remove the Firestore doc
-// (setData only upserts, so a plain local delete would re-sync on reload).
-// ============================================================
+// SEF RECORDS AUDIT: list supervisor evaluations with their source so
+// stray ones can be deleted (locally and in Firestore).
 (function () {
   function teacherMap() {
     const m = {};
@@ -359,10 +317,7 @@ window.mcDownloadTemplate = function() {
     const facultyOk = !!faculty && !faculty.deleted;
     let source, supName = '\u2014', orphan = false;
 
-    // A SEF submitted from the Android app carries the supervisor's document id in
-    // `studentId` (the generic evaluator field) and no supervisorId at all — the
-    // same fallback Annex C already uses. Without it every app submission was
-    // labelled "Admin-entered" with the supervisor shown as "—".
+    // App-submitted SEFs carry the supervisor id in `studentId`.
     const recSupId = rec.supervisorId
       || (rec.evaluatorType === 'supervisor' ? rec.studentId : '');
     if (recSupId) {
@@ -371,8 +326,7 @@ window.mcDownloadTemplate = function() {
         source = 'App supervisor';
         supName = sup.name || sup.tid || recSupId;
       } else {
-        // Not counted in any score already (see countedEvaluations); listed here
-        // so it can be permanently deleted if the office wants it gone.
+        // Already not counted (countedEvaluations); listed so it can be deleted.
         source = 'Orphaned \u2014 supervisor removed (not counted)';
         orphan = true;
         supName = (sup && sup.name) ? (sup.name + ' (removed)') : (rec.supervisorTid || recSupId);
@@ -538,8 +492,6 @@ window.mcDownloadTemplate = function() {
     fab.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:9990;background:#064e3b;color:#fff;border:none;border-radius:10px;padding:10px 15px;font-size:0.78rem;font-weight:700;font-family:inherit;cursor:pointer;box-shadow:0 6px 18px rgba(6,78,59,0.4);';
     document.body.appendChild(fab);
   }
-  // The SEF Audit is launched from the Report & Analytics section (a button in
-  // renderReports calls openSEFAudit). The old floating button is intentionally
-  // not injected. injectFab() is kept above but no longer auto-called.
+  // SEF Audit opens from Reports (openSEFAudit); injectFab() is not auto-called.
   void injectFab;
 })();

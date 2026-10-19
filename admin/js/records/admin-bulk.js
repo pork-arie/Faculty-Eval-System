@@ -1,12 +1,5 @@
-// ============================================================================
-// admin-bulk.js
-// ----------------------------------------------------------------------------
-// CSV bulk upload for student rosters and subjects.
-//
-// Split out of the original 4,441-line admin.js. Load order is load-bearing:
-// keep these in the order listed in dashboard.html - later files redefine
-// functions defined earlier, and the last definition wins.
-// ============================================================================
+// admin-bulk.js - CSV bulk upload for student rosters and subjects.
+// Load order matters (see dashboard.html): the last definition wins.
 
 // ===== BULK UPLOAD =====
 window.previewBulkStudents = function(input) {
@@ -14,9 +7,7 @@ window.previewBulkStudents = function(input) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = function(e) {
-    // .replace strips the invisible byte-order mark Excel adds when saving as
-    // "CSV UTF-8" - it used to glue itself to the first ID, so that row was
-    // rejected. UTF-8 is the only Excel CSV option that keeps letters like \u00f1.
+    // Strip Excel's UTF-8 byte-order mark.
     const lines = e.target.result.replace(/^\uFEFF/, '').split('\n').map(l => l.trim()).filter(Boolean);
     const parsed = [];
     lines.forEach(line => {
@@ -61,8 +52,7 @@ window.previewBulkStudents = function(input) {
   reader.readAsText(file);
 };
 
-// Set while an import is waiting on the database, so a double-click cannot
-// import the same file twice.
+// Guards against double-click importing twice.
 let _importingStudents = false;
 
 window.importBulkStudents = async function() {
@@ -75,13 +65,10 @@ window.importBulkStudents = async function() {
   try {
     const students = getData('students', []);
     const subjects = getData('subjects', []);
-    // Normalize here as well - a CSV column typed as 22-1745 would otherwise
-    // sail past the duplicate check and create a twin of an existing student.
+    // Normalize IDs so the duplicate check catches them.
     rows.forEach(r => { if (r.sid) r.sid = normalizeStudentId(r.sid); });
 
-    // Look every ID up in the DATABASE, not just this browser's copy - another
-    // laptop may have added some of them. Deleted records are ignored: a
-    // re-imported ID becomes a brand-new person.
+    // Check IDs against the DATABASE; deleted records are ignored.
     let inDb;
     try {
       inDb = await findRosterRecordsMany('students', 'sid', rows.map(r => r.sid));
@@ -101,8 +88,7 @@ window.importBulkStudents = async function() {
       if (!STUDENT_ID_RE.test(r.sid)) { skipped++; return; }
       seen.add(r.sid);
 
-      // forceReset TRUE - see admin-students.js. A bulk-imported roster is the
-      // most common way students are created, so this is the path that matters.
+      // forceReset TRUE - see admin-students.js.
       const fresh = { sid: r.sid, name: r.name, course: normalizeCourseName(r.course), year: r.year,
                       section: String(r.section || '').trim().toUpperCase(), dept: r.dept,
                       password: r.sid, status: 'active', forceReset: true, deleted: false };
@@ -135,9 +121,7 @@ window.previewBulkTeachers = function(input) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = function(e) {
-    // .replace strips the invisible byte-order mark Excel adds when saving as
-    // "CSV UTF-8" - it used to glue itself to the first ID, so that row was
-    // rejected. UTF-8 is the only Excel CSV option that keeps letters like \u00f1.
+    // Strip Excel's UTF-8 byte-order mark.
     const lines = e.target.result.replace(/^\uFEFF/, '').split('\n').map(l => l.trim()).filter(Boolean);
     const parsed = [];
     lines.forEach(line => {
@@ -235,9 +219,7 @@ window.previewBulkSubjects = function(input) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = function(e) {
-    // .replace strips the invisible byte-order mark Excel adds when saving as
-    // "CSV UTF-8" - it used to glue itself to the first ID, so that row was
-    // rejected. UTF-8 is the only Excel CSV option that keeps letters like \u00f1.
+    // Strip Excel's UTF-8 byte-order mark.
     const lines = e.target.result.replace(/^\uFEFF/, '').split('\n').map(l => l.trim()).filter(Boolean);
     const parsed = [];
     lines.forEach((line, i) => {

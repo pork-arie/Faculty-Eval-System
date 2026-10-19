@@ -1,17 +1,8 @@
-// ============================================================================
-// admin-reports.js
-// ----------------------------------------------------------------------------
-// Evaluation control window and the Reports & Analytics page.
-//
-// Split out of the original 4,441-line admin.js. Load order is load-bearing:
-// keep these in the order listed in dashboard.html - later files redefine
-// functions defined earlier, and the last definition wins.
-// ============================================================================
+// admin-reports.js - evaluation control window and the Reports & Analytics page.
+// Load order matters (see dashboard.html): the last definition wins.
 
 // ===== EVAL CONTROL =====
-// Submission Tracking filters. Declared OUTSIDE renderEvalControl because that
-// function re-runs whenever the period is opened or closed - state declared
-// inside it would reset the filter on every toggle.
+// Submission Tracking filters; declared outside renderEvalControl so they persist.
 window._trackQuery = '';
 window._trackDept  = '';
 window._trackOpen    = new Set();   // faculty whose subject list is expanded
@@ -58,14 +49,8 @@ function renderEvalControl() {
   renderTrackingRows();
 }
 
-// ============================================================
-// DEPARTMENT PROGRESS
-// ------------------------------------------------------------
-// One card per department: student ratings submitted vs expected across all
-// its faculty (faculty counted by home department, as in the table below).
-// Clicking a card filters the table to that department. Hidden when only one
-// department has a teaching load - the card would just repeat the total.
-// ============================================================
+// DEPARTMENT PROGRESS: one card per department (submitted vs expected);
+// click to filter the table. Hidden with only one department.
 function _trackDaysLeft(deadline) {
   if (!deadline) return null;
   const end = new Date(deadline + 'T23:59:59');
@@ -143,16 +128,8 @@ function renderTrackDeptSummary() {
     </div>`;
 }
 
-// ============================================================
-// SUBMISSION TRACKING, BY FACULTY
-// ------------------------------------------------------------
-// One row per faculty member, with their progress across ALL their subjects:
-// how many student ratings they should receive this term (every student they
-// teach, in every subject) and how many have come in. Clicking a faculty row
-// opens their subjects underneath, each with its own progress; clicking a
-// subject opens the roster of who has and has not submitted.
-// More than 10 faculty: the first 10 show, with "View all" for the rest.
-// ============================================================
+// SUBMISSION TRACKING, BY FACULTY: one row per faculty, expanding to
+// subjects, then to the submission roster. First 10 shown, "View all" for more.
 
 // Progress for every faculty member who teaches at least one subject.
 function _trackFacultyStats() {
@@ -362,11 +339,7 @@ function _buildTeacherEvalData() {
         const teacherSubjects = subjects.filter(s =>
             subjectHasTeacher(s, teacher.id) && s.loadType !== 'Overload' && !s.isLabSchool
         );
-        // §8.3 maths comes from computeWeightedSET (admin-scoring.js) — the same
-        // function Annex C, Annex D and the FER use. This block used to repeat it
-        // here, which is how the Reports table could disagree with the printed
-        // forms; it also had no teacherId filter, so a reassigned subject brought
-        // the previous teacher's ratings along with it.
+        // §8.3 maths from computeWeightedSET (admin-scoring.js).
         const agg = computeWeightedSET(teacher.id, evalInActiveTerm);
         const classRatings = agg.classes.map(c => ({
             subjectCode: c.subjectCode, subjectName: c.subjectName,
@@ -382,8 +355,7 @@ function _buildTeacherEvalData() {
         );
         const sefScore = supervisorEvals.length > 0
             ? (supervisorEvals.reduce((a, b) => a + b.totalScore, 0) / supervisorEvals.length).toFixed(2) : '—';
-        // How many supervisors contributed. Shown next to the figure so an
-        // averaged rating is not mistaken for a single supervisor's judgement.
+        // Number of supervisors averaged.
         const sefRaters = supervisorEvals.length;
 
         return {
@@ -437,8 +409,7 @@ function _buildFacultyRow(t) {
         </tr>`;
 }
 
-// Render faculty tbody rows based on current filter
-// Shared empty-state row so the Faculty and Supervisors tables look identical.
+// Shared empty-state row for the Faculty and Supervisors tables.
 function _rptEmptyRow(colspan, message, hint) {
     return `<tr><td colspan="${colspan}" style="text-align:center;padding:32px;color:var(--muted);">`
         + `<div style="font-size:0.9rem;">${message}</div>`
@@ -449,8 +420,7 @@ function _rptEmptyRow(colspan, message, hint) {
 // Rows shown in the Reports summary tables before "View Full List" takes over.
 const RPT_PREVIEW_ROWS = 5;
 
-// Footer row telling the reader the table is truncated. Without it a capped table
-// silently looks like the complete set, which is worse than a long scroll.
+// Footer row noting the table is truncated.
 function _rptMoreRow(total, shown, colspan) {
     if (total <= shown) return '';
     return `
@@ -483,9 +453,7 @@ function _renderFacultyTable() {
         return;
     }
 
-    // The dashboard table is a summary, not the register - "View Full List" is
-    // right there for the whole set. Capping it keeps Reports scannable instead
-    // of turning the page into an endless scroll once the roster fills up.
+    // Cap the summary table; "View Full List" has the rest.
     const shown = list.slice(0, RPT_PREVIEW_ROWS);
     tbody.innerHTML = shown.map(t => _buildFacultyRow(t)).join('')
         + _rptMoreRow(list.length, shown.length, 6);
@@ -530,9 +498,7 @@ function _renderSupervisorTable() {
         .filter(t => t.facultyType === 'supervisor')
         .filter(t => !dept || (t.dept || 'UNASSIGNED') === dept);
 
-    // Show the card when there are matching supervisors OR a department filter is
-    // active — so filtering to a department with no supervisor shows a clear
-    // message instead of the whole section silently disappearing.
+    // Show the card if supervisors match OR a department filter is active.
     if (card) card.style.display = (list.length > 0 || dept) ? '' : 'none';
     if (countEl) countEl.textContent = list.length;
 
@@ -808,9 +774,7 @@ function _rptViewAllRenderRows() {
     window._rptViewAllList = shown;
 }
 
-// "Prepared by" and "Approved by" at the foot of the printed list. Names and
-// positions come from Reports > Actions > Signatories; any left blank prints
-// as an empty line to sign and write on by hand.
+// "Prepared by" / "Approved by" from Reports > Actions > Signatories.
 function _rptSignatureBlock() {
     const sig = (typeof getSignatories === 'function') ? getSignatories() : {};
     const one = (label, name, role) =>
@@ -823,12 +787,8 @@ function _rptSignatureBlock() {
       + '</div>';
 }
 
-// Was a CSV export. Now prints the same list through the browser's print
-// dialog, so the destination "Save as PDF" produces the file - the same
-// mechanism Annex C/D and the Reports export use, rather than a second
-// code path with its own formatting.
-// Full department name for a printed title: "College of Computing & Info.
-// Sciences". Used by both PDF exports when one department is selected.
+// PDF export via the print dialog.
+// Full department name for printed titles.
 window._rptDeptFullName = function(code) {
     if (!code) return '';
     if (code === 'UNASSIGNED') return 'No Department';
@@ -836,12 +796,7 @@ window._rptDeptFullName = function(code) {
     return (cfg && cfg.name) || code;
 };
 
-// deptCode: the department selected on the page, or '' for All Departments.
-//   All Departments -> title "Faculty Performance — All Departments", with a
-//                      Department column (the list mixes departments).
-//   One department  -> the title IS the department ("College of Computing &
-//                      Info. Sciences"), and the Department column is left out
-//                      because every row would repeat the same value.
+// deptCode: selected department, or '' for All (adds a Department column).
 function _exportRptViewAllPDF(tableType, list, deptLabel, deptCode) {
     list = list || [];
     if (!list.length) {

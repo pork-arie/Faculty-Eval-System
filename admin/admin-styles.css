@@ -43,9 +43,7 @@
    ANNEX D PRINT STYLES
    ============================================================ */
 @media print {
-    /* Printed forms: the editable rank/name fields and the date pickers must come
-       out as plain text on a ruled line. Without this the browser prints the
-       date input's calendar icon and spinner controls onto the paper. */
+    /* Printed forms: inputs and date pickers print as plain text on a ruled line. */
     [data-print-field] {
         border-bottom: 1px solid #333 !important;
     }
@@ -1113,11 +1111,7 @@ body::before {
     display: none; /* replaced by dmc-action-bar */
 }
 
-/* ── Card action bar (View / Edit / Delete) ──
-   Translucent DARK overlay so the strip darkens each card's own color
-   consistently — crisp, readable white buttons on every card (light gold,
-   gray, or dark red all get the same defined look as the red card).
-   flex:1 gives all three buttons equal width; icon + label stay centered. */
+/* ── Card action bar (View / Edit / Delete) ── dark overlay, equal-width buttons. */
 .dmc-action-bar {
     display: flex;
     border-top: 1px solid rgba(0,0,0,0.14);
@@ -1157,10 +1151,7 @@ body::before {
 .dmc-del-btn:hover   { background: rgba(220,38,38,0.60); }
 
 /* ============================================================
-   DEPT MANAGEMENT — LIST LAYOUT
-   (mirrors the grid card's visual language: same icon set,
-   same label-under-icon action buttons, same spacing scale,
-   so View/Edit/Delete look identical in both layouts)
+   DEPT MANAGEMENT — LIST LAYOUT (mirrors the grid cards)
    ============================================================ */
 .dept-manage-list {
     display: flex;
@@ -1277,8 +1268,7 @@ body::before {
     font-weight: 600;
 }
 
-/* Same button shape/sizing/labeling as the grid's dmc-action-btn,
-   just re-themed for a white row background instead of a colored card. */
+/* Same as the grid's dmc-action-btn, themed for a white row. */
 .dml-actions {
     display: flex;
     gap: 6px;
@@ -1757,9 +1747,7 @@ body::before {
 
 /* ============================================================
    REPORTS PAGE — PILL DEPT FILTER + SINGLE TABLES
-   Pills now reuse .student-dept-filter-btn / .dept-filter-count
-   (defined in the Dept Filter Pills section above) — no
-   separate .rpt-pill rules needed.
+   (pills reuse .student-dept-filter-btn / .dept-filter-count)
    ============================================================ */
 
 /* Pill bar row — kept here since it is unique to Reports */
@@ -1875,12 +1863,9 @@ body::before {
     max-height: 0;
     opacity: 0;
 }
-/* Editable fields inside printed forms (Annex C / D). Dashed underline on screen
-   signals "you can type here"; @media print above swaps it for a solid rule. */
+/* Editable fields in printed forms (Annex C / D): dashed on screen, solid in print. */
 [data-print-field] {
-    /* Solid rule, always drawn, even when the field is empty — an empty dashed
-       box read as a rendering glitch rather than a blank to be filled in. This
-       matches the ruled lines already used elsewhere on the form. */
+    /* Solid rule, always drawn, even when empty. */
     border-bottom: 1px solid #333;
     min-height: 1.15em;
     line-height: 1.35;
@@ -1898,10 +1883,7 @@ body::before {
     [data-print-field]:empty::before { content: ''; }
 }
 
-/* ===== TEACHER PICKER (Add/Edit Subject modal) =====
-   Replaces the native <select> for assigning a teacher. Faculty from every
-   department are selectable now, so the list needs search and filtering rather
-   than a single long scroll. */
+/* ===== TEACHER PICKER (Add/Edit Subject modal) ===== */
 .tp-wrap { display: flex; flex-direction: column; gap: 8px; }
 
 .tp-selected { min-height: 42px; }
@@ -1924,8 +1906,7 @@ body::before {
 .tp-search { font-size: 0.85rem; }
 
 .tp-pills { display: flex; flex-wrap: wrap; gap: 6px; }
-/* Pills reuse .student-dept-filter-btn and .dept-filter-count from the Teachers
-   page filter bar, so both bars stay identical by construction. */
+/* Pills reuse the Teachers page filter-bar classes. */
 
 .tp-list {
     max-height: 230px; overflow-y: auto;
@@ -1956,9 +1937,7 @@ body::before {
     background: var(--surface2, #f1f5f9); color: var(--muted, #64748b);
 }
 .tp-load.free { background: #dcfce7; color: #15803d; }
-/* Page-toolbar buttons (Reports header). White on the light page background so
-   they read as buttons rather than as plain text - .btn-ghost is transparent,
-   which disappeared against the header. */
+/* Page-toolbar buttons (Reports header): white so they read as buttons. */
 .btn-toolbar {
     background: #fff;
     border: 1px solid var(--border, #e2e8f0);
@@ -1989,22 +1968,16 @@ body::before {
     align-items: center;
     justify-content: flex-start;
     gap: 8px;
-    /* Basis 0, not auto. With an auto basis the flex algorithm uses this
-       element's hypothetical main size - its full content width - when it
-       collects items into flex lines, so the toolbar was pushed onto a second
-       line before min-width:0 ever got a chance to shrink it. */
+    /* Basis 0, not auto, so the toolbar can shrink before wrapping. */
     flex: 1 1 0%;
     min-width: 0;
     flex-wrap: nowrap;
 }
 
-/* Term selector and Actions button both keep their natural width - with only
-   two controls left there is roughly 700px of slack, so nothing needs to be
-   squeezed or truncated. */
+/* Term selector and Actions button keep their natural width. */
 .reports-toolbar > * { flex: 0 0 auto; }
 
-/* Narrow viewports: drop the toolbar onto its own full-width row, still flush
-   left with the heading. */
+/* Narrow viewports: toolbar on its own full-width row. */
 @media (max-width: 900px) {
     .reports-toolbar { flex: 1 0 100%; flex-wrap: wrap; }
 }
@@ -2083,8 +2056,7 @@ body::before {
 
 .reports-menu-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .reports-menu-label { font-size: 0.82rem; font-weight: 600; }
-/* The old buttons carried these explanations in title attributes, where they
-   only appeared on hover. In a menu there is room to show them outright. */
+/* Menu item descriptions shown outright. */
 .reports-menu-desc {
     font-size: 0.72rem;
     font-weight: 500;
@@ -2097,12 +2069,7 @@ body::before {
     .reports-actions { display: none !important; }
 }
 /* ============================================================
-   SKELETON LOADING
-   ------------------------------------------------------------
-   Shown only while a container is genuinely EMPTY and data is
-   still being fetched. The dashboard renders from localStorage,
-   so on a warm cache real content is already there - covering it
-   with a shimmer would make the page feel slower than it is.
+   SKELETON LOADING (only for genuinely empty containers)
    ============================================================ */
 .skel {
   background: linear-gradient(90deg, #eef2f0 25%, #e2e9e5 37%, #eef2f0 63%);
@@ -2126,8 +2093,7 @@ body::before {
   display: flex; flex-direction: column; gap: 12px;
 }
 
-/* Respect the OS setting - a shimmer is motion, and some readers are
-   sensitive to it. The placeholder still shows, it simply holds still. */
+/* Respect reduced-motion: the placeholder holds still. */
 @media (prefers-reduced-motion: reduce) {
   .skel { animation: none; }
 }
@@ -2138,8 +2104,7 @@ body::before {
 .tp-secs-label { display: block; font-size: 0.72rem; color: var(--muted, #64748b);
                  font-weight: 700; margin-bottom: 5px; }
 .tp-sec-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-/* One chip per section, per teacher: each teacher on a subject can take a
-   different set. "All students" is selected when none are. */
+/* One chip per section, per teacher; "All students" when none are selected. */
 .tp-sec { font-size: 0.74rem; font-weight: 600; cursor: pointer;
           padding: 4px 11px; border-radius: 999px;
           border: 1px solid var(--border, #e2e8f0);
@@ -2153,8 +2118,7 @@ body::before {
 .tcell:hover, .tcell:focus-visible { background: #f0fdf4; outline: none; }
 .tcell:hover .tcell-names, .tcell:focus-visible .tcell-names { color: var(--primary, #059669); }
 .tcell-names { display: block; line-height: 1.45; }
-/* Only the first two names are listed; the rest are counted, so one subject
-   with six teachers stays one row high. */
+/* First two names listed; the rest are counted. */
 .tcell-more { display: inline-block; margin-top: 3px; font-size: 0.7rem; font-weight: 700;
               color: var(--primary, #059669); background: #ecfdf5;
               padding: 1px 7px; border-radius: 999px; }

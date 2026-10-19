@@ -1,7 +1,5 @@
 // ===== DEPARTMENTS =====
-// No hardcoded/seed departments. All departments are added manually from the
-// admin panel and live in Firestore (mirrored to localStorage). On an empty
-// database this returns {} so the app starts with no departments.
+// No seed departments; all are added from the admin panel (Firestore + localStorage).
 window.getDepartments = function() {
     const stored = getData('departments', null);
     if (stored && typeof stored === 'object') {
@@ -23,9 +21,7 @@ window.refreshDeptConfig = function() {
 window.addDepartment = function(code, name, short, desc, icon, color) {
     code = code.toUpperCase();
 
-    // Creating a code clears any tombstone for it, so a department deleted and
-    // later re-created is not silently dropped by the loader. Both copies go:
-    // the local one and the shared one in Firestore.
+    // Creating a code clears its tombstone (local and Firestore).
     try {
         const tomb = JSON.parse(localStorage.getItem('deletedDepts') || '[]');
         const kept = tomb.filter(function (c) { return c !== code; });
@@ -47,9 +43,8 @@ window.addDepartment = function(code, name, short, desc, icon, color) {
         isCustom: true
     };
     depts[code] = newCfg;
-    // FIX Bug #2: base64 images can be 50–300KB and push localStorage over its 5MB
-    // quota limit. Without a try/catch, setItem() throws silently and the function
-    // crashes before ever reaching Firestore — so nothing gets saved.
+    // FIX Bug #2: base64 images can exceed the localStorage quota; catch it so
+    // the Firestore save still runs.
     try {
         localStorage.setItem('departments', JSON.stringify(depts));
     } catch (e) {
@@ -80,9 +75,7 @@ window.removeDepartment = function(code) {
     delete depts[code];
     setData('departments', depts);
 
-    // Its COURSES go too. They were left behind - in localStorage under
-    // customCourses and in Firestore as courses/<code> - so a deleted
-    // department's programmes still turned up in course lists and imports.
+    // Remove its courses too (localStorage customCourses and Firestore courses/<code>).
     try {
         const cc = getData('customCourses', {});
         if (cc && cc[code]) { delete cc[code]; setData('customCourses', cc); }
@@ -92,11 +85,7 @@ window.removeDepartment = function(code) {
           .catch(function () { /* no courses recorded for this code - fine */ });
     }
 
-    // Record the deletion. loadFromFirebase() re-uploads any local-only custom
-    // department, because that is normally one created moments ago whose write
-    // has not landed yet. A department deleted from Firestore looks identical
-    // from the loader's side, so without this marker the next page load put it
-    // straight back - which is exactly why NEWS kept returning.
+    // Local deletion marker, so loadFromFirebase() doesn't re-upload it.
     try {
         const tomb = JSON.parse(localStorage.getItem('deletedDepts') || '[]');
         if (tomb.indexOf(code) === -1) tomb.push(code);
@@ -108,13 +97,7 @@ window.removeDepartment = function(code) {
           .then(function() { console.log('Dept deleted from Firestore:', code); })
           .catch(function(e) { console.error('Firestore dept delete error:', e); });
 
-        // A TOMBSTONE IN FIRESTORE, not just in this browser.
-        //
-        // The local marker above only stops THIS browser re-uploading the
-        // department. Any other machine still holding it in localStorage puts
-        // it straight back on its next load - which is why a deleted
-        // department kept returning to the database after signing in again.
-        // A tombstone every device can read closes that.
+        // Firestore tombstone, so other devices don't re-upload it either.
         db.collection('deletedDepts').doc(code).set({
             code: code,
             deletedAt: new Date().toISOString()
@@ -127,8 +110,7 @@ window.removeDepartment = function(code) {
     showToast('Department removed successfully!', 'success');
 };
 
-// Safe delete: warns if teachers/subjects still point at this department,
-// so you do not silently orphan data. Works for ALL departments (incl. defaults).
+// Safe delete: warns if teachers/subjects/students still use this department.
 window.deleteDeptSafe = function(code) {
     code = (code || '').toUpperCase();
     const depts = getDepartments();
@@ -137,8 +119,7 @@ window.deleteDeptSafe = function(code) {
 
     const teachers = getData('teachers', []).filter(t => !t.deleted && (t.dept || '').toUpperCase() === code);
     const subjects = getData('subjects', []).filter(s => (s.dept || '').toUpperCase() === code);
-    // Students were not counted, so the warning could read "0 teachers and 0
-    // subjects" for a department that still had a whole class enrolled in it.
+    // Count students too.
     const students = getData('students', []).filter(s => !s.deleted && (s.dept || '').toUpperCase() === code);
 
     let msg = 'Delete the department "' + cfg.name + '" (' + code + ')?';
@@ -211,15 +192,9 @@ function showDeptPage(deptCode) {
 }
 
 /**
- * Distinct students enrolled in a department's subjects.
- *
- * Single source of truth for "how many students does this department have".
- * The dept stat card, the enrolled-students modal and the full-list page each
- * used to work this out for themselves and disagreed with each other.
- *
- * Deleted students and ids pointing at nothing are dropped, so a stale id left
- * behind on a subject cannot inflate the count.
- */
+* Distinct, non-deleted students enrolled in a department's subjects.
+* Single source of truth for the department student count.
+*/
 window.getDeptEnrolledStudentIds = function (deptCode) {
   const living = new Set(getData('students', []).filter(s => !s.deleted).map(s => s.id));
   const ids = new Set();
@@ -274,15 +249,11 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
 
   const everyTeacher = getData('teachers', []).filter(t => !t.deleted);
 
-  // Faculty of this department: regular faculty whose department it is, plus
-  // any supervisor whose HOME department it is but who supervises elsewhere -
-  // e.g. a CCIS teacher who is Dean of COED. See teachesInDept (admin-teachers.js).
+  // Faculty of this department, incl. supervisors homed here who supervise
+  // elsewhere (see teachesInDept in admin-teachers.js).
   const regularTeachers = everyTeacher.filter(t => teachesInDept(t, deptCode));
 
-  // Supervisors do NOT. A dean of COED may also chair a CCIS program, so this
-  // page lists anyone whose supervisedDepts includes THIS department - not just
-  // those whose home dept happens to match. Filtering on t.dept alone was why a
-  // supervisor assigned to a second department never appeared there.
+  // Supervisors: anyone whose supervisedDepts includes this department.
   const deptSupervisors = everyTeacher.filter(t =>
     t.facultyType === 'supervisor' &&
     (typeof getSupervisedDepts === 'function'
@@ -294,11 +265,7 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
   const allEvals    = getData('evaluations', []);
   const allStudents = getData('students', []).filter(s => !s.deleted);
 
-  // Was summing enrolledIds.length across every subject, which counts SEATS,
-  // not students - one student taking four subjects in this department read
-  // as 4. The card is labelled "Enrolled Students" and opens a list of
-  // students, so it has to be distinct students. Per-subject seat counts are
-  // still what Annex C weights by; that is a different number and unaffected.
+  // Distinct students, not seats summed across subjects.
   const totalEnrolled = getDeptEnrolledStudentIds(deptCode).size;
   const deptEvals = allEvals.filter(e => allSubjects.some(s => s.id === e.subjectId));
 
@@ -311,9 +278,7 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
     <div class="dept-stat" style="cursor:pointer;" onclick="goToDeptFeedback('${deptCode}')" title="View evaluation feedback for this department"><div class="dept-stat-icon" style="background:;"><img src ="../icons/evaluate.png" width="28" height="28" alt="Evalaute"></div><div><div class="dept-stat-val">${deptEvals.length}</div><div class="dept-stat-label">Evaluations</div></div></div>
   `;
 
-  // The cards on this page are a preview: at most DEPT_PREVIEW_ROWS rows each.
-  // The count badge still shows the full total, and "View all" opens the
-  // complete list (showDeptFullList in adminfeatures.js).
+  // Preview cards: at most DEPT_PREVIEW_ROWS rows; "View all" shows the rest.
   const DEPT_PREVIEW_ROWS = 5;
 
   document.getElementById('deptTeacherCount').textContent = regularTeachers.length;
@@ -339,18 +304,13 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
   // ===== DEPARTMENT SUPERVISORS SECTION =====
   const deptSupervisorEl = document.getElementById('deptSupervisorsSection');
   if (deptSupervisorEl) {
-    // Always visible, like the Faculty and Subjects tables. It used to be hidden
-    // whenever the department had no supervisor, which reads as "this department
-    // has no supervisor table" rather than "no supervisor is assigned yet" - and
-    // a missing supervisor is exactly the thing an admin needs to notice, since
-    // CMO 9.1 makes the SEF mandatory and nobody can file one without a chair.
+    // Always visible, so a missing supervisor is noticed (CMO 9.1 needs one for SEF).
     deptSupervisorEl.style.display = '';
     document.getElementById('deptSupervisorCount').textContent = deptSupervisors.length;
     {
       document.getElementById('deptSupervisorsTbody').innerHTML = deptSupervisors.length
         ? deptSupervisors.map(t => {
-        // The role shown is the one held in THIS department, which is not
-        // necessarily t.deptRole - that mirrors only their first assignment.
+        // Role held in THIS department (t.deptRole is only the first one).
         const here = (typeof getSupervisedDepts === 'function')
           ? (getSupervisedDepts(t).find(a => a.dept === deptCode) || {})
           : { role: t.deptRole };
@@ -387,9 +347,7 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
         const enrolled = (sub.enrolledIds || []).filter(eid => allStudents.find(s => s.id===eid)).length;
         const liveTeachers = getData('teachers', []).filter(t => !t.deleted);
         const names = subjectTeacherNames(sub, liveTeachers);
-        // At most two names on this card; the rest become a count. More than
-        // that and one subject pushes the whole card out of shape. The full
-        // list is on View all, where the row opens to show every teacher.
+        // At most two names; the rest become a count.
         const teacherName = names.length
             ? names.slice(0, 2).map(n => escapeHtml(n)).join('<br>')
               + (names.length > 2
@@ -901,8 +859,7 @@ window.addDeptFromModal = function() {
     let code = short.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 8);
     if (!code) code = 'DEPT';
 
-    // FIX Bug #1: Instead of silently renaming CCIS→CCIS2, CEA→CEA2 etc.,
-    // block the save and tell the user the code already exists.
+    // FIX Bug #1: block saving a duplicate department code.
     const existing = getDepartments();
     if (existing[code]) {
         showToast(`Department code "${code}" already exists. Use a different short name.`, 'error');
@@ -913,10 +870,7 @@ window.addDeptFromModal = function() {
     _renderDeptMgmtBody();
 };
 
-// REMOVED (dead code): openEditDeptModal
-// Replaced unconditionally by adminfeatures.js:766.
-// The 96 lines that were here never executed - the definition below in the
-// load order replaced this one before anything could call it.
+// REMOVED (dead code): openEditDeptModal - defined in adminfeatures.js.
 
 window._pickEditDeptColor = function(color) {
     document.getElementById('editDeptColorValue').value = color;
@@ -949,10 +903,7 @@ window._handleEditDeptImageUpload = function(e) {
     reader.readAsDataURL(file);
 };
 
-// REMOVED (dead code): saveEditDept
-// Replaced unconditionally by adminfeatures.js:864.
-// The 52 lines that were here never executed - the definition below in the
-// load order replaced this one before anything could call it.
+// REMOVED (dead code): saveEditDept - defined in adminfeatures.js.
 // ===== MANAGE COURSES PANEL (inside deptMgmtModal, Courses tab) =====
 
 (function injectCoursesMgmtStyles() {
@@ -1075,8 +1026,5 @@ window.mcLoadDept = function(deptCode) {
 };
 
 
-// Build the department sidebar immediately from stored data (the localStorage
-// mirror of Firestore) so it is never blank and never shows stale hardcoded
-// items. dashboard.html's loadFromFirebase() refreshes it again once Firestore
-// returns the authoritative data.
+// Build the sidebar now from stored data; loadFromFirebase() refreshes it.
 try { if (typeof refreshDeptConfig === 'function') refreshDeptConfig(); } catch (e) {}

@@ -52,16 +52,8 @@ function doLogout() {
   } catch (e) { done(); }
 }
 
-// Evaluations shown on the dashboard card.
-//
-// evals.length counted EVERY document in the collection: student and
-// supervisor submissions together, from every rating period, including
-// evaluations belonging to faculty that have since been deleted. The number
-// was therefore larger than anything else on screen agreed with, and nobody
-// could say what it represented.
-//
-// Scoped to the active term and split by instrument, which is also how CMO 19
-// reports them - SET and SEF are separate figures, not one pool.
+// Evaluations on the dashboard card: active term only, split into
+// SET and SEF (as CMO 19 reports them).
 function _countDashEvals() {
   const liveTeachers = new Set(getData('teachers', []).filter(t => !t.deleted).map(t => t.id));
   const inTerm = (typeof evalInActiveTerm === 'function') ? evalInActiveTerm : () => true;
