@@ -133,7 +133,7 @@ async function loadSupervisorData() {
     const da = myDepts.indexOf((a.dept || '').trim());
     const db_ = myDepts.indexOf((b.dept || '').trim());
     if (da !== db_) return da - db_;
-    return (a.name || '').localeCompare(b.name || '');
+    return listName(a).localeCompare(listName(b), undefined, { sensitivity: 'base' });
   });
 
   const myUid = (fbAuth.currentUser && fbAuth.currentUser.uid) || '';
@@ -219,7 +219,7 @@ function renderDeptFacultyList() {
       <div style="display:flex; align-items:center; gap:12px; padding:12px 4px; border-bottom:1px solid var(--border);">
         <div style="width:42px; height:42px; flex-shrink:0; border-radius:50%; background:linear-gradient(135deg,var(--forest),var(--emerald)); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700;">${initials}</div>
         <div style="flex:1; min-width:0;">
-          <div style="font-weight:700; font-size:0.88rem;">${f.name || '—'}</div>
+          <div style="font-weight:700; font-size:0.88rem;">${escapeHtml(listName(f)) || '—'}</div>
           <div style="font-size:0.74rem; color:var(--muted);">${f.tid || ''}${f.category ? ' · ' + f.category : ''}</div>
         </div>
         <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
@@ -493,7 +493,12 @@ async function renderDashboard() {
         if (pSnap.exists) _period = pSnap.data() || {};
       } catch (e) { /* banner falls back to showing no deadline */ }
 
-      const _isOpen = _period.open === true;
+      const _notStarted = _period.open === true && !!_period.startDate
+        && new Date().toLocaleDateString('en-CA') < _period.startDate;
+      const _isOpen = _period.open === true && !_notStarted;
+      const startStr = _period.startDate
+        ? new Date(_period.startDate + 'T00:00:00').toLocaleDateString('en-PH', { year:'numeric', month:'long', day:'numeric' })
+        : '';
       const deadlineDate = _period.deadline ? new Date(_period.deadline) : null;
       const now = new Date();
       const daysLeft = deadlineDate ? Math.ceil((deadlineDate - now) / (1000 * 60 * 60 * 24)) : null;
@@ -510,13 +515,19 @@ async function renderDashboard() {
             <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.08em; margin-bottom:3px;">Semester</div>
             <div style="font-size:1rem; font-weight:800; color:var(--ink);">${activeSem.label || activeSem.sem}</div>
           </div>
+          ${startStr ? `
+          <div>
+            <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.08em; margin-bottom:3px;">Starts</div>
+            <div style="font-size:0.9rem; font-weight:700; color:var(--ink);">${startStr}</div>
+          </div>
+          ` : ''}
           ${daysLeft !== null ? `
           <div>
             <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.08em; margin-bottom:3px;">Deadline</div>
             <div style="font-size:0.9rem; font-weight:700; color:${daysLeft <= 3 ? 'var(--warning)' : 'var(--success)'};">${deadlineStr}${daysLeft > 0 ? ` (${daysLeft}d left)` : ' <span style="color:var(--danger);">Expired</span>'}</div>
           </div>
           ` : ''}
-          <span class="badge ${_isOpen ? 'badge-success' : 'badge-danger'}" style="margin-left:auto;">● Evaluation ${_isOpen ? 'Open' : 'Closed'}</span>
+          <span class="badge ${_isOpen ? 'badge-success' : _notStarted ? 'badge-warning' : 'badge-danger'}" style="margin-left:auto;">● Evaluation ${_isOpen ? 'Open' : _notStarted ? 'Opens ' + startStr : 'Closed'}</span>
         </div>`;
     }
   } catch(e) {}

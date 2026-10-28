@@ -69,7 +69,7 @@ function renderStudents(search = '') {
   tbody.innerHTML = filtered.map(s => `
     <tr>
       <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(s.sid)}</span></td>
-      <td><strong>${escapeHtml(s.name)}</strong></td>
+      <td><strong>${escapeHtml(listName(s))}</strong></td>
       <td>${escapeHtml(s.course || '—')}</td>
       <td>${escapeHtml(s.year)}</td>
       <td>Sec ${escapeHtml(s.section)}</td>

@@ -222,6 +222,9 @@ window.canStudentEvaluate = function(studentId, subjectId) {
     if (!period.open) {
         return { allowed: false, reason: 'Evaluation period is currently closed.' };
     }
+    if (period.startDate && new Date().toLocaleDateString('en-CA') < period.startDate) {
+        return { allowed: false, reason: 'Evaluation starts on ' + period.startDate + '.' };
+    }
 
     const existing = getData('evaluations', []).find(e =>
         e.studentId === studentId && e.subjectId === subjectId

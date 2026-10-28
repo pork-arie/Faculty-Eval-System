@@ -245,7 +245,7 @@ window.renderTeacherPicker = function(keepFocus) {
                  \u2014 enrol students first to split this subject by section.</span></div>`;
         return `<div class="tp-chosen${window._tpFocusTeacher === t.id ? ' is-focus' : ''}">
             <div>
-              <strong>${escapeHtml(t.name)}</strong>
+              <strong>${escapeHtml(listName(t))}</strong>
               <span class="tp-tid">${escapeHtml(t.tid || '')}</span>
               ${t.dept ? `<span class="dept-tag-inline">${escapeHtml(t.dept)}</span>` : ''}
               ${t.dept && subDept && t.dept !== subDept ? '<span class="tp-outside">outside this department</span>' : ''}
@@ -286,7 +286,7 @@ window.renderTeacherPicker = function(keepFocus) {
                   onclick="tpSelect('${t.id}')">
             <span class="tp-avatar">${escapeHtml((t.name || '?').charAt(0).toUpperCase())}</span>
             <span class="tp-info">
-              <span class="tp-name">${escapeHtml(t.name)}${
+              <span class="tp-name">${escapeHtml(listName(t))}${
                 isHome(t) ? '' : `<span class="tp-foreign">from ${escapeHtml(t.dept || 'no dept')}</span>`}</span>
               <span class="tp-meta">${escapeHtml(t.tid)}${t.dept ? ' \u00b7 ' + escapeHtml(t.dept) : ''}${
                 t.facultyType === 'supervisor' ? ' \u00b7 Supervisor' : ''}</span>
@@ -750,7 +750,7 @@ if (typeof window.renderStudents === 'function') {
       const deptDisplay = s.dept && DEPT_NAMES[s.dept] ? DEPT_NAMES[s.dept] : (s.dept || '—');
       return `<tr>
         <td><span style="font-family:monospace;">${escapeHtml(s.sid)}</span></td>
-        <td><strong>${escapeHtml(s.name)}</strong></td>
+        <td><strong>${escapeHtml(listName(s))}</strong></td>
         <td>${escapeHtml(s.year)}</td>
         <td>Sec ${escapeHtml(s.section)}</td>
         <td>${escapeHtml(deptDisplay)}</td>
@@ -860,7 +860,7 @@ if (typeof window.renderTeachers === 'function') {
                 html += `
                 <tr class="dept-group-student-row teacher-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
                     <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
-                    <td><strong>${escapeHtml(t.name)}</strong></td>
+                    <td><strong>${escapeHtml(listName(t))}</strong></td>
                     <td>${deptCode === 'UNASSIGNED'
                         ? '<span style="color:var(--muted);">\u2014</span>'
                         : `<span class="dept-tag-inline">${escapeHtml(deptCode)}</span>`}</td>

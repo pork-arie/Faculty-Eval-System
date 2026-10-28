@@ -305,6 +305,25 @@ window.personSortKey = function(p) {
     return _surnameFirst(p.name);
 };
 
+// Name for lists: "Lastname, Firstname Middlename" (suffix kept, title dropped).
+window.listName = function(p) {
+    if (!p) return '';
+    if (p.lastName) {
+        const rest = [p.firstName, p.middleName, p.suffix].filter(Boolean).join(' ');
+        return rest ? p.lastName + ', ' + rest : p.lastName;
+    }
+    const bare = w => w.toLowerCase().replace(/[.,']/g, '');
+    let words = String(p.name || '').trim().split(/\s+/).filter(Boolean);
+    while (words.length > 1 && _SORT_TITLES.indexOf(bare(words[0])) !== -1) words.shift();
+    let suffix = '';
+    if (words.length > 1 && _SORT_SUFFIXES.indexOf(bare(words[words.length - 1])) !== -1) suffix = words.pop();
+    if (words.length < 2) return words.concat(suffix ? [suffix] : []).join(' ');
+    let start = words.length - 1;
+    while (start > 1 && _SORT_PARTICLES.indexOf(bare(words[start - 1])) !== -1) start--;
+    const rest = words.slice(0, start).concat(suffix ? [suffix] : []).join(' ');
+    return words.slice(start).join(' ') + ', ' + rest;
+};
+
 window.byName = function(a, b) {
     return personSortKey(a).localeCompare(personSortKey(b), undefined, { sensitivity: 'base', numeric: true });
 };

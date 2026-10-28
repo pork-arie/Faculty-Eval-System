@@ -251,14 +251,14 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
 
   // Faculty of this department, incl. supervisors homed here who supervise
   // elsewhere (see teachesInDept in admin-teachers.js).
-  const regularTeachers = everyTeacher.filter(t => teachesInDept(t, deptCode));
+  const regularTeachers = everyTeacher.filter(t => teachesInDept(t, deptCode)).sort(byName);
 
   // Supervisors: anyone whose supervisedDepts includes this department.
   const deptSupervisors = everyTeacher.filter(t =>
     t.facultyType === 'supervisor' &&
     (typeof getSupervisedDepts === 'function'
       ? getSupervisedDepts(t).some(a => a.dept === deptCode)
-      : t.dept === deptCode));
+      : t.dept === deptCode)).sort(byName);
 
   const allTeachers = regularTeachers.concat(deptSupervisors);
   const allSubjects = getData('subjects', []).filter(s => s.dept === deptCode);
@@ -293,7 +293,7 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
         const sefSc = sefAggD.count ? sefAggD.average.toFixed(2) : null;
         return `<tr onclick="showAnnexReports('${t.id}')" title="Click to view Annex C/D" style="cursor:pointer;">
           <td><span style="font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;">${escapeHtml(t.tid)}</span></td>
-          <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong>${t.facultyType === 'supervisor'
+          <td><strong style="font-size:0.82rem;">${escapeHtml(listName(t))}</strong>${t.facultyType === 'supervisor'
               ? `<div style="font-size:0.68rem;color:var(--muted);">also ${escapeHtml(supervisorRoleSummary(t))}</div>` : ''}</td>
           <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
           <td><strong style="font-size:0.82rem;">SET: ${Number(setSc) > 0 ? setSc + '%' : 'N/A'} | SEF: ${sefSc ? sefSc + '%' : 'N/A'}</strong></td>
@@ -325,7 +325,7 @@ if (cfg.icon && (cfg.icon.startsWith('data:') || cfg.icon.includes('.jpg') || cf
         const sefCount = sefEvs.length;
         return `<tr onclick="showAnnexReports('${t.id}')" title="Click to view Annex C/D" style="cursor:pointer;">
           <td><span style="font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;">${escapeHtml(t.tid)}</span></td>
-          <td><strong style="font-size:0.82rem;">${escapeHtml(t.name)}</strong></td>
+          <td><strong style="font-size:0.82rem;">${escapeHtml(listName(t))}</strong></td>
           <td><span style="font-size:0.75rem;font-weight:600;color:${roleColor};">${roleLabel}</span>${visiting}</td>
           <td><span class="badge ${t.status==='active'?'badge-success':'badge-danger'}" style="font-size:0.68rem;">${t.status}</span></td>
           <td><span style="font-size:0.78rem;">${sefCount} SEF rating${sefCount !== 1 ? 's' : ''} given</span></td>

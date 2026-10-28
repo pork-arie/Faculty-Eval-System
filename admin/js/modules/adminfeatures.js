@@ -9,7 +9,7 @@ window.showDeptEnrolledStudents = function(deptCode) {
     const allSubjects = getData('subjects', []).filter(s => s.dept === deptCode);
 
     const enrolledIds = getDeptEnrolledStudentIds(deptCode);
-    const enrolledStudents = allStudents.filter(s => enrolledIds.has(s.id));
+    const enrolledStudents = allStudents.filter(s => enrolledIds.has(s.id)).sort(byName);
 
     const teachers = getData('teachers', []);
     const inTerm = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : function () { return true; };
@@ -79,7 +79,7 @@ window._deptEnrolledRow = function(s) {
 
     return `<tr onclick="toggleDeptEnrolledDetail('${escapeHtml(s.id)}')" style="cursor:pointer;">
         <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:0.8rem;">${escapeHtml(s.sid)}</span></td>
-        <td><strong style="font-size:0.85rem;">${escapeHtml(s.name)}</strong></td>
+        <td><strong style="font-size:0.85rem;">${escapeHtml(listName(s))}</strong></td>
         <td style="font-size:0.8rem;">${escapeHtml(s.year)}</td>
         <td style="font-size:0.8rem;">Sec ${escapeHtml(s.section)}</td>
         <td style="font-size:0.78rem;white-space:nowrap;">
@@ -244,7 +244,7 @@ window.renderStudents = function(search) {
         students.forEach(s => {
             html += `<tr class="dept-group-student-row">
                 <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(s.sid)}</span></td>
-                <td><strong>${escapeHtml(s.name)}</strong></td>
+                <td><strong>${escapeHtml(listName(s))}</strong></td>
                 <td style="font-size:0.78rem;max-width:160px;white-space:normal;line-height:1.3;">${escapeHtml(s.course || '—')}</td>
                 <td>${escapeHtml(s.year)}</td>
                 <td>Sec ${escapeHtml(s.section)}</td>
@@ -1146,7 +1146,7 @@ window._renderFeedbackList = function() {
                     ${teacher ? teacher.name.charAt(0).toUpperCase() : '?'}
                 </div>
                 <div class="feedback-teacher-info">
-                    <div class="feedback-teacher-name">${teacher ? escapeHtml(teacher.name) : 'Unknown Teacher'}</div>
+                    <div class="feedback-teacher-name">${teacher ? escapeHtml(listName(teacher)) : 'Unknown Teacher'}</div>
                     <div class="feedback-teacher-meta">
                         <span class="dept-tag-inline">${escapeHtml(deptLabel)}</span>
                         <span style="color:var(--muted);font-size:0.72rem;margin-left:6px;">${numSubjects} subject${numSubjects !== 1 ? 's' : ''} · ${group.comments.length} evaluation${group.comments.length !== 1 ? 's' : ''}</span>
@@ -1684,7 +1684,7 @@ window.showDeptFullList = function(deptCode, type) {
         if (teachesInDept(t, deptCode)) return true;
         return (t.facultyType || 'regular') === 'supervisor'
             && getSupervisedDepts(t).some(a => a.dept === deptCode);
-    });
+    }).sort(byName);
     // Role column: Faculty, Dean/Chairperson of this dept, or
     // "Faculty · also Dean of X" when supervising elsewhere.
     const roleLabel = r => r === 'dean' ? 'Dean' : r === 'chairperson' ? 'Chairperson' : 'Supervisor';
@@ -1718,8 +1718,8 @@ window.showDeptFullList = function(deptCode, type) {
         // Role is searchable too: typing "dean" finds the deans.
         s: ((t.tid || '') + ' ' + (t.name || '') + ' ' + role.text).toLowerCase(),
         onclick: "showAnnexReports('" + t.id + "')",
-        cells: [mono(t.tid), strong(t.name), role.html, pill(t.status || 'active', (t.status === 'active' ? '#059669' : '#dc2626')), esc(setSc), esc(sefSc)],
-        plain: [t.tid || '', t.name || '', role.text, t.status || 'active', setSc, sefSc]
+        cells: [mono(t.tid), strong(listName(t)), role.html, pill(t.status || 'active', (t.status === 'active' ? '#059669' : '#dc2626')), esc(setSc), esc(sefSc)],
+        plain: [t.tid || '', listName(t), role.text, t.status || 'active', setSc, sefSc]
       };
     });
   } else if (type === 'subjects') {
@@ -1827,8 +1827,8 @@ window.showDeptFullList = function(deptCode, type) {
         student: st,
         s: ((st.sid || '') + ' ' + (st.name || '') + ' ' + courseFull + ' ' + courseShort
             + ' ' + subs.map(x => x.code).join(' ')).toLowerCase(),
-        cells: [mono(st.sid), strong(st.name), esc(courseShort), esc(ys), summary],
-        plain: [st.sid || '', st.name || '', courseFull, ys, subs.map(x => x.code).join(', ')],
+        cells: [mono(st.sid), strong(listName(st)), esc(courseShort), esc(ys), summary],
+        plain: [st.sid || '', listName(st), courseFull, ys, subs.map(x => x.code).join(', ')],
         detail: detail || '<div style="font-size:0.8rem;color:var(--muted);">No subjects.</div>'
       };
     });

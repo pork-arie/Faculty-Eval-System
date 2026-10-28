@@ -473,7 +473,7 @@ function _enrollRow(s) {
                         padding:6px 0;border-bottom:1px solid var(--border);">
       <input type="checkbox" ${on ? 'checked' : ''} style="accent-color:var(--primary);"
              onchange="enrollToggle('${s.id}', this.checked)"/>
-      <div><div style="font-weight:600;">${escapeHtml(s.name)}</div>
+      <div><div style="font-weight:600;">${escapeHtml(listName(s))}</div>
       <div style="font-size:0.72rem;color:var(--muted);">${escapeHtml(s.sid)} &middot; ${s.course ? escapeHtml(s.course) + ' &middot; ' : ''}${escapeHtml(s.year || '')} Sec ${escapeHtml(s.section || '')} &middot; ${escapeHtml(s.dept || '—')}</div></div>
     </label>`;
 }

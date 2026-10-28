@@ -9,8 +9,19 @@ window._trackOpen    = new Set();   // faculty whose subject list is expanded
 window._trackShowAll = false;       // "View all" pressed (more than 10 faculty)
 const TRACK_PREVIEW_ROWS = 10;
 
+// Today as YYYY-MM-DD in local time (toISOString would give the UTC date).
+function _localToday() {
+  return new Date().toLocaleDateString('en-CA');
+}
+
+// Open, but the start date hasn't arrived yet.
+function evalPeriodNotStarted(period) {
+  return !!(period && period.open && period.startDate && _localToday() < period.startDate);
+}
+
 function renderEvalControl() {
   const period = getData('evalPeriod', { open: false, deadline: '' });
+  const notStarted = evalPeriodNotStarted(period);
   document.getElementById('evalControlContent').innerHTML = `
     <div class="card" style="margin-bottom:20px;">
       <div class="card-header-bar"><h3>Evaluation Period Control</h3></div>
@@ -21,8 +32,10 @@ function renderEvalControl() {
           <button class="btn ${period.open?'btn-danger':'btn-success'}" onclick="toggleEvalPeriod()">${period.open?'🔒 Close Evaluation':'🔓 Open Evaluation'}</button>
         </div>
         <div class="form-row">
-          <div class="form-group"><label class="form-label">Evaluation Deadline</label><input class="form-control" type="date" id="deadlineInput" value="${period.deadline}" onchange="updatePeriodSettings()"/></div>
+          <div class="form-group"><label class="form-label">Evaluation Start Date</label><input class="form-control" type="date" id="startDateInput" value="${period.startDate || ''}" max="${period.deadline || ''}" onchange="updatePeriodSettings()"/></div>
+          <div class="form-group"><label class="form-label">Evaluation Deadline</label><input class="form-control" type="date" id="deadlineInput" value="${period.deadline || ''}" min="${period.startDate || ''}" onchange="updatePeriodSettings()"/></div>
         </div>
+        <div id="periodScheduleNote" style="font-size:0.78rem;color:var(--muted);">${_periodScheduleNote(period, notStarted)}</div>
 
       </div>
     </div>
@@ -268,7 +281,7 @@ function renderTrackingRows() {
     html += `<tr style="cursor:pointer;" title="${open ? 'Hide' : 'Show'} this faculty member's subjects"
                  onclick="toggleTrackFaculty('${t.id}')">
       <td><span style="display:inline-block;width:14px;font-size:0.7rem;color:var(--muted);transition:transform .15s;${open ? 'transform:rotate(90deg);' : ''}">&#9654;</span>
-          <strong>${escapeHtml(t.name)}</strong>
+          <strong>${escapeHtml(listName(t))}</strong>
           <span style="font-family:monospace;font-size:0.72rem;color:var(--muted);margin-left:4px;">${escapeHtml(t.tid || '')}</span></td>
       <td>${s.subjects.length}</td>
       <td>${s.expected}</td>
@@ -314,12 +327,30 @@ function toggleEvalPeriod() {
   showToast(`Evaluation period ${period.open?'opened':'closed'}!`, period.open?'success':'info');
 }
 
+// One line under the dates saying when students can actually submit.
+function _periodScheduleNote(period, notStarted) {
+  if (!period.open) return period.startDate
+    ? 'Evaluation is closed. Open it to let students submit from ' + period.startDate + '.'
+    : 'Evaluation is closed.';
+  if (notStarted) return '⏳ Scheduled: students can submit from ' + period.startDate
+    + (period.deadline ? ' to ' + period.deadline : '') + '.';
+  return '✅ Students can submit now' + (period.deadline ? ', until ' + period.deadline : '') + '.';
+}
+
 function updatePeriodSettings() {
   const period = getData('evalPeriod', {});
-  period.deadline = document.getElementById('deadlineInput').value;
+  const startDate = document.getElementById('startDateInput').value;
+  const deadline  = document.getElementById('deadlineInput').value;
+  if (startDate && deadline && startDate > deadline) {
+    showToast('The start date must be on or before the deadline.', 'error');
+    renderEvalControl();   // put the inputs back to the saved dates
+    return;
+  }
+  period.startDate = startDate;
+  period.deadline  = deadline;
   setData('evalPeriod', period);
-  addAudit('Update Eval Settings', `Deadline: ${period.deadline}`);
-  renderTrackDeptSummary();   // days-to-deadline and the at-risk colours depend on it
+  addAudit('Update Eval Settings', `Start: ${period.startDate || 'none'}, Deadline: ${period.deadline || 'none'}`);
+  renderEvalControl();   // refreshes the date limits, note and days-to-deadline
 }
 
 // ===== REPORTS - CMO 19 COMPLIANT =====
@@ -389,7 +420,7 @@ function _buildFacultyRow(t) {
     return `
         <tr class="report-teacher-row" onclick="showAnnexReports('${t.id}', true)" title="Click to view Annex C &amp; D">
             <td>
-                <strong>${escapeHtml(t.name)}</strong><br>
+                <strong>${escapeHtml(listName(t))}</strong><br>
                 <small style="color:var(--muted);">${escapeHtml(t.tid)}</small>
             </td>
             <td><span class="dept-tag-inline">${escapeHtml(t.dept || '—')}</span></td>
@@ -464,7 +495,7 @@ function _buildSupervisorRow(t) {
     return `
         <tr class="report-teacher-row" onclick="showAnnexReports('${t.id}', true)" title="Click to view Annex C &amp; D">
             <td>
-                <strong>${escapeHtml(t.name)}</strong><br>
+                <strong>${escapeHtml(listName(t))}</strong><br>
                 <small style="color:var(--muted);">${escapeHtml(t.tid)}</small>
             </td>
             <td><span class="dept-tag-inline">${escapeHtml(t.dept || '—')}</span></td>
@@ -817,10 +848,10 @@ function _exportRptViewAllPDF(tableType, list, deptLabel, deptCode) {
         : `<tr><th>Teacher ID</th><th>Name</th>${deptTh}<th>SET Rating</th><th>SEF Rating</th><th>Status</th></tr>`;
 
     const rows = list.map(t => isFaculty
-        ? `<tr><td>${escapeHtml(t.tid)}</td><td>${escapeHtml(t.name)}</td>${deptTd(t)}`
+        ? `<tr><td>${escapeHtml(t.tid)}</td><td>${escapeHtml(listName(t))}</td>${deptTd(t)}`
           + `<td style="text-align:center;">${t.totalClasses}</td><td style="text-align:center;">${t.totalEvaluations}</td>`
           + `<td style="text-align:center;">${pct(t.overallSET)}</td><td style="text-align:center;">${pct(t.sefScore)}</td></tr>`
-        : `<tr><td>${escapeHtml(t.tid)}</td><td>${escapeHtml(t.name)}</td>${deptTd(t)}`
+        : `<tr><td>${escapeHtml(t.tid)}</td><td>${escapeHtml(listName(t))}</td>${deptTd(t)}`
           + `<td style="text-align:center;">${pct(t.overallSET)}</td><td style="text-align:center;">${pct(t.sefScore)}</td>`
           + `<td style="text-align:center;">${escapeHtml(t.status || '')}</td></tr>`
     ).join('');

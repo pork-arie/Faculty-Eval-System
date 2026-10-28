@@ -132,7 +132,8 @@ function renderDashboard() {
     <h3 style="font-size:1rem;font-weight:700;margin-bottom:16px;">📅 Current Active Period</h3>
     <div class="info-row"><span class="info-label">School Year</span><span class="info-value">${sy ? sy.year : 'Not set'}</span></div>
     <div class="info-row"><span class="info-label">Semester</span><span class="info-value">${sy ? sy.activeSem : 'Not set'}</span></div>
-    <div class="info-row"><span class="info-label">Evaluation Status</span><span class="info-value"><span class="badge ${period.open ? 'badge-success' : 'badge-danger'}">${period.open ? 'Open' : 'Closed'}</span></span></div>
+    <div class="info-row"><span class="info-label">Evaluation Status</span><span class="info-value"><span class="badge ${!period.open ? 'badge-danger' : (period.startDate && new Date().toLocaleDateString('en-CA') < period.startDate) ? 'badge-warning' : 'badge-success'}">${!period.open ? 'Closed' : (period.startDate && new Date().toLocaleDateString('en-CA') < period.startDate) ? 'Scheduled' : 'Open'}</span></span></div>
+    <div class="info-row"><span class="info-label">Start Date</span><span class="info-value">${period.startDate || 'Not set'}</span></div>
     <div class="info-row"><span class="info-label">Deadline</span><span class="info-value">${period.deadline || 'Not set'}</span></div>
   `;
 }

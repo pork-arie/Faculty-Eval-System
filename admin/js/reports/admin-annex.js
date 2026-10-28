@@ -217,7 +217,7 @@ window.annexSectionRoster = function (subjectId, sectionLabel, teacherId) {
     const done  = doneFor(s);
     return `<tr${dup ? ' style="background:#fef2f2;"' : ''}>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;font-family:monospace;font-size:0.8rem;">${escapeHtml(s.sid || '')}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(s.name || '')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(listName(s))}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;">
           ${done === 0
             ? '<span style="color:#b45309;">Not yet</span>'
@@ -235,7 +235,7 @@ window.annexSectionRoster = function (subjectId, sectionLabel, teacherId) {
     const s = students.find(x => x.id === id);
     return `<tr style="background:#fffbeb;">
         <td style="padding:6px 8px;border-bottom:1px solid #eee;font-family:monospace;font-size:0.8rem;">${escapeHtml(s ? s.sid : id)}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(s ? s.name : '(student record not found)')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(s ? listName(s) : '(student record not found)')}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;color:#b45309;">Not enrolled</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;">${countFor[id]}</td>
       </tr>`;

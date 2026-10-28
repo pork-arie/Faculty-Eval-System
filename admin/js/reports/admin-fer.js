@@ -127,7 +127,7 @@ function exportReport() {
   const rows = list.map(t => `
     <tr>
       <td>${escapeHtml(t.tid)}</td>
-      <td>${escapeHtml(t.name)}</td>
+      <td>${escapeHtml(listName(t))}</td>
       ${showDept ? `<td>${escapeHtml(t.dept || 'N/A')}</td>` : ''}
       <td>${escapeHtml(t.facultyType || 'regular')}</td>
       <td style="text-align:center;">${t.overallSET}${t.overallSET !== '—' ? '%' : ''}</td>
@@ -245,7 +245,7 @@ window.renderSupervisorList = function(search = '') {
     (!deptFilter || getSupervisedDepts(t).some(a => a.dept === deptFilter)) &&
     (t.name.toLowerCase().includes(search.toLowerCase()) ||
     (t.tid || '').toLowerCase().includes(search.toLowerCase()))
-  );
+  ).sort(byName);
   const tbody = document.getElementById('supervisorTbody');
   if (!tbody) return;
 
@@ -279,7 +279,7 @@ window.renderSupervisorList = function(search = '') {
 
       html += `<tr onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
         <td>
-          <strong>${escapeHtml(t.name)}</strong><br>
+          <strong>${escapeHtml(listName(t))}</strong><br>
           <small style="font-family:'JetBrains Mono',monospace;color:var(--muted);">${escapeHtml(t.tid)}</small>
         </td>
         <td>${escapeHtml(t.dept || '—')}</td>

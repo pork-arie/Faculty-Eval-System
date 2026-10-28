@@ -206,7 +206,7 @@ window.renderTeachers = function(search = '') {
       html += `
       <tr class="teacher-row dept-group-student-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
         <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
-        <td><strong>${escapeHtml(t.name)}</strong></td>
+        <td><strong>${escapeHtml(listName(t))}</strong></td>
         <td><span class="dept-tag-inline">${escapeHtml(t.dept || '—')}</span></td>
         <td>${tSubs.map(s => `<span class="badge badge-primary" style="margin:1px;">${escapeHtml(s.code)}</span>`).join('') || '<span style="color:var(--muted)">None</span>'}</td>
         <td><span class="badge ${t.status === 'active' ? 'badge-success' : 'badge-danger'}">${t.status}</span></td>
@@ -330,7 +330,7 @@ window.renderSupervisorTable = function(search) {
       const tSubs = subjects.filter(s => subjectHasTeacher(s, t.id));
       html += `<tr class="teacher-row dept-group-student-row" onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
         <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(t.tid)}</span></td>
-        <td><strong>${escapeHtml(t.name)}</strong></td>
+        <td><strong>${escapeHtml(listName(t))}</strong></td>
         <td><span class="dept-tag-inline">${escapeHtml(t.dept || '—')}</span></td>
         <td>${supRoleCellHtml(t)}</td>
         <td>${tSubs.map(s => `<span class="badge badge-primary" style="margin:1px;">${escapeHtml(s.code)}</span>`).join('') || '<span style="color:var(--muted)">None</span>'}</td>
