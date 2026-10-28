@@ -32,8 +32,8 @@ function renderEvalControl() {
           <button class="btn ${period.open?'btn-danger':'btn-success'}" onclick="toggleEvalPeriod()">${period.open?'🔒 Close Evaluation':'🔓 Open Evaluation'}</button>
         </div>
         <div class="form-row">
-          <div class="form-group"><label class="form-label">Evaluation Start Date</label><input class="form-control" type="date" id="startDateInput" value="${period.startDate || ''}" max="${period.deadline || ''}" onchange="updatePeriodSettings()"/></div>
-          <div class="form-group"><label class="form-label">Evaluation Deadline</label><input class="form-control" type="date" id="deadlineInput" value="${period.deadline || ''}" min="${period.startDate || ''}" onchange="updatePeriodSettings()"/></div>
+          <div class="form-group"><label class="form-label">Evaluation Start Date <span style="color:var(--danger,#dc2626);">*</span></label><input class="form-control" type="date" id="startDateInput" value="${period.startDate || ''}" max="${period.deadline || ''}" onchange="updatePeriodSettings()"/></div>
+          <div class="form-group"><label class="form-label">Evaluation Deadline <span style="color:var(--danger,#dc2626);">*</span></label><input class="form-control" type="date" id="deadlineInput" value="${period.deadline || ''}" min="${period.startDate || ''}" onchange="updatePeriodSettings()"/></div>
         </div>
         <div id="periodScheduleNote" style="font-size:0.78rem;color:var(--muted);">${_periodScheduleNote(period, notStarted)}</div>
 
@@ -320,6 +320,11 @@ function renderTrackingRows() {
 
 function toggleEvalPeriod() {
   const period = getData('evalPeriod', {});
+  // Both dates are required before the evaluation can be opened.
+  if (!period.open && (!period.startDate || !period.deadline)) {
+    showToast('Set both the start date and the deadline before opening the evaluation.', 'error');
+    return;
+  }
   period.open = !period.open;
   setData('evalPeriod', period);
   addAudit(period.open?'Open Evaluation':'Close Evaluation', `Evaluation period ${period.open?'opened':'closed'}`);
@@ -329,9 +334,9 @@ function toggleEvalPeriod() {
 
 // One line under the dates saying when students can actually submit.
 function _periodScheduleNote(period, notStarted) {
-  if (!period.open) return period.startDate
-    ? 'Evaluation is closed. Open it to let students submit from ' + period.startDate + '.'
-    : 'Evaluation is closed.';
+  if (!period.open) return (period.startDate && period.deadline)
+    ? 'Evaluation is closed. Open it to let students submit from ' + period.startDate + ' to ' + period.deadline + '.'
+    : 'Evaluation is closed. Set both the start date and the deadline to open it.';
   if (notStarted) return '⏳ Scheduled: students can submit from ' + period.startDate
     + (period.deadline ? ' to ' + period.deadline : '') + '.';
   return '✅ Students can submit now' + (period.deadline ? ', until ' + period.deadline : '') + '.';
@@ -341,6 +346,11 @@ function updatePeriodSettings() {
   const period = getData('evalPeriod', {});
   const startDate = document.getElementById('startDateInput').value;
   const deadline  = document.getElementById('deadlineInput').value;
+  if (period.open && (!startDate || !deadline)) {
+    showToast('Both dates are required while the evaluation is open. Close it first to clear a date.', 'error');
+    renderEvalControl();
+    return;
+  }
   if (startDate && deadline && startDate > deadline) {
     showToast('The start date must be on or before the deadline.', 'error');
     renderEvalControl();   // put the inputs back to the saved dates
