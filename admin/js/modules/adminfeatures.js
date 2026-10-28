@@ -9,7 +9,7 @@ window.showDeptEnrolledStudents = function(deptCode) {
     const allSubjects = getData('subjects', []).filter(s => s.dept === deptCode);
 
     const enrolledIds = getDeptEnrolledStudentIds(deptCode);
-    const enrolledStudents = allStudents.filter(s => enrolledIds.has(s.id));
+    const enrolledStudents = allStudents.filter(s => enrolledIds.has(s.id)).sort(byName);
 
     const teachers = getData('teachers', []);
     const inTerm = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : function () { return true; };
@@ -21,8 +21,7 @@ window.showDeptEnrolledStudents = function(deptCode) {
     allSubjects.forEach(sub => {
         (sub.enrolledIds || []).forEach(eid => {
             if (!subjectMap[eid]) subjectMap[eid] = [];
-            // One entry per teacher this student actually has in the subject,
-            // each with its own evaluated flag - a subject can have several.
+            // One entry per teacher of this student in the subject, each with its evaluated flag.
             const mine = subjectTeacherIds(sub).filter(tid => teacherTeachesStudent(sub, tid, stById[eid]));
             if (!mine.length) {
                 subjectMap[eid].push({ code: sub.code, name: sub.name,
@@ -80,7 +79,7 @@ window._deptEnrolledRow = function(s) {
 
     return `<tr onclick="toggleDeptEnrolledDetail('${escapeHtml(s.id)}')" style="cursor:pointer;">
         <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:0.8rem;">${escapeHtml(s.sid)}</span></td>
-        <td><strong style="font-size:0.85rem;">${escapeHtml(s.name)}</strong></td>
+        <td><strong style="font-size:0.85rem;">${escapeHtml(listName(s))}</strong></td>
         <td style="font-size:0.8rem;">${escapeHtml(s.year)}</td>
         <td style="font-size:0.8rem;">Sec ${escapeHtml(s.section)}</td>
         <td style="font-size:0.78rem;white-space:nowrap;">
@@ -164,13 +163,7 @@ window.filterDeptEnrolledStudents = function(query) {
 let _studentSearchQuery = '';
 let _studentDeptFilter = '';
 
-// ============================================================
-// STUDENTS TABLE ORDER
-// ------------------------------------------------------------
-// Fixed order, no sorting controls: by section - course, year and section
-// together (BSEMC 3A, BSIS 4B, BSIT 4C ...) - and inside each section by LAST
-// name A to Z (byName in admin-core.js), then by ID.
-// ============================================================
+// STUDENTS TABLE ORDER: by section, then last name (byName), then ID.
 function _stuSectionLabel(st) {
     if (typeof _sectionLabel === 'function') return _sectionLabel(st);
     return ((st.course || '') + ' ' + (st.year || '') + ' ' + (st.section || '')).trim();
@@ -182,19 +175,8 @@ window.studentListCompare = function(a, b) {
         || String(a.sid || '').localeCompare(String(b.sid || ''), undefined, opts);
 };
 
-// ============================================================
-// "NO DEPT" FILTER PILL
-// ------------------------------------------------------------
-// The pills counted a record with no department as 'UNASSIGNED', but the
-// tables then compared  s.dept === 'UNASSIGNED'  - and a blank department is
-// '', never 'UNASSIGNED' - so clicking "No Dept" always showed an empty
-// table. Every pill count and every table filter now goes through this one
-// function, so they cannot disagree again.
-//
-// A department code that no longer exists in the department list (renamed
-// or removed) also counts as No Dept: it has no pill of its own, so those
-// records could otherwise only be found under All.
-// ============================================================
+// "NO DEPT" FILTER: blank or unknown department codes. Used by every pill
+// count and table filter so they agree.
 window.deptFilterKey = function(dept) {
     const cfg = (typeof getDepartments === 'function') ? getDepartments() : {};
     return (dept && cfg[dept]) ? dept : 'UNASSIGNED';
@@ -202,10 +184,7 @@ window.deptFilterKey = function(dept) {
 
 window.renderStudents = function(search) {
     if (search !== undefined) _studentSearchQuery = search;
-    // Rebuild the department pills on EVERY redraw, not just when the page
-    // opens. Every change to students - delete, add, edit, bulk import - ends
-    // here, so the counts now update the moment it happens, and a department
-    // whose last student is removed loses its pill without a reload.
+    // Rebuild the department pills on every redraw so counts stay current.
     buildStudentDeptFilterBar();
     const query = _studentSearchQuery;
     const deptFilter = _studentDeptFilter;
@@ -213,8 +192,7 @@ window.renderStudents = function(search) {
     const allStudents = getData('students', []).filter(s => !s.deleted);
     const DEPT_CONFIG = getDepartments();
 
-    // Each word on its own; "2nd a" / "2a" = year + section. The rules live
-    // in parseStudentSearch / studentMatchesTerm (admin-students.js).
+    // Search rules: parseStudentSearch / studentMatchesTerm (admin-students.js).
     const terms = parseStudentSearch(query || '');
     const filtered = allStudents.filter(s => {
         const matchSearch = terms.every(t => studentMatchesTerm(s, t));
@@ -266,7 +244,7 @@ window.renderStudents = function(search) {
         students.forEach(s => {
             html += `<tr class="dept-group-student-row">
                 <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(s.sid)}</span></td>
-                <td><strong>${escapeHtml(s.name)}</strong></td>
+                <td><strong>${escapeHtml(listName(s))}</strong></td>
                 <td style="font-size:0.78rem;max-width:160px;white-space:normal;line-height:1.3;">${escapeHtml(s.course || '—')}</td>
                 <td>${escapeHtml(s.year)}</td>
                 <td>Sec ${escapeHtml(s.section)}</td>
@@ -303,12 +281,9 @@ window.buildStudentDeptFilterBar = function() {
     const counts = {};
     allStudents.forEach(s => { const k = deptFilterKey(s.dept); counts[k] = (counts[k] || 0) + 1; });
 
-    // If the department being viewed just lost its last student, its pill is
-    // about to disappear - fall back to All rather than leave the table empty
-    // under a filter that no longer has a button.
+    // Viewed department lost its last student: fall back to All.
     if (_studentDeptFilter && !counts[_studentDeptFilter]) _studentDeptFilter = '';
-    // The pills are rebuilt on every redraw now, so the highlighted one must
-    // follow the current filter instead of always resetting to All.
+    // Highlight the pill matching the current filter.
     const on = code => (_studentDeptFilter === code ? ' active' : '');
 
     let html = `<button class="student-dept-filter-btn${on('')}" data-dept="" onclick="filterStudentsByDept('')">
@@ -956,9 +931,7 @@ window.deleteFeedbackEntry = async function(evalId) {
     const idx = evals.findIndex(function (e) { return e.id === evalId; });
     if (idx === -1) { showToast('Already removed.', 'info'); return; }
     evals.splice(idx, 1);
-    // This browser's copy only. The document itself is deleted just below;
-    // pushing the whole evaluations list as well used to rewrite every other
-    // evaluation too, and could put back ones another laptop had deleted.
+    // Local copy only; the document is deleted just below.
     setLocalData('evaluations', evals);
     try { await deleteDocFromFirestore('evaluations', evalId); }
     catch (e) { console.warn('Firestore delete failed:', e && e.message); }
@@ -1173,7 +1146,7 @@ window._renderFeedbackList = function() {
                     ${teacher ? teacher.name.charAt(0).toUpperCase() : '?'}
                 </div>
                 <div class="feedback-teacher-info">
-                    <div class="feedback-teacher-name">${teacher ? escapeHtml(teacher.name) : 'Unknown Teacher'}</div>
+                    <div class="feedback-teacher-name">${teacher ? escapeHtml(listName(teacher)) : 'Unknown Teacher'}</div>
                     <div class="feedback-teacher-meta">
                         <span class="dept-tag-inline">${escapeHtml(deptLabel)}</span>
                         <span style="color:var(--muted);font-size:0.72rem;margin-left:6px;">${numSubjects} subject${numSubjects !== 1 ? 's' : ''} · ${group.comments.length} evaluation${group.comments.length !== 1 ? 's' : ''}</span>
@@ -1706,18 +1679,14 @@ window.showDeptFullList = function(deptCode, type) {
   let columns, rows;
 
   if (type === 'teachers') {
-    // Faculty of this department (including a supervisor who teaches here but
-    // supervises elsewhere - teachesInDept) plus the supervisors OF this department.
+    // Faculty of this department (teachesInDept) plus its supervisors.
     const list = allTeachers.filter(t => {
         if (teachesInDept(t, deptCode)) return true;
         return (t.facultyType || 'regular') === 'supervisor'
             && getSupervisedDepts(t).some(a => a.dept === deptCode);
-    });
-    // Role column: says WHY each person is on this list, since it mixes the
-    // department's faculty with its deans/chairs.
-    //   Faculty                     - regular faculty of this department
-    //   Dean / Chairperson / ...    - a supervisor OF this department
-    //   Faculty · also Dean of COED - teaches here, supervises elsewhere
+    }).sort(byName);
+    // Role column: Faculty, Dean/Chairperson of this dept, or
+    // "Faculty · also Dean of X" when supervising elsewhere.
     const roleLabel = r => r === 'dean' ? 'Dean' : r === 'chairperson' ? 'Chairperson' : 'Supervisor';
     const roleColor = r => r === 'dean' ? '#7c3aed' : r === 'chairperson' ? '#2563eb' : '#0891b2';
     const roleOf = t => {
@@ -1735,8 +1704,7 @@ window.showDeptFullList = function(deptCode, type) {
     columns = ['ID', 'Name', 'Role', 'Status', 'SET %', 'SEF %'];
     rows = list.map(t => {
       const role = roleOf(t);
-      // 0 means "no SET ratings yet" (the lowest possible real rating is 20%).
-      // It printed as a bare "%" here, because escapeHtml(0) returns ''.
+      // 0 means "no SET ratings yet"; escapeHtml(0) returns ''.
       const setRaw = (typeof calculateWeightedSETRating === 'function') ? calculateWeightedSETRating(t.id) : 0;
       const setSc  = Number(setRaw) > 0 ? setRaw + '%' : 'N/A';
       const sefAgg = (typeof getSEFForTeacher === 'function')
@@ -1750,8 +1718,8 @@ window.showDeptFullList = function(deptCode, type) {
         // Role is searchable too: typing "dean" finds the deans.
         s: ((t.tid || '') + ' ' + (t.name || '') + ' ' + role.text).toLowerCase(),
         onclick: "showAnnexReports('" + t.id + "')",
-        cells: [mono(t.tid), strong(t.name), role.html, pill(t.status || 'active', (t.status === 'active' ? '#059669' : '#dc2626')), esc(setSc), esc(sefSc)],
-        plain: [t.tid || '', t.name || '', role.text, t.status || 'active', setSc, sefSc]
+        cells: [mono(t.tid), strong(listName(t)), role.html, pill(t.status || 'active', (t.status === 'active' ? '#059669' : '#dc2626')), esc(setSc), esc(sefSc)],
+        plain: [t.tid || '', listName(t), role.text, t.status || 'active', setSc, sefSc]
       };
     });
   } else if (type === 'subjects') {
@@ -1762,9 +1730,7 @@ window.showDeptFullList = function(deptCode, type) {
       const names = subjectTeacherNames(sub, allTeachers);
       const tName = names.length ? names.join(', ') : 'Unassigned';
 
-      // Several teachers: MANY, and the row opens to show them - the same
-      // drop-down the enrolled-students list uses. Stacking every name made
-      // rows different heights and told you nothing about who teaches whom.
+      // Several teachers: show MANY with a drop-down list.
       const chev = '<svg class="_dfl-chev" width="11" height="11" fill="none" stroke="currentColor" '
         + 'stroke-width="2.5" viewBox="0 0 24 24" style="vertical-align:-1px;margin-right:7px;'
         + 'color:var(--muted,#64748b);transition:transform 0.15s;"><polyline points="9 18 15 12 9 6"/></svg>';
@@ -1861,8 +1827,8 @@ window.showDeptFullList = function(deptCode, type) {
         student: st,
         s: ((st.sid || '') + ' ' + (st.name || '') + ' ' + courseFull + ' ' + courseShort
             + ' ' + subs.map(x => x.code).join(' ')).toLowerCase(),
-        cells: [mono(st.sid), strong(st.name), esc(courseShort), esc(ys), summary],
-        plain: [st.sid || '', st.name || '', courseFull, ys, subs.map(x => x.code).join(', ')],
+        cells: [mono(st.sid), strong(listName(st)), esc(courseShort), esc(ys), summary],
+        plain: [st.sid || '', listName(st), courseFull, ys, subs.map(x => x.code).join(', ')],
         detail: detail || '<div style="font-size:0.8rem;color:var(--muted);">No subjects.</div>'
       };
     });
@@ -1924,9 +1890,7 @@ window.showDeptFullList = function(deptCode, type) {
   if (searchEl) {
     searchEl.addEventListener('input', function() {
       const q = this.value.trim().toLowerCase();
-      // Enrolled students search like the Students page (parseStudentSearch in
-      // admin-students.js): each word on its own, "2nd c" / "2c" = year +
-      // section. Rows line up with window._dflExport.rows, as in the export.
+      // Same search as the Students page; rows match window._dflExport.rows.
       const terms = (type === 'enrolled' && typeof parseStudentSearch === 'function') ? parseStudentSearch(q) : null;
       let shown = 0;
       Array.prototype.forEach.call(bodyEl.querySelectorAll('tr[data-s]'), (tr, i) => {
@@ -1945,18 +1909,8 @@ window.showDeptFullList = function(deptCode, type) {
   }
 };
 
-// ============================================================
-// EXPORT PDF (department "View all" lists)
-// ------------------------------------------------------------
-// Was a CSV download. Now a print-ready page in a new tab - the same way
-// the FER and Annex reports are produced - and the print dialog opens by
-// itself; choose "Save as PDF" as the printer. The tab title becomes the
-// suggested file name.
-//
-// Exports the rows currently shown: if the list is filtered by the search
-// box, only the matching rows go into the PDF, and the filter is printed
-// under the title so the page says what it contains.
-// ============================================================
+// EXPORT PDF (department "View all" lists): opens a print-ready tab of the
+// rows currently shown (search filter included); "Save as PDF" to export.
 window._exportDeptListPDF = function() {
   const d = window._dflExport;
   if (!d || !d.rows.length) { if (typeof showToast === 'function') showToast('Nothing to export.', 'info'); return; }

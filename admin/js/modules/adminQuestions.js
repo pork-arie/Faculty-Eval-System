@@ -1,36 +1,12 @@
-// ============================================================================
-// adminQuestions.js — Versioned evaluation instrument (SET / SEF questions)
-// ----------------------------------------------------------------------------
-// The questions were Kotlin constants in the app, so changing one meant a
-// rebuild and a Play Store release. They live here instead, editable by the
-// admin and read by the app at run time.
-//
-// WHY VERSIONS, and not just an editable list:
-// An evaluation stores answers keyed by question id — { q1: 4, q2: 5, ... }.
-// If Q4's wording is edited in place, every evaluation ever submitted silently
-// starts reporting the NEW question text against the OLD answer. Annex C would
-// print a breakdown that never happened, and there would be no way to detect it.
-//
-// So a published set is IMMUTABLE. Editing creates a draft; publishing the draft
-// creates version n+1 and retires version n. Each evaluation records the version
-// it was answered against, and reports resolve wording through that version.
-// Past terms stay truthful; future terms get the new instrument.
-//
-// Storage: localStorage key 'questionSets' -> array of sets, synced to Firestore.
-//   { id, instrument: 'SET'|'SEF', version: 3, status: 'published'|'draft'|'retired',
-//     questions: [ { id:'q1', sec:'A', text:'...' } ],
-//     publishedAt, retiredAt, note }
-// ============================================================================
+// adminQuestions.js — Versioned evaluation instrument (SET / SEF questions).
+// Published sets are IMMUTABLE: editing makes a draft, publishing creates
+// version n+1. Evaluations record their version so old wording stays correct.
+// Storage: 'questionSets' -> [{ id, instrument, version, status, questions,
+//   publishedAt, retiredAt, note }], synced to Firestore.
 
-// Seeds version 1 the first time this screen is opened. NOTE: seeding only runs
-// when no set exists for an instrument - on a system that already published v1
-// with the old wording, correcting the text here changes nothing. Open Questions
-// and publish a new version to roll the correction out.
-// CMO 19 s.2025 ANNEX A, verbatim. Section 4.2 forbids SUCs from modifying or
-// adding indicators, so these strings are fixed. The previous seed paraphrased
-// all fifteen - item 10 had been cut down to ICT alone, dropping "appropriate
-// teaching and learning resources", which asks a different question.
-// The missing full stop on item 10 and "student's" in item 15 are the annex's.
+// Seeds version 1 only when no set exists for an instrument.
+// CMO 19 s.2025 ANNEX A, verbatim (§4.2 forbids modifying indicators),
+// including the annex's own punctuation in items 10 and 15.
 const SEED_SET_QUESTIONS = [
   { id: 'q1',  sec: 'A', text: 'Comes to class on time.' },
   { id: 'q2',  sec: 'A', text: 'Explains learning outcomes, expectations, grading system, and various requirements of the subject/course.' },
@@ -49,9 +25,7 @@ const SEED_SET_QUESTIONS = [
   { id: 'q15', sec: 'C', text: 'Provides transparent and clear criteria in rating student\'s performance.' }
 ];
 
-// CMO 19 s.2025 ANNEX B, verbatim. Items 2, 4 and 9 differ from Annex A because
-// they ask about things a supervisor can verify. "Provide" in item 4 is CHED's
-// typo, reproduced deliberately so the screen matches the printed form.
+// CMO 19 s.2025 ANNEX B, verbatim ("Provide" in item 4 is CHED's typo).
 const SEED_SEF_QUESTIONS = [
   { id: 'q1',  sec: 'A', text: 'Comes to class on time.' },
   { id: 'q2',  sec: 'A', text: 'Submits updated syllabus, grade sheets, and other required reports on time.' },
@@ -70,10 +44,7 @@ const SEED_SEF_QUESTIONS = [
   { id: 'q15', sec: 'C', text: 'Provides transparent and clear criteria in rating student\'s performance.' }
 ];
 
-// Verbatim section headings from Annexes A and B. These were previously
-// scrambled - A was captioned "Commitment / Teaching Independence" when A is
-// Management of Teaching and Learning and Commitment is section C - so Annex C
-// grouped the right items under the wrong headings.
+// Verbatim section headings from Annexes A and B.
 const SECTION_LABELS = {
   A: 'A — Management of Teaching and Learning',
   B: 'B — Content Knowledge, Pedagogy and Technology',
@@ -84,8 +55,7 @@ const SECTION_LABELS = {
 
 function _allQuestionSets() { return getData('questionSets', []); }
 
-// Seed version 1 from the shipped instrument, once, so nothing breaks on a
-// system that has been running without this screen.
+// Seed version 1 once from the shipped instrument.
 window.ensureQuestionSets = function () {
   let sets = _allQuestionSets();
   let changed = false;
@@ -120,10 +90,8 @@ window.getQuestionSetById = function (id) {
 };
 
 /**
- * Wording for one answered question, resolved through the version the evaluation
- * was answered against. Reports MUST use this rather than the current published
- * text, or an old evaluation gets reported under a question nobody was asked.
- */
+* Wording for an answered question, via the version it was answered against.
+*/
 window.questionTextFor = function (evaluation, questionId) {
   const instrument = evaluation && evaluation.evaluatorType === 'supervisor' ? 'SEF' : 'SET';
   const set = (evaluation && evaluation.questionSetId)
@@ -136,8 +104,7 @@ window.questionTextFor = function (evaluation, questionId) {
 
 /** Has anything been submitted against this set? If so it must never be edited. */
 window.questionSetInUse = function (setId) {
-  // Every stored answer counts here, hidden or not - a question set that any
-  // evaluation was answered against must not be edited out from under it.
+  // Counts every stored answer, hidden or not.
   return getData('evaluations', [], { includeHidden: true }).some(e => e.questionSetId === setId);
 };
 
@@ -196,8 +163,7 @@ window.qsEditNote = function (value)      { if (_qsDraft) _qsDraft.note = value;
 
 window.qsAddQuestion = function () {
   if (!_qsDraft) return;
-  // New ids continue the sequence and are never reused, so an id always means
-  // the same thing across every version it appears in.
+  // New ids continue the sequence and are never reused.
   const used = new Set(_qsDraft.questions.map(q => q.id));
   let n = _qsDraft.questions.length + 1;
   while (used.has('q' + n)) n++;
@@ -262,16 +228,9 @@ window.qsPublish = function () {
 };
 
 /**
- * Make an existing version the live one.
- *
- * Publishing always creates version n+1, which is right for a genuine revision
- * but leaves no way back if a new version turns out to be wrong. This swaps
- * which version is served without creating another one, so rolling back to v1
- * does not leave you on v3 with v2's mistakes buried in the history.
- *
- * Only the served version changes. Evaluations keep the questionSetId they were
- * answered under, so past reports still resolve their own wording.
- */
+* Make an existing version the live one (e.g. roll back) without creating a
+* new version. Evaluations keep their own questionSetId.
+*/
 window.qsActivateVersion = function (setId) {
   const sets = _allQuestionSets();
   const target = sets.find(s => s.id === setId);
@@ -300,18 +259,9 @@ window.qsActivateVersion = function (setId) {
 };
 
 /**
- * Delete a version outright.
- *
- * Refused if any evaluation was answered against it - those records store only
- * questionSetId, so removing the set would leave their answers pointing at
- * wording that no longer exists and the reports would render blank statements.
- * Retiring is the right move there; this is only for versions nothing has used.
- *
- * Deletes from localStorage AND from Firestore. The normal sync is set-only, so
- * a version removed from localStorage alone would be resurrected on the next
- * dashboard load by fullSyncToFirebase - and deleting it in the Firebase console
- * alone does nothing, because the dashboard never reads Firestore back.
- */
+* Delete a version outright - refused if any evaluation used it (retire
+* instead). Removes it from localStorage AND Firestore.
+*/
 window.qsDeleteVersion = async function (setId) {
   const sets = _allQuestionSets();
   const target = sets.find(s => s.id === setId);
@@ -337,8 +287,7 @@ window.qsDeleteVersion = async function (setId) {
   try {
     await firebase.firestore().collection('questionSets').doc(setId).delete();
   } catch (e) {
-    // localStorage is the source of truth, so the dashboard is already correct.
-    // Say so plainly rather than leaving a stale doc to be discovered later.
+    // localStorage is the source of truth; say so plainly.
     console.warn('Firestore delete failed:', e);
     showToast('Removed here, but the Firestore copy could not be deleted. Check your rules.', 'error');
     renderQuestionsEditor();
@@ -388,8 +337,7 @@ window.renderQuestionsEditor = function () {
          <span style="font-size:0.82rem;flex:1;">${escapeHtml(q.text)}</span>
        </div>`).join('');
 
-  // Every version, not just the retired ones, so it is obvious which is live and
-  // any other can be switched to.
+  // Every version, so it's clear which is live.
   const history = sets.map(s => {
     const live = s.status === 'published';
     const used = questionSetInUse(s.id);

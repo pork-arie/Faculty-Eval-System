@@ -1,12 +1,5 @@
-// ============================================================================
-// admin-fer.js
-// ----------------------------------------------------------------------------
-// Institutional FER trends and the supervisor list.
-//
-// Split out of the original 4,441-line admin.js. Load order is load-bearing:
-// keep these in the order listed in dashboard.html - later files redefine
-// functions defined earlier, and the last definition wins.
-// ============================================================================
+// admin-fer.js - institutional FER trends and the supervisor list.
+// Load order matters (see dashboard.html): the last definition wins.
 
 // ===== INSTITUTIONAL FER GRAPH DATA TRENDS =====
 window.renderInstitutionalFER = function() {
@@ -15,9 +8,7 @@ window.renderInstitutionalFER = function() {
     teachers.forEach(t => {
         if (!t.dept) return;
         if (!deptMap[t.dept]) deptMap[t.dept] = { setTotal: 0, setCount: 0, sefTotal: 0, sefCount: 0 };
-        // Use the shared, term-scoped rating (respects the selected term and
-        // averages supervisor SEFs per §9.3) so these cards match the table
-        // and change when you switch terms in the dropdown.
+        // Shared term-scoped rating, so cards match the table.
         const r = (typeof getTeacherOverallRating === 'function') ? getTeacherOverallRating(t.id) : null;
         const set = r ? parseFloat(r.overallSET) : 0;
         const sef = (r && r.sefScore !== '—') ? parseFloat(r.sefScore) : 0;
@@ -108,27 +99,15 @@ function viewTeacherReport(teacherId) {
   openModal('viewReportModal');
 }
 
-// Was a CSV export. Changed to PDF (via the browser's print dialog — the same
-// mechanism printAnnexD/printActiveAnnex already use, so "Save as PDF" is the
-// destination the user picks rather than a second code path).
-//
-// Also now reads window._allTeacherEvalData, the same cached, term-scoped,
-// dept-filtered dataset the on-screen Reports table renders from
-// (_buildTeacherEvalData in this file). The old CSV recomputed SET and SEF
-// itself with NO term filter and a raw average instead of getSEFForTeacher,
-// so an exported row could silently disagree with what the table on screen
-// showed for the same teacher. Exporting the cached data instead means the
-// PDF always matches the screen, and it respects whichever department pill
-// is currently selected.
+// PDF export via the print dialog, from window._allTeacherEvalData so it
+// matches the on-screen table (term and department filter included).
 function exportReport() {
   const allData = window._allTeacherEvalData || _buildTeacherEvalData();
   const dept    = window._reportsDeptFilter || '';
   const list    = allData.filter(t => !dept || (t.dept || 'UNASSIGNED') === dept);
   const termLabel = (typeof getReportTermInfo === 'function') ? getReportTermInfo().label : '';
 
-  // Prepared by / Reviewed by, from Actions > Signatories - the same saved
-  // names Annex C, Annex D and the FER print. A name left empty still prints
-  // a blank line to sign on, so the report is never missing the block.
+  // Prepared by / Reviewed by from Actions > Signatories; blank prints a signing line.
   const sig = (typeof getSignatories === 'function') ? getSignatories()
             : { preparedName: '', preparedRole: '', reviewedName: '', reviewedRole: '' };
   const sigBox = (label, name, role) => `
@@ -139,10 +118,8 @@ function exportReport() {
         <div class="sig-date">Date: ____________________</div>
       </div>`;
 
-  // All Departments: title "Faculty Evaluation Report — SET and SEF Ratings"
-  // with a Department column. One department selected: the title is that
-  // department's name and the Department column is left out (every row would
-  // show the same value). See _rptDeptFullName in admin-reports.js.
+  // All Departments: generic title + Department column. One department: its
+  // name as title, no column (see _rptDeptFullName in admin-reports.js).
   const showDept  = !dept;
   const deptName  = (typeof _rptDeptFullName === 'function') ? _rptDeptFullName(dept) : dept;
   const pageTitle = showDept ? 'Faculty Evaluation Report \u2014 SET and SEF Ratings' : deptName;
@@ -150,7 +127,7 @@ function exportReport() {
   const rows = list.map(t => `
     <tr>
       <td>${escapeHtml(t.tid)}</td>
-      <td>${escapeHtml(t.name)}</td>
+      <td>${escapeHtml(listName(t))}</td>
       ${showDept ? `<td>${escapeHtml(t.dept || 'N/A')}</td>` : ''}
       <td>${escapeHtml(t.facultyType || 'regular')}</td>
       <td style="text-align:center;">${t.overallSET}${t.overallSET !== '—' ? '%' : ''}</td>
@@ -199,31 +176,13 @@ function exportReport() {
   showToast('Report ready — choose "Save as PDF" in the print dialog.', 'success');
 }
 
-// Prints Annex C for every faculty member currently listed on the Reports
-// page (respects the department pill, like Export PDF above), as ONE
-// print job with a page break between faculty — one Print dialog covers
-// everyone instead of one popup per teacher.
-//
-// Reuses buildAnnexCContent (admin-annex.js) rather than recomputing
-// anything, so the printed figures are guaranteed to match what "View
-// Annex C" shows for that same teacher. It borrows the modal's own
-// content element to render into, then restores whatever was in it
-// afterward so the modal is undisturbed if it happens to be open.
+// Prints Annex C for every listed faculty as ONE print job, via
+// buildAnnexCContent (admin-annex.js); the modal content is restored after.
 window.printAllAnnexC = function () {
   const allData = window._allTeacherEvalData || _buildTeacherEvalData();
   const dept    = window._reportsDeptFilter || '';
-  // Faculty AND supervisors. A supervisor also teaches, so they have their own
-  // SET rating and their own Annex C; excluding them left those forms unprinted.
-  //
-  // Included if there is anything to put on the form: an assigned class, a
-  // student evaluation, or a supervisor rating.
-  //
-  // Each of the three matters on its own. A class with no responses yet still
-  // prints a valid Annex C showing zero responses, which is what the office
-  // needs mid-period - requiring evaluations made a whole department look
-  // broken, since picking a dept nobody had evaluated produced nothing at all.
-  // sefRaters covers the faculty rated by their program chair who hold no
-  // class this term: they still have an SEF figure and still need their form.
+  // Faculty AND supervisors with an assigned class, a student evaluation,
+  // or a supervisor rating.
   const list    = allData
     .filter(t => !dept || (t.dept || 'UNASSIGNED') === dept)
     .filter(t => t.totalClasses > 0 || t.totalEvaluations > 0 || t.sefRaters > 0);
@@ -262,10 +221,7 @@ window.printAllAnnexC = function () {
   addAudit('Print All Annex C', `${list.length} faculty and supervisors` + (dept ? ` — dept ${dept}` : ''));
 };
 
-// Same cleanup _annexPrintHtml does (strip inputs/selects down to plain text,
-// drop buttons and .annex-noprint elements) but works on an HTML STRING
-// rather than a live DOM node, since printAllAnnexC builds several snippets
-// before any of them are attached to the page.
+// String version of _annexPrintHtml's cleanup.
 window._annexPrintHtmlFromString = function (htmlStr) {
   const holder = document.createElement('div');
   holder.innerHTML = htmlStr;
@@ -285,12 +241,11 @@ window.renderSupervisorList = function(search = '') {
 
   const teachers = getData('teachers', []).filter(t => !t.deleted && t.facultyType === 'supervisor');
   const filtered = teachers.filter(t =>
-    // Match on ANY supervised department, not just the home one, so a dean who
-    // also chairs another college appears under both filters.
+    // Match on ANY supervised department.
     (!deptFilter || getSupervisedDepts(t).some(a => a.dept === deptFilter)) &&
     (t.name.toLowerCase().includes(search.toLowerCase()) ||
     (t.tid || '').toLowerCase().includes(search.toLowerCase()))
-  );
+  ).sort(byName);
   const tbody = document.getElementById('supervisorTbody');
   if (!tbody) return;
 
@@ -324,7 +279,7 @@ window.renderSupervisorList = function(search = '') {
 
       html += `<tr onclick="showAnnexReports('${t.id}')" title="Click to view Annex C & D" style="cursor:pointer;">
         <td>
-          <strong>${escapeHtml(t.name)}</strong><br>
+          <strong>${escapeHtml(listName(t))}</strong><br>
           <small style="font-family:'JetBrains Mono',monospace;color:var(--muted);">${escapeHtml(t.tid)}</small>
         </td>
         <td>${escapeHtml(t.dept || '—')}</td>
@@ -348,8 +303,7 @@ window.renderSupervisorList = function(search = '') {
   tbody.innerHTML = html;
 };
 
-// See saveResetPass in admin-students.js - this had the same bug. Writing
-// t.password stopped changing anything the moment login moved to Firebase Auth.
+// See saveResetPass in admin-students.js.
 window.resetSupervisorPassword = async function(supervisorId) {
   const teachers = getData('teachers', []);
   const t = teachers.find(t => t.id === supervisorId);

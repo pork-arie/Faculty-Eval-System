@@ -5,28 +5,12 @@ if (!sessionStorage.getItem('adminLoggedIn')) {
   window.location.href = '../index.html';
 }
 
-// Reads localStorage. Firestore is loaded once at boot (dashboard.html).
-// ============================================================
-// PASSWORDS NEVER TOUCH localStorage
-// ------------------------------------------------------------
-// The dashboard mirrors students and teachers into localStorage
-// for speed. Those records carry the `password` field - the
-// credential people sign in with - so every student's and
-// supervisor's password used to sit in plain text under
-// DevTools > Application, readable by anyone at the admin's
-// machine or by any script that ever ran on the page.
-//
-// Now the password is held IN MEMORY for this session only, in
-// _pwVault, and stripped from everything written to storage.
-// getData() puts it back on the records it returns, so every
-// screen that reads t.password or s.password works unchanged.
-// Firestore still receives the full record, so sign-in is
-// unaffected. Closing the tab forgets every password.
-// ============================================================
+// Reads localStorage (Firestore loads once at boot).
+// Passwords are kept in memory only (_pwVault), never in localStorage;
+// getData() re-attaches them so t.password / s.password still work.
 const _PW_KEYS = ['students', 'teachers'];
 window._pwVault = { students: {}, teachers: {} };
-// Set once a collection's passwords have come from Firestore this session.
-// Until then, a save could see a record with no password and reset it.
+// Set once a collection's passwords have loaded from Firestore this session.
 window._pwVaultReady = { students: false, teachers: false };
 
 // Record the passwords from `list` into the vault; return a copy without them.
@@ -42,11 +26,8 @@ window._stripPasswords = function (key, list) {
     });
 };
 
-// `opts.includeHidden` - evaluations only. By default getData('evaluations')
-// leaves out ratings whose evaluator was deleted (see countedEvaluations
-// below), so every report, score and count skips them without each screen
-// having to remember to. Pass { includeHidden: true } where the FULL list is
-// needed: backups, the SEF audit, and code that writes the list back.
+// opts.includeHidden: evaluations only. By default, ratings from deleted
+// evaluators are skipped; pass true for the full list (backups, writes).
 window.getData = function(key, defaultValue = [], opts) {
     const data = localStorage.getItem(key);
     if (!data) return defaultValue;
@@ -57,8 +38,7 @@ window.getData = function(key, defaultValue = [], opts) {
         return window.countedEvaluations(parsed);
     }
 
-    // Old copies written before this fix still hold passwords. Take them into
-    // the vault and rewrite the stored copy clean, once.
+    // Migrate old copies that still hold passwords into the vault, once.
     if (_PW_KEYS.indexOf(key) !== -1 && Array.isArray(parsed) && parsed.some(r => r && 'password' in r)) {
         const clean = window._stripPasswords(key, parsed);
         try { localStorage.setItem(key, JSON.stringify(clean)); } catch (e) {}
@@ -76,15 +56,11 @@ window.getData = function(key, defaultValue = [], opts) {
 };
 
 window.setData = function(key, value) {
-    // Refuse to save students/teachers before their passwords are known. A
-    // record read without its password looks like it has none, and several
-    // save paths then default it to the person's ID - quietly resetting a
-    // real password. Better to stop and say so.
+    // Refuse to save students/teachers before passwords load, or a save
+    // could reset a real password to the default.
     if (_PW_KEYS.indexOf(key) !== -1 && !window._pwVaultReady[key]) {
         console.warn('Save of ' + key + ' blocked: passwords not loaded from Firestore yet.');
-        // Silent during start-up: some start-up code saves before the first
-        // load has finished, and it re-runs once the data is in. Only warn
-        // once a load has actually been tried and failed.
+        // Only warn once a load has actually been tried and failed.
         if (window._firestoreLoadAttempted && typeof showToast === 'function') {
             showToast('Could not load the current ' + key + ' from the database yet. ' +
                       'Click the status badge to refresh, then try again.', 'warning');
@@ -97,28 +73,14 @@ window.setData = function(key, value) {
     }
 };
 
-// ============================================================
-// PER-RECORD SAVES (students and teachers)
-// ------------------------------------------------------------
-// setData() pushes the WHOLE list to Firestore, so with several laptops open
-// the last one to save wins - even when its copy is hours old. A student
-// deactivated on one laptop was switched back on when another laptop added
-// someone else, and a record deleted in the Firebase console was re-uploaded
-// by whichever admin tab still had it.
-//
-// Students and teachers therefore no longer go through setData(). A save
-// updates this browser's copy (setLocalData) and writes ONLY the fields that
-// changed, on ONLY the record that changed (writeRecordToCloud). Other
-// laptops pick the change up through the live listener in dashboard.html.
-// ============================================================
+// PER-RECORD SAVES (students and teachers): write only changed fields
+// on the changed record, so stale tabs can't overwrite newer data.
 
-// localStorage only - never touches Firestore. Same password guard as
-// setData(): refuses until this session has loaded the real passwords.
+// localStorage only. Same password guard as setData().
 window.setLocalData = function(key, value) {
     if (_PW_KEYS.indexOf(key) !== -1 && !window._pwVaultReady[key]) {
         console.warn('Save of ' + key + ' blocked: passwords not loaded from Firestore yet.');
-        // Silent during start-up (migrateSupervisorRecords runs before the
-        // first load and again after it), same as setData().
+        // Silent during start-up, same as setData().
         if (window._firestoreLoadAttempted && typeof showToast === 'function') {
             showToast('The ' + key + ' list has not finished loading from the database. ' +
                       'Click the status badge to refresh, then try again.', 'warning');
@@ -129,14 +91,12 @@ window.setLocalData = function(key, value) {
     return true;
 };
 
-// Deep copy of a record, taken BEFORE editing it, so the save can tell
-// which fields actually changed.
+// Deep copy taken BEFORE editing, to diff changed fields on save.
 window.cloneRecord = function(rec) {
     return rec ? JSON.parse(JSON.stringify(rec)) : null;
 };
 
-// Fields that differ between two versions of a record. A field that was
-// removed is sent as a delete. `id` is the document ID, never a change.
+// Fields that differ between two versions; removed fields become deletes.
 function _changedFields(before, after) {
     const out = {};
     const keys = new Set(Object.keys(before || {}).concat(Object.keys(after || {})));
@@ -150,9 +110,8 @@ function _changedFields(before, after) {
     return out;
 }
 
-// Writes one record. `before` null = a brand-new record (written whole);
-// otherwise only the changed fields are sent with update(), so a field
-// another laptop changed in the meantime is left alone.
+// Writes one record. `before` null = new record (written whole);
+// otherwise only changed fields are sent.
 window.writeRecordToCloud = async function(col, before, after) {
     if (!after || !after.id) return false;
     if (typeof firebase === 'undefined' || !firebase.firestore) {
@@ -172,9 +131,7 @@ window.writeRecordToCloud = async function(col, before, after) {
     } catch (e) {
         console.error('Write to ' + col + '/' + after.id + ' failed:', e);
         if (e && e.code === 'not-found') {
-            // Deliberately NOT recreated. The record was removed from the
-            // database by someone else; writing it back is exactly how deleted
-            // records used to come back.
+            // Deliberately NOT recreated - it was deleted elsewhere.
             showToast((after.name || 'This record') + ' no longer exists in the database ' +
                       '(it was removed elsewhere). Refresh to see the current list.', 'error');
         } else {
@@ -184,9 +141,8 @@ window.writeRecordToCloud = async function(col, before, after) {
     }
 };
 
-// Local copy + database in one call. `changes` is a list of
-// { before, after } - before null for a new record. Resolves true only when
-// every write reached Firestore.
+// Local copy + database. `changes` = [{ before, after }]. Resolves true
+// only when every write reached Firestore.
 window.commitRecords = async function(key, list, changes) {
     if (!window.setLocalData(key, list)) return false;
     const results = await Promise.all(changes.map(function (c) {
@@ -195,11 +151,8 @@ window.commitRecords = async function(key, list, changes) {
     return results.every(Boolean);
 };
 
-// Same as commitRecords, for many records at once (bulk import). Writes go
-// out in batches of 400 (Firestore allows 500 per batch). Unlike
-// commitRecords, the DATABASE is written first and this browser's copy only
-// after it succeeds - otherwise a failed import would sit in the local list
-// looking done, and retrying would skip every row as "already exists".
+// Bulk version of commitRecords. Batches of 400; database first, local
+// copy only after success.
 window.commitRecordsBatch = async function(key, list, changes) {
     if (_PW_KEYS.indexOf(key) !== -1 && !window._pwVaultReady[key]) {
         return window.setLocalData(key, list);          // refuses, with the message
@@ -231,16 +184,14 @@ window.commitRecordsBatch = async function(key, list, changes) {
     return window.setLocalData(key, list);
 };
 
-// Every record in the DATABASE with this ID - deleted ones included. Used
-// for duplicate checks, because this browser's copy cannot see a record
-// another laptop added a minute ago. Throws when the database is unreachable.
+// All DB records with this ID (deleted included), for duplicate checks.
+// Throws when the database is unreachable.
 window.findRosterRecords = async function(col, field, value) {
     const snap = await firebase.firestore().collection(col).where(field, '==', value).get();
     return snap.docs.map(function (d) { return Object.assign({}, d.data(), { id: d.id }); });
 };
 
-// Same, for many IDs at once (bulk import). Firestore's 'in' takes 30 values
-// per query, so the list is split into chunks. Returns { id: [records] }.
+// Same, for many IDs (chunks of 30). Returns { id: [records] }.
 window.findRosterRecordsMany = async function(col, field, values) {
     const unique = Array.from(new Set(values.filter(Boolean)));
     const byValue = {};
@@ -255,25 +206,9 @@ window.findRosterRecordsMany = async function(col, field, values) {
     return byValue;
 };
 
-// ============================================================
-// RATINGS FROM DELETED PEOPLE: KEPT, BUT NOT COUNTED
-// ------------------------------------------------------------
-// When a student or supervisor is deleted, the evaluations they SUBMITTED
-// stay in Firestore - nothing is destroyed - but they stop counting in any
-// score, report, Annex, count or feedback list. If the person's record is
-// ever set back to deleted: false, their ratings count again automatically.
-//
-// Who submitted an evaluation:
-//   student SET     -> studentId        (a students document)
-//   supervisor SEF  -> supervisorId (web portal) or studentId (Android app),
-//                      a teachers document
-// A record that is MISSING altogether - removed in the Firebase console, say -
-// is treated the same as deleted. Otherwise its ratings kept counting, and
-// Annex C listed them as "Supervisor (record removed)". (Annex C section B
-// already skipped students with no record, so students and supervisors now
-// follow one rule.) Deactivated (status: inactive) people still count; that
-// is temporary.
-// ============================================================
+// RATINGS FROM DELETED PEOPLE: kept in Firestore but not counted.
+// Missing evaluator records count as deleted; inactive ones still count.
+// student SET -> studentId; supervisor SEF -> supervisorId or studentId.
 
 function _evaluatorOf(e) {
     return e.evaluatorType === 'supervisor'
@@ -281,9 +216,7 @@ function _evaluatorOf(e) {
         : { col: 'students', id: e.studentId || '' };
 }
 
-// Live (not deleted) student and teacher IDs, plus whether each list is
-// loaded at all. getData('evaluations') runs dozens of times per screen, so
-// this is cached until either list actually changes.
+// Live student/teacher IDs, cached until either list changes.
 let _rosterIdsCache = { s: null, t: null, ids: null };
 function _liveEvaluatorIds() {
     const rawS = localStorage.getItem('students') || '[]';
@@ -305,9 +238,8 @@ function _liveEvaluatorIds() {
     return ids;
 }
 
-// True when the evaluation's evaluator was deleted or no longer exists.
-// Nothing is hidden while a list has not loaded yet - an empty list means
-// "not known", not "everyone was removed".
+// True when the evaluator was deleted or no longer exists.
+// Nothing is hidden until both lists have loaded.
 window.isEvaluationHidden = function(e) {
     if (!e) return false;
     const who = _evaluatorOf(e);
@@ -349,18 +281,8 @@ window.yearRank = function(year) {
     return m ? parseInt(m[0], 10) : 99;
 };
 
-// ============================================================
-// ALPHABETICAL ORDER: BY SURNAME
-// ------------------------------------------------------------
-// Lists (Faculty, Supervisors, Students) are sorted by LAST name, then first.
-// Records added through the form store lastName/firstName separately; records
-// from a bulk import or older data only have the full name ("Edgar Gara").
-// Those used to be sorted by their FIRST word, so the two kinds of record were
-// mixed together and the list did not look alphabetical. Now the surname is
-// taken from the full name too: titles (Dr., Mr., Engr. ...) and suffixes
-// (Jr., III ...) are skipped, and particles such as "Dela" stay with the
-// surname ("Mark Josua Dela Cruz" sorts under D).
-// ============================================================
+// ALPHABETICAL ORDER: by surname, then first name. Titles and suffixes
+// are skipped; particles like "Dela" stay with the surname.
 const _SORT_TITLES   = ['dr', 'mr', 'mrs', 'ms', 'miss', 'engr', 'prof', 'atty', 'sir', 'maam'];
 const _SORT_SUFFIXES = ['jr', 'sr', 'ii', 'iii', 'iv', 'v'];
 const _SORT_PARTICLES = ['de', 'del', 'dela', 'delos', 'de los', 'da', 'di', 'san', 'sta', 'sto', 'van', 'von'];
@@ -383,6 +305,25 @@ window.personSortKey = function(p) {
     return _surnameFirst(p.name);
 };
 
+// Name for lists: "Lastname, Firstname Middlename" (suffix kept, title dropped).
+window.listName = function(p) {
+    if (!p) return '';
+    if (p.lastName) {
+        const rest = [p.firstName, p.middleName, p.suffix].filter(Boolean).join(' ');
+        return rest ? p.lastName + ', ' + rest : p.lastName;
+    }
+    const bare = w => w.toLowerCase().replace(/[.,']/g, '');
+    let words = String(p.name || '').trim().split(/\s+/).filter(Boolean);
+    while (words.length > 1 && _SORT_TITLES.indexOf(bare(words[0])) !== -1) words.shift();
+    let suffix = '';
+    if (words.length > 1 && _SORT_SUFFIXES.indexOf(bare(words[words.length - 1])) !== -1) suffix = words.pop();
+    if (words.length < 2) return words.concat(suffix ? [suffix] : []).join(' ');
+    let start = words.length - 1;
+    while (start > 1 && _SORT_PARTICLES.indexOf(bare(words[start - 1])) !== -1) start--;
+    const rest = words.slice(0, start).concat(suffix ? [suffix] : []).join(' ');
+    return words.slice(start).join(' ') + ', ' + rest;
+};
+
 window.byName = function(a, b) {
     return personSortKey(a).localeCompare(personSortKey(b), undefined, { sensitivity: 'base', numeric: true });
 };
@@ -396,18 +337,8 @@ window.byYearThenName = function(a, b) {
     return byName(a, b);
 };
 
-// ============================================================
-// COURSE NAMES: ONE SPELLING
-// ------------------------------------------------------------
-// The same course was stored two ways - "...Information Systems (BSIS )"
-// with a space before the bracket, and "...(BSIS)" - so the enrolment picker
-// listed BSIS twice and split the students between them. Every place that
-// SAVES or COMPARES a course now goes through these:
-//   normalizeCourseName - one space between words, no space just inside
-//                         brackets, trimmed. Used when saving.
-//   courseKey           - the same, lower-cased. Used when comparing.
-// Old records keep their stored text; they are simply matched correctly.
-// ============================================================
+// COURSE NAMES: normalizeCourseName (for saving) and courseKey
+// (lower-cased, for comparing) give every course one spelling.
 window.normalizeCourseName = function(s) {
     return String(s || '')
         .replace(/\s+/g, ' ')
@@ -480,8 +411,7 @@ if (!document.querySelector('#toastStyles')) {
     `;
     document.head.appendChild(style);
 }
-// PASSWORD RESET. The roster password field IS the credential;
-// both clients check it on every sign-in.
+// PASSWORD RESET. The roster password field is the credential.
 window.resetLoginPassword = async function (kind, record, newPass) {
     const loginId = String(kind === 'student' ? record.sid : record.tid || '').trim();
     const wanted  = String(newPass || '').trim() || loginId;
@@ -502,19 +432,8 @@ window.resetLoginPassword = async function (kind, record, newPass) {
     showToast(record.name + ' can now sign in with: ' + wanted, 'success');
     return true;
 };
-// ============================================================
-// SKELETON LOADING
-// ------------------------------------------------------------
-// The dashboard renders from localStorage, so on a warm cache the real
-// content is already on screen before Firestore answers. Skeletons are
-// therefore shown ONLY where a container is genuinely empty - a first
-// login, a cleared browser, or a collection that failed to load. Covering
-// existing rows with a shimmer on every refresh would make the page feel
-// slower than it is.
-//
-// Called at the start of loadFromFirebase(), and cleared naturally when
-// the render functions write real markup over it.
-// ============================================================
+// SKELETON LOADING: shown only where a container is genuinely empty;
+// real renders overwrite it.
 
 window.skelLine = function (w) {
   return `<span class="skel skel-line" style="width:${w || '100%'};"></span>`;
@@ -530,9 +449,7 @@ function _skelStatCards(n) {
     </div>`).join('');
 }
 
-// Placeholder rows sized to whatever table they land in - the column count
-// is read from the table's own header, so this keeps working if a column
-// is added later.
+// Placeholder rows; column count comes from the table header.
 function _skelRows(cols, n) {
   const widths = ['70%','55%','45%','60%','40%','50%'];
   return Array.from({ length: n }, () => '<tr>' +
@@ -547,8 +464,7 @@ function _skelPills(n) {
     '<span class="skel skel-pill" style="margin-right:6px;"></span>').join('');
 }
 
-// A stack of list rows, for panels that are not tables - the audit log,
-// the school-year list, the department grid.
+// List-row placeholders for non-table panels.
 function _skelList(n) {
   return Array.from({ length: n || 5 }, () => `
     <div style="display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--border,#eef2f0);">
@@ -561,8 +477,7 @@ function _skelList(n) {
     </div>`).join('');
 }
 
-// A card panel with a heading and a table inside - Reports, Evaluation
-// Control and View Full List all render one of these into a single div.
+// Card panel placeholder with a heading and a table.
 function _skelPanel() {
   return `
     <div class="skel-card" style="gap:16px;">
@@ -572,10 +487,7 @@ function _skelPanel() {
     </div>`;
 }
 
-// Every container the page scripts fill. Keyed by element id so a page that
-// renders into one big div gets a placeholder too - previously only tables
-// were covered, so Reports, Evaluation Control, the audit log and the
-// department pages all sat blank while everything else shimmered.
+// Every container the page scripts fill, keyed by element id.
 const SKEL_TARGETS = {
   dashStats:                  () => _skelStatCards(4),
   syList:                     () => _skelList(4),
@@ -595,15 +507,12 @@ const SKEL_TARGETS = {
   feedbackList:               () => _skelList(4)
 };
 
-// Containers overwritten by a FORCED skeleton, with what they held before.
-// clearStuckSkeletons() puts back any that the page's redraw did not replace.
+// Containers overwritten by a forced skeleton, with their old content.
 window._skelRestore = [];
 
 window.showSkeleton = function (force) {
   try {
-    // Only the page you are LOOKING AT. A forced refresh used to fill every
-    // page's containers, but only the open page is redrawn afterwards - so the
-    // others kept their placeholders until you visited them.
+    // Only the page currently open.
     const page = document.querySelector('.page.active');
     if (!page) return;
     if (force) window._skelRestore = [];
@@ -634,10 +543,7 @@ window.showSkeleton = function (force) {
   }
 };
 
-// After a forced refresh: any container STILL showing placeholders was not
-// redrawn by its page - the department filter pills are the usual one, since
-// they are built once rather than on every refresh. Put back what it held.
-// Anything the redraw did replace is left alone.
+// After a forced refresh, restore any container its page didn't redraw.
 window.clearStuckSkeletons = function () {
   try {
     (window._skelRestore || []).forEach(r => {

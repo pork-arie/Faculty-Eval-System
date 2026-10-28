@@ -1,12 +1,5 @@
-// ============================================================================
-// admin-students.js
-// ----------------------------------------------------------------------------
-// Student records, name helpers, and the YY-NNNNN ID format.
-//
-// Split out of the original 4,441-line admin.js. Load order is load-bearing:
-// keep these in the order listed in dashboard.html - later files redefine
-// functions defined earlier, and the last definition wins.
-// ============================================================================
+// admin-students.js - student records, name helpers, and the YY-NNNNN ID format.
+// Load order matters (see dashboard.html): the last definition wins.
 
 // ===== STUDENTS DEPT PILLS =====
 function renderStudentDeptFilterBar() {
@@ -34,14 +27,11 @@ window.setStudentDeptFilter = function(dept) {
 };
 
 // ===== STUDENTS =====
-// NOTE: renderStudents below is overridden by the one in adminfeatures.js
-// (loaded later). Both use parseStudentSearch / studentMatchesTerm.
-// Students search. Every term must match, in any order. A section letter
-// only counts as a section when it comes with a year level - on its own, a
-// single letter is just part of a name like any other word.
-//   "bscs 2ndyr c", "bscs 2nd year c", "2c", "2-c", "2nd c"  -> year 2, Sec C
-//   "2", "2nd", "2ndyr", "2nd year"                         -> year 2, any section
-//   anything else -> part of the name, ID, course (or its code) or department
+// renderStudents is overridden in adminfeatures.js.
+// Search: every term must match. A section letter needs a year level:
+//   "2c", "2-c", "2nd c", "bscs 2ndyr c" -> year 2, Sec C
+//   "2", "2nd", "2nd year"              -> year 2, any section
+//   anything else -> name, ID, course (or code) or department
 const YEAR_TERM_RE = /^([1-5])(?:st|nd|rd|th)?(?:-?(?:yr|year))?(?:-?([a-z]))?$/;
 function parseStudentSearch(search) {
   const words = search.toLowerCase().split(/\s+/).filter(Boolean);
@@ -79,7 +69,7 @@ function renderStudents(search = '') {
   tbody.innerHTML = filtered.map(s => `
     <tr>
       <td><span style="font-family:'JetBrains Mono',monospace;font-weight:600;">${escapeHtml(s.sid)}</span></td>
-      <td><strong>${escapeHtml(s.name)}</strong></td>
+      <td><strong>${escapeHtml(listName(s))}</strong></td>
       <td>${escapeHtml(s.course || '—')}</td>
       <td>${escapeHtml(s.year)}</td>
       <td>Sec ${escapeHtml(s.section)}</td>
@@ -96,14 +86,13 @@ function renderStudents(search = '') {
 }
 
 // ===== NAME HELPERS =====
-// Assembles the display name in reading order: "Prof. Juan M. Santos Jr."
+// Display name in reading order: "Prof. Juan M. Santos Jr."
 function buildName(parts) {
   return [parts.title, parts.first, parts.middle, parts.last, parts.suffix]
     .map(v => String(v || '').trim()).filter(Boolean).join(' ');
 }
 
-// Splits an existing free-text name so the edit modal can pre-fill the fields.
-// Only used for records saved before the name was split into separate inputs.
+// Splits a legacy free-text name to pre-fill the edit modal.
 function splitName(full) {
   const TITLES   = ['Prof.', 'Dr.', 'Engr.', 'Atty.', 'Rev.', 'Mr.', 'Ms.', 'Mrs.'];
   const SUFFIXES = ['Jr.', 'Jr', 'Sr.', 'Sr', 'II', 'III', 'IV', 'V'];
@@ -120,10 +109,7 @@ function splitName(full) {
   return out;
 }
 
-// Surname used for A-Z sorting. This file loads AFTER admin-core.js and its
-// byName replaces the one there, so it must use the same key: personSortKey
-// (admin-core.js), which keeps "Dela Peña" together and skips Jr./Dr. The old
-// last-word rule here filed "John Rich O. Dela Peña" under P.
+// Sort key must match personSortKey in admin-core.js (this byName replaces it).
 function sortKey(p) {
   if (typeof personSortKey === 'function') return personSortKey(p);
   const last = (p && p.lastName) ? p.lastName : splitName(p && p.name).last;
@@ -194,44 +180,19 @@ function openEditStudentModal(id) {
 }
 
 // ===== STUDENT ID FORMAT =====
-// NwSSU uses TWO student ID formats, and both are accepted:
-//
-//   YY-NNNNN       e.g. 24-00001     two-digit year, hyphen, five digits
-//   YYYY-N-N       e.g. 2025-9902-1  four-digit year, a number of ONE TO FIVE
-//                  or 2024-652-1     digits, then one or two digits.
-//                  or 2024-56-1      The registrar does not zero-pad the middle
-//                                    part (class lists show 2024-652-1 and
-//                                    2024-56-1), so it must not be padded here
-//                                    either - "2024-0652-1" would be a different
-//                                    sign-in from the one the student uses.
-//
-// The second was introduced with a registrar update; students on either
-// format are enrolled at the same time, so neither can replace the other.
-//
-// Anything else is rejected. Strict validation is a security measure as well
-// as a data one: the ID becomes the person's sign-in address
-// (<id>@nwssu.app), so only these two exact shapes ever reach Firebase Auth.
-//
-// For YY-NNNNN the zero padding is load-bearing - "22-1745" and "22-01745" are
-// the same person to a human but two different strings to the duplicate
-// check, so one mistyped entry creates a second record that looks identical.
+// Two accepted formats:
+//   YY-NNNNN  e.g. 24-00001 (zero padding matters for duplicate checks)
+//   YYYY-N-N  e.g. 2025-9902-1, 2024-652-1 (middle part NOT padded)
+// Anything else is rejected; the ID becomes the sign-in (<id>@nwssu.app).
 const STUDENT_ID_RE = /^(?:\d{2}-\d{5}|\d{4}-\d{1,5}-\d{1,2})$/;
 
-// Repairs the near-misses people actually type, and NOTHING else.
-//
-// The separator is required. An earlier version made it optional, which quietly
-// mangled every legacy ID in the roster: "2021001" is seven digits, so it
-// matched as 20 + 21001 and became "20-21001" - a different student, silently.
-// Bare digit strings are genuinely ambiguous (2201745 could be 22-01745 or an
-// old-format ID) so they are left alone and allowed to fail validation instead.
+// Repairs common near-misses only. Separator is required; bare digit
+// strings are ambiguous and left to fail validation.
 function normalizeStudentId(raw) {
   const v = String(raw || '').trim();
   const SEP = '\\s*[-\\u2013\\u2014_ ]\\s*';     // hyphen, en/em dash, underscore or space
 
-  // YYYY-N-N. Checked FIRST: its opening "20" would otherwise be read as the
-  // two-digit year of the old format. No padding - the registrar writes the
-  // middle part unpadded (2024-652-1) - so only the separators are repaired
-  // ("2025 9902 1", "2025\u20139902\u20131").
+  // YYYY-N-N checked first; only separators are repaired, no padding.
   const n = v.match(new RegExp('^(\\d{4})' + SEP + '(\\d{1,5})' + SEP + '(\\d{1,2})$'));
   if (n) return n[1] + '-' + n[2] + '-' + n[3];
 
@@ -242,8 +203,7 @@ function normalizeStudentId(raw) {
   return v;                                      // left alone, allowed to fail validation
 }
 
-// Set while a save is waiting on the database, so a double-click on
-// "Add Student" cannot create the same student twice.
+// Guards against double-click creating the same student twice.
 let _savingStudent = false;
 
 async function saveStudent() {
@@ -258,10 +218,7 @@ async function saveStudent() {
   // Saved in one standard spelling - see normalizeCourseName (admin-core.js).
   const course = normalizeCourseName(document.getElementById('stuCourse') ? document.getElementById('stuCourse').value : '');
   const year = document.getElementById('stuYear').value;
-  // Uppercased on the way in, not just on screen. text-transform only changes
-  // how the input looks - a typed "a" still submits as "a" - and sections are
-  // compared as plain strings when grouping students, so "A" and "a" would
-  // show up as two different sections.
+  // Uppercase the stored section so "A" and "a" don't split.
   const section = document.getElementById('stuSection').value.trim().toUpperCase();
   const dept = document.getElementById('stuDept').value;
   const pass = document.getElementById('stuPass').value;
@@ -277,10 +234,7 @@ async function saveStudent() {
   };
   const students = getData('students', []);
 
-  // Enforced on NEW ids only. Students enrolled before the YY-NNNNN format was
-  // adopted keep ids like 2021001, and blocking those would mean you could not
-  // fix a legacy student's section without first changing their ID - which would
-  // break their login, since the app matches on sid exactly.
+  // Enforced on NEW ids only; legacy ids keep working.
   const priorSid = editingId
     ? (students.find(s => s.id === editingId) || {}).sid
     : null;
@@ -290,8 +244,7 @@ async function saveStudent() {
     return;
   }
 
-  // Quick check against this browser's copy first - no database call needed
-  // for the common mistake.
+  // Quick local check first.
   if (students.find(s => s.sid === sid && !s.deleted && s.id !== editingId)) {
     showToast(editingId ? 'Another student already uses that ID.' : 'ID already exists.', 'error');
     return;
@@ -299,9 +252,7 @@ async function saveStudent() {
 
   _savingStudent = true;
   try {
-    // Then ask the DATABASE. This browser's copy cannot see a student another
-    // laptop added a minute ago, and it may still hold records that were
-    // deleted elsewhere. Skipped when editing without changing the ID.
+    // Then check the DATABASE (skipped when the ID is unchanged).
     let matches = [];
     if (!sidUnchanged) {
       try {
@@ -323,11 +274,7 @@ async function saveStudent() {
       const idx = students.findIndex(s => s.id === editingId);
       if (idx === -1) { showToast('Student not found. Refresh and try again.', 'error'); return; }
       const before = cloneRecord(students[idx]);
-      // Never let a blank course overwrite one already on the record. The course
-      // <select> is filled from the chosen department, so it can come back empty
-      // for reasons that have nothing to do with the course itself - a department
-      // with no registered courses, or a course registered elsewhere. Clearing a
-      // course is done by changing it, not by saving an empty dropdown.
+      // Never let a blank course overwrite an existing one.
       const edits = { sid, name, year, section, dept };
       if (course) edits.course = course;
       Object.assign(students[idx], edits, nameFields);
@@ -344,16 +291,8 @@ async function saveStudent() {
       changes = [{ before, after: students[idx] }];
       showToast('Student updated!', 'success');
     } else {
-      // A deleted student with this ID is left exactly as it is - deleted, with
-      // its old evaluations. This creates a completely NEW person with a new
-      // document, so none of the old record's data carries over. Login and
-      // evaluation history go by the live record (see auth.js, app.js and
-      // AuthRepository), so the old one no longer gets in the way.
-      //
-      // forceReset TRUE on every new student. The default password is their
-      // own student ID, which is printed on their ID card and used as the
-      // username - so until they change it, anyone who knows the ID can sign in
-      // as them. The portal and the app refuse to go further until it changes.
+      // A deleted student with this ID stays deleted; this creates a NEW record.
+      // forceReset TRUE: the default password is the student ID, so it must change.
       const rec = Object.assign({ id: 'stu' + Date.now(), sid, name, course, year, section, dept,
                                   password: pass || sid, status: 'active', forceReset: true, deleted: false },
                                 nameFields);
@@ -394,8 +333,7 @@ function toggleStudentStatus(id) {
 function deleteStudent(id) {
   const s = getData('students', []).find(s => s.id === id);
   if (!s) return;
-  // Their ratings stop counting once they are deleted (getData filters them -
-  // see countedEvaluations in admin-core.js) but stay in the database.
+  // Their ratings stop counting (countedEvaluations) but stay in the database.
   const given = evaluationsSubmittedBy(id, 'student').length;
   const givenNote = given
       ? ` The ${given} evaluation${given === 1 ? '' : 's'} they submitted will stop counting toward` +
@@ -425,12 +363,7 @@ function openResetPass(id) {
   openModal('resetPassModal');
 }
 
-// The old body wrote students[idx].password and announced "Password reset!".
-// That field has not been the credential since both clients moved to Firebase
-// Auth, so the student kept logging in with their old password while the
-// dashboard showed the new one. resetLoginPassword (admin-core.js) either does
-// a real reset through the Cloud Function or tells the admin what is still
-// needed - it never claims a reset that did not happen.
+// Real reset via resetLoginPassword (admin-core.js); never fakes success.
 async function saveResetPass() {
   const pass = document.getElementById('resetPassInput').value;
   const students = getData('students', []);
@@ -438,8 +371,7 @@ async function saveResetPass() {
   if (idx === -1) { showToast('Student not found.', 'error'); return; }
 
   closeModal('resetPassModal');
-  // Blank means "back to their Student ID", which is what the account was
-  // issued with in the first place.
+  // Blank = back to their Student ID.
   await resetLoginPassword('student', students[idx], pass);
   if (typeof renderStudents === 'function') renderStudents();
 }

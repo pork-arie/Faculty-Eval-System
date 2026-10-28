@@ -1,14 +1,6 @@
-// ============================================================================
-// admin-annex.js
-// ----------------------------------------------------------------------------
-// Annex C, Annex D, print serialisation and the FEDAF development plan.
-// The printed forms. Column and section wording here matches the QA office's
-// signed copy, so treat changes as changes to an official document.
-//
-// Split out of the original 4,441-line admin.js. Load order is load-bearing:
-// keep these in the order listed in dashboard.html - later files redefine
-// functions defined earlier, and the last definition wins.
-// ============================================================================
+// admin-annex.js - Annex C, Annex D, print serialisation and the FEDAF plan.
+// Wording matches the QA office's signed forms; treat changes as official.
+// Load order matters (see dashboard.html): the last definition wins.
 
 // ===== ANNEX D REPORT MODAL (CMO 19 format) =====
 window.showAnnexDReport = function(teacherId) {
@@ -122,14 +114,8 @@ window.showAnnexDReport = function(teacherId) {
 };
 
 // ===== PRINT SERIALISATION =====
-// innerHTML returns MARKUP, and text typed into a <textarea> or <input> lives in
-// the DOM `.value` property - it is never written back into the markup. Printing
-// via innerHTML therefore silently dropped everything typed into the Annex D
-// development plan and the signatory fields.
-//
-// This walks a CLONE (the live form is left untouched) and replaces every form
-// control with plain text carrying its current value. That fixes the data loss
-// and also gives a cleaner printout: no input borders, no date-picker chrome.
+// Replaces form controls in a CLONE with plain text of their current values,
+// since innerHTML doesn't include typed input.
 function _annexPrintHtml(sourceEl) {
     if (!sourceEl) return '';
     const clone = sourceEl.cloneNode(true);
@@ -171,25 +157,9 @@ function _annexPrintHtml(sourceEl) {
     return clone.innerHTML;
 }
 
-// ============================================================
-// SECTION ROSTER  (click column 3 of Annex C)
-// ------------------------------------------------------------
-// Answers two questions the printed form cannot: who in this section has
-// actually submitted, and has anyone submitted TWICE.
-//
-// Duplicates matter because a second submission is counted twice over: once in
-// the number of submissions that column (3) weights by, and again in the mean
-// that column (4) reports. The printed form shows only the totals, so nothing
-// on it reveals that two of the ratings came from the same student - which is
-// why this view exists.
-//
-// Shows submission STATUS only - never the rating or the comment. The office
-// must be able to chase non-respondents (evaluation is mandatory, CMO 8.1)
-// without being able to read what any named student wrote (6.10).
-// ============================================================
-// teacherId is optional. From a teacher's Annex C it narrows the roster to that
-// teacher's students and ratings; from Submission Tracking (no teacherId) it
-// covers every teacher the subject has.
+// SECTION ROSTER (click column 3 of Annex C): who has submitted, and any
+// duplicates. Shows status only - never ratings or comments (CMO 8.1, 6.10).
+// teacherId is optional; without it the roster covers every teacher.
 window.annexSectionRoster = function (subjectId, sectionLabel, teacherId) {
   const sub = getData('subjects', []).find(x => x.id === subjectId);
   if (!sub) { showToast('Subject not found.', 'error'); return; }
@@ -200,22 +170,18 @@ window.annexSectionRoster = function (subjectId, sectionLabel, teacherId) {
   const focus = (teacherId && subjectHasTeacher(sub, teacherId)) ? teacherId : null;
   const tIds  = focus ? [focus] : subjectTeacherIds(sub);
 
-  // Same scoping as the row itself: this subject, student evaluations, this
-  // term - and the teacher(s) in view.
+  // Scope: this subject, student evaluations, this term, teacher(s) in view.
   const evals = getData('evaluations', []).filter(e =>
       e.subjectId === subjectId &&
       e.evaluatorType !== 'supervisor' &&
       tIds.some(tid => evalBelongsTo(e, sub, tid)) &&
       inTerm(e));
 
-  // For each student: which of the teachers in view teach them, and how many
-  // ratings each of those got. One rating PER TEACHER is normal now, so a
-  // duplicate means two ratings for the SAME teacher.
+  // Per student: teachers in view and rating count each. Duplicate = two for the SAME teacher.
   const ratingsFor = (st, tid) => evals.filter(e => e.studentId === st.id && evalBelongsTo(e, sub, tid)).length;
   const owedTo     = st => tIds.filter(tid => teacherTeachesStudent(sub, tid, st));
 
-  // A row labelled "BSIT 1A, BSIT 1B" is an unrated class - one row covering
-  // every section. Accept any of the listed labels in that case.
+  // A multi-section label is an unrated class; accept any listed section.
   const wanted = String(sectionLabel || '').split(',').map(x => x.trim()).filter(Boolean);
   const labelOf = st => (typeof _sectionLabel === 'function') ? _sectionLabel(st) : '';
   const inSection = st => !wanted.length || wanted.indexOf(labelOf(st)) !== -1;
@@ -227,8 +193,7 @@ window.annexSectionRoster = function (subjectId, sectionLabel, teacherId) {
       .filter(st => owedTo(st).length > 0)          // only students the teacher(s) teach
       .sort(byName);                                // last name A to Z
 
-  // Count submissions per student so a second copy is visible rather than just
-  // inflating the total.
+  // Count submissions per student to expose duplicates.
   const countFor = {};
   evals.forEach(e => { if (e.studentId) countFor[e.studentId] = (countFor[e.studentId] || 0) + 1; });
 
@@ -237,15 +202,11 @@ window.annexSectionRoster = function (subjectId, sectionLabel, teacherId) {
   const submitted = roster.filter(st => doneFor(st) === owedTo(st).length).length;
   const dupes     = roster.filter(isDup);
 
-  // Submissions made BY this section, so the counts match the row that was
-  // clicked rather than the whole subject.
+  // Submissions made BY this section.
   const sectionIds   = new Set(roster.map(s => s.id));
   const sectionEvals = evals.filter(e => sectionIds.has(e.studentId));
 
-  // A stray is a submission from someone not enrolled in THE SUBJECT at all -
-  // a transferred student, or a stale record. Checked against the subject's
-  // full enrolment, not this section's: comparing against the section would
-  // report every student from a different section as unenrolled.
+  // Stray = not enrolled in the subject at all.
   const subjectIds = new Set((sub.enrolledIds || []));
   const strays = Object.keys(countFor).filter(id => !subjectIds.has(id));
 
@@ -256,7 +217,7 @@ window.annexSectionRoster = function (subjectId, sectionLabel, teacherId) {
     const done  = doneFor(s);
     return `<tr${dup ? ' style="background:#fef2f2;"' : ''}>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;font-family:monospace;font-size:0.8rem;">${escapeHtml(s.sid || '')}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(s.name || '')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(listName(s))}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;">
           ${done === 0
             ? '<span style="color:#b45309;">Not yet</span>'
@@ -274,7 +235,7 @@ window.annexSectionRoster = function (subjectId, sectionLabel, teacherId) {
     const s = students.find(x => x.id === id);
     return `<tr style="background:#fffbeb;">
         <td style="padding:6px 8px;border-bottom:1px solid #eee;font-family:monospace;font-size:0.8rem;">${escapeHtml(s ? s.sid : id)}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(s ? s.name : '(student record not found)')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${escapeHtml(s ? listName(s) : '(student record not found)')}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;color:#b45309;">Not enrolled</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;">${countFor[id]}</td>
       </tr>`;
@@ -339,13 +300,12 @@ window.printAnnexD = function() {
 };
 
 // ===== COMBINED ANNEX C & D VIEWER =====
-// Stores current teacher id for tab switching
+// Current teacher id for tab switching
 window._currentAnnexTeacherId = null;
 
 window.showAnnexReports = function(teacherId, fromReports) {
     window._currentAnnexTeacherId = teacherId;
-    // Annex follows the Reports history selection ONLY when opened from Reports.
-    // Everywhere else (Teachers tab, dept views, etc.) it shows the present term.
+    // Follows the Reports term only when opened from Reports.
     window._annexTermOverride = fromReports ? null : 'ACTIVE';
     window._currentAnnexFromReports = !!fromReports;
     const t = getData('teachers', []).find(t => t.id === teacherId);
@@ -396,59 +356,29 @@ window.printActiveAnnex = function() {
 };
 
 // Annex C — Individual Faculty Evaluation Report
-// Column (2) of Annex C section B is "Year/Section" - on the QA office's printed
-// form it reads like "BSCE 4A". It is not the subject name, which is what this
-// report used to put there.
-//
-// Derived from the students actually enrolled in the class rather than from the
-// subject's curriculum slot, because that is what the column documents: who sat
-// in the room. A class drawing from more than one cohort lists each, which is
-// what the office writes by hand. The subject's own courses[]/yearLevel is only
-// a fallback for a class whose roster has not been loaded yet.
-// Course names are stored in full ("Bachelor of Science in Civil Engineering"),
-// but Annex C's Year/Section column needs the short form - "BSCE 4A". Derived
-// rather than stored, so nothing has to be re-entered for existing records.
-//
-// Rules, in order:
-//   1. An explicit shorthand in parentheses wins - "Bachelor of Elementary
-//      Education (BEEd)" -> BEED. Use this whenever the initials would be wrong
-//      or ambiguous, e.g. Criminology (BSCrim), which otherwise gives BSC.
-//   2. Something already short with no spaces is left alone - "BSCE" -> BSCE.
-//   3. Otherwise take initials, skipping of/in/and/the, and keeping words that
-//      are ALREADY abbreviations whole, so "BS Nursing" gives BSN, not BN.
+// Column (2) "Year/Section" (e.g. "BSCE 4A"), built from enrolled students;
+// courses[]/yearLevel is only a fallback.
+// courseShorthand: full course name -> short code, derived not stored.
 window.courseShorthand = function(name) {
     const n = String(name || '').trim();
     if (!n) return '';
 
-    // 1. CODE FIRST, description in brackets - the format Manage Courses
-    //    produces: "BPED (Bachelor of Physical Education)",
-    //    "BSED SOCIAL STUDIES (Bachelor of Secondary Education - Social
-    //    Studies)". Whatever sits before the bracket IS the code, so use it.
-    //
-    //    This case used to fall through to the initials branch, which walked
-    //    every word INCLUDING the ones inside the brackets and produced
-    //    "BPEDPE" and "BSEDSSSESS" - the garbled labels on Annex C.
+    // 1. CODE FIRST, description in brackets: "BPED (Bachelor of ...)" -> BPED.
     const beforeParen = n.split('(')[0].trim();
     if (n.indexOf('(') > 0 && beforeParen.length >= 2 && beforeParen.length <= 22) {
         return beforeParen.replace(/\s+/g, ' ').toUpperCase();
     }
 
     // 2. CODE IN BRACKETS - "Bachelor of Elementary Education (BEEd)" -> BEED.
-    //    Needed wherever the initials would be wrong or ambiguous, e.g.
-    //    Criminology (BSCrim), which otherwise gives BSC.
-    // Up to 24 characters, not 12. Real course shortnames at NwSSU carry a
-    // major after the code - "BSAG ANIMAL SCIENCE", "BSIT AUTOMOTIVE" - and the
-    // old 12-char cap made those fall through to the initials branch below,
-    // which printed "BSAAS" and "BSITA" on Annex C instead of what the office
-    // actually typed in the brackets.
+    //    Up to 24 chars so majors fit ("BSIT AUTOMOTIVE").
     const paren = n.match(/\(([^)]{2,24})\)/);
     if (paren) return paren[1].trim().replace(/\s+/g, ' ').toUpperCase();
 
     // 3. Something already short with no spaces is left alone - "BSCE" -> BSCE.
     if (n.indexOf(' ') === -1 && n.length <= 8) return n.toUpperCase();
 
-    // 4. Otherwise take initials, skipping of/in/and/the, and keeping words that
-    //    are ALREADY abbreviations whole, so "BS Nursing" gives BSN, not BN.
+    // 4. Otherwise initials, skipping of/in/and/the; existing abbreviations
+    //    stay whole ("BS Nursing" -> BSN).
     const STOP = ['of', 'in', 'and', 'the', 'for', 'a'];
     let out = '';
     n.replace(/\([^)]*\)/g, ' ')          // never take initials from a description
@@ -478,11 +408,8 @@ window.annexYearSection = function(sub, students) {
     return [c, y ? y[0] : ''].filter(Boolean).join(' ') || '\u2014';
 };
 
-// The office's form labels the comments section "D" - the same letter it gives
-// "D. SET and SEF Ratings". That is an oversight from when NwSSU inserted its
-// own "C. Summary of Average SEF Rating" ahead of the CMO's lettering, and it
-// is reproduced here so the generated form matches what QA already signs.
-// Change to 'E' if you would rather the letters run in sequence.
+// The office form letters the comments section "D" too; reproduced as-is.
+// Change to 'E' for sequential letters.
 window.ANNEX_C_COMMENTS_LETTER = 'D';
 
 window.buildAnnexCContent = function(teacherId) {
@@ -490,9 +417,8 @@ window.buildAnnexCContent = function(teacherId) {
     if (!t) return;
     const termInfo = (typeof annexTermInfo === 'function') ? annexTermInfo() : { label: '—' };
     const inTerm = (typeof annexEvalInTerm === 'function') ? annexEvalInTerm : (() => true);
-    // Annex C section B lists this faculty's regular-load classes. Two separate
-    // links can break and both produce an empty-looking table, so they are
-    // measured apart here and reported distinctly further down.
+    // Section B lists regular-load classes; the two ways it can come up empty
+    // are reported separately below.
     const allSubjects = getData('subjects', []);
     const assigned = allSubjects.filter(s => subjectHasTeacher(s, teacherId));
     const excluded = assigned.filter(s => s.loadType === 'Overload' || s.isLabSchool);
@@ -521,11 +447,8 @@ window.buildAnnexCContent = function(teacherId) {
     const sefEvals = getData('evaluations', []).filter(e => e.teacherId === teacherId && e.evaluatorType === 'supervisor' && inTerm(e));
     const sefScore = sefEvals.length > 0 ? (sefEvals.reduce((a, b) => a + b.totalScore, 0) / sefEvals.length).toFixed(2) : '—';
 
-    // Section C of the official form lists every supervisor who rated this
-    // faculty, one row each, then the average. A SEF written by the app stores
-    // the supervisor's document id in `studentId` (the evaluator field); records
-    // created from the admin SEF modal may carry `supervisorId` instead, and the
-    // oldest ones have neither.
+    // Section C: one row per supervisor, then the average. Supervisor id may be
+    // in `studentId` (app) or `supervisorId` (admin modal).
     const allTeachersForSef = getData('teachers', []);
     const sig = getSignatories();          // auto-filled Prepared/Reviewed by
     const sefAggC = getSEFForTeacher(teacherId, inTerm);
@@ -540,25 +463,13 @@ window.buildAnnexCContent = function(teacherId) {
     });
 
 
-    // Section B now comes from computeWeightedSET (admin-scoring.js) — the SAME
-    // function Reports, the FER and Annex D use. This block used to do its own
-    // maths and differed on two points: it counted a class nobody evaluated in
-    // the divisor (dragging the rating down) and it did not subtract exempted
-    // students. That is why Annex C and Annex D, printed from the same button
-    // for the same faculty, could carry different overall SET ratings.
+    // Section B uses computeWeightedSET (admin-scoring.js), same as every report.
     const setAgg = computeWeightedSET(teacherId, inTerm);
     const totalStudents = setAgg.totalStudents;
     const totalWeightedScore = setAgg.totalWeighted;
 
-    // ONE ROW PER YEAR/SECTION, as on the signed form: CE 422 / BSCE 4A and
-    // CE 422 / BSCE 4B are two rows, not one row reading "BSCE 4A, BSCE 4B".
-    // Rows are built from who RESPONDED, so the section figures always add back
-    // up to the class total and the TOTAL row is unchanged by the split. A class
-    // nobody evaluated still gets one row (count 0) rather than disappearing.
-    //
-    // 2 decimals, not 0: the printed form carries 3304.00, and rounding the
-    // weighted score to a whole number loses precision the TOTAL and the
-    // overall SET rating are then computed from.
+    // ONE ROW PER YEAR/SECTION, built from who responded so rows sum to the
+    // TOTAL; unevaluated classes still get a row. 2 decimals, as on the form.
     let _seq = 0;
     const classBreakdown = [];
     setAgg.classes.forEach(c => {
@@ -570,8 +481,7 @@ window.buildAnnexCContent = function(teacherId) {
                 count: sec.count,
                 enrolledCount: c.enrolledCount,
                 evalCount: c.evalCount,
-                // A section with no responses prints a dash in both value
-                // columns. Showing 0.00 implied a rating of zero was recorded.
+                // No responses: print a dash, not 0.00.
                 avgScore: sec.rated ? sec.avgScore : '\u2014',
                 weightedScore: sec.rated ? sec.weightedScore : '\u2014'
             });
@@ -579,12 +489,7 @@ window.buildAnnexCContent = function(teacherId) {
     });
 
 
-    // Year/Section is built from each enrolled student's course + year + section,
-    // so a course value that is not one of your registered courses prints straight
-    // onto the form. courseShorthand returns any single token of 8 characters or
-    // fewer unchanged (so "BSCE" is not re-shortened into nonsense), which means a
-    // mistyped or test course like "bsagasaa" appears verbatim in column 2 and
-    // looks like the report invented it. Name the offending values instead.
+    // Flag course values that aren't registered courses (they print verbatim).
     const knownCourses = new Set();
     Object.keys(getData('customCourses', {})).forEach(function (d) {
         (getData('customCourses', {})[d] || []).forEach(function (c) {
@@ -603,10 +508,7 @@ window.buildAnnexCContent = function(teacherId) {
         });
     });
 
-    // A subject set to "Any year level" carries no cohort of its own, so the
-    // Year/Section column can only be built from the students enrolled in it.
-    // When that comes up empty the cell reads "-", which looks like a rendering
-    // fault rather than missing data - say which classes and why.
+    // Explain empty Year/Section cells for "Any year level" subjects.
     const noYearSection = classBreakdown
         .filter(cr => cr.yearSection === '\u2014')
         .map(cr => cr.sub.code);
@@ -628,9 +530,7 @@ window.buildAnnexCContent = function(teacherId) {
 
     const overallSET = totalStudents > 0 ? (totalWeightedScore / totalStudents).toFixed(2) : '0.00';
 
-    // Section D comments — pull the actual anonymous comments submitted.
-    // Students: any non-supervisor evaluation for this faculty with a comment.
-    // Supervisor: comments from the SEF submissions (Annex B) for this faculty.
+    // Section D comments (anonymous): student and supervisor comments for this faculty.
     const studentComments = getData('evaluations', [])
         .filter(e => e.teacherId === teacherId && e.evaluatorType !== 'supervisor' && inTerm(e) && e.comment && e.comment.trim())
         .map(e => e.comment.trim());
@@ -641,8 +541,7 @@ window.buildAnnexCContent = function(teacherId) {
     const commentRow = (n, text) =>
         `<tr><td style="padding:12px 8px;border:1px solid #ccc;text-align:center;vertical-align:top;">${n}</td>`
         + `<td style="padding:12px 8px;border:1px solid #ccc;white-space:pre-wrap;word-break:break-word;">${text ? escapeHtml(text) : ''}</td></tr>`;
-    // Always keep at least 5 rows so the form looks right; fill with comments
-    // where they exist and leave the remaining rows blank.
+    // At least 5 rows; blanks fill the rest.
     const buildCommentRows = (arr) => {
         const rowCount = Math.max(5, arr.length);
         let out = '';
@@ -820,9 +719,7 @@ window.buildAnnexCContent = function(teacherId) {
 
 // Annex D — Faculty Evaluation and Development Acknowledgement Form
 // ===== FEDAF DEVELOPMENT PLAN & ACKNOWLEDGMENT (CMO §6.7, §10.2) =====
-// The Faculty Evaluation & Development Acknowledgment Form captures the jointly
-// agreed development plan and the faculty member's acknowledgment. Stored per
-// faculty per rating period.
+// Stored per faculty per rating period.
 window._devPlanId = function(teacherId, term) {
     return ('dp_' + teacherId + '_' + (term || '')).replace(/[^a-zA-Z0-9_-]/g, '_');
 };
@@ -955,9 +852,7 @@ window.buildAnnexDContent = function(teacherId) {
     </div>`;
 };
 
-// Fills the password box with the Teacher ID — called from the edit teacher
-// modal. Saving then routes through resetLoginPassword (admin-core.js), which
-// is the only path that can actually change a Firebase Auth credential.
+// Fills the password box with the Teacher ID; saving goes through resetLoginPassword.
 window.resetPasswordToId = function() {
     const tid = document.getElementById('tchId') ? document.getElementById('tchId').value : '';
     const pwInput = document.getElementById('tchPassword');
@@ -966,7 +861,4 @@ window.resetPasswordToId = function() {
         showToast('Set to Teacher ID. Save to start the reset.', 'info');
     }
 };
-// REMOVED (dead code): exportEnhancedReport
-// Replaced unconditionally by adminEval.js:321.
-// The 34 lines that were here never executed - the definition below in the
-// load order replaced this one before anything could call it.
+// REMOVED (dead code): exportEnhancedReport - defined in adminEval.js.

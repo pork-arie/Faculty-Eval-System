@@ -52,16 +52,8 @@ function doLogout() {
   } catch (e) { done(); }
 }
 
-// Evaluations shown on the dashboard card.
-//
-// evals.length counted EVERY document in the collection: student and
-// supervisor submissions together, from every rating period, including
-// evaluations belonging to faculty that have since been deleted. The number
-// was therefore larger than anything else on screen agreed with, and nobody
-// could say what it represented.
-//
-// Scoped to the active term and split by instrument, which is also how CMO 19
-// reports them - SET and SEF are separate figures, not one pool.
+// Evaluations on the dashboard card: active term only, split into
+// SET and SEF (as CMO 19 reports them).
 function _countDashEvals() {
   const liveTeachers = new Set(getData('teachers', []).filter(t => !t.deleted).map(t => t.id));
   const inTerm = (typeof evalInActiveTerm === 'function') ? evalInActiveTerm : () => true;
@@ -140,7 +132,8 @@ function renderDashboard() {
     <h3 style="font-size:1rem;font-weight:700;margin-bottom:16px;">📅 Current Active Period</h3>
     <div class="info-row"><span class="info-label">School Year</span><span class="info-value">${sy ? sy.year : 'Not set'}</span></div>
     <div class="info-row"><span class="info-label">Semester</span><span class="info-value">${sy ? sy.activeSem : 'Not set'}</span></div>
-    <div class="info-row"><span class="info-label">Evaluation Status</span><span class="info-value"><span class="badge ${period.open ? 'badge-success' : 'badge-danger'}">${period.open ? 'Open' : 'Closed'}</span></span></div>
+    <div class="info-row"><span class="info-label">Evaluation Status</span><span class="info-value"><span class="badge ${!period.open ? 'badge-danger' : (period.startDate && new Date().toLocaleDateString('en-CA') < period.startDate) ? 'badge-warning' : 'badge-success'}">${!period.open ? 'Closed' : (period.startDate && new Date().toLocaleDateString('en-CA') < period.startDate) ? 'Scheduled' : 'Open'}</span></span></div>
+    <div class="info-row"><span class="info-label">Start Date</span><span class="info-value">${period.startDate || 'Not set'}</span></div>
     <div class="info-row"><span class="info-label">Deadline</span><span class="info-value">${period.deadline || 'Not set'}</span></div>
   `;
 }

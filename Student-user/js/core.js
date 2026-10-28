@@ -77,6 +77,12 @@ async function checkCanSubmit() {
   if (!period.open)
     return { ok: false, reason: 'The evaluation period is currently closed.' };
 
+  if (period.startDate) {
+    const localToday = new Date().toLocaleDateString('en-CA');   // YYYY-MM-DD, local time
+    if (localToday < period.startDate)
+      return { ok: false, reason: 'The evaluation starts on ' + period.startDate + '.' };
+  }
+
   if (period.deadline) {
     const today = new Date().toISOString().slice(0, 10);   // ISO dates compare as strings
     if (today > period.deadline)
@@ -195,4 +201,25 @@ function showToast(msg, type = 'info') {
   toast.innerHTML = `<span>${icons[type] || 'ℹ️'}</span><span>${msg}</span>`;
   container.appendChild(toast);
   setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateX(32px)'; toast.style.transition = 'all 0.3s'; setTimeout(() => toast.remove(), 350); }, 3500);
+}
+// Name for lists: "Lastname, Firstname Middlename" (same rule as the admin listName).
+const _NAME_TITLES    = ['dr', 'mr', 'mrs', 'ms', 'miss', 'engr', 'prof', 'atty', 'sir', 'maam'];
+const _NAME_SUFFIXES  = ['jr', 'sr', 'ii', 'iii', 'iv', 'v'];
+const _NAME_PARTICLES = ['de', 'del', 'dela', 'delos', 'de los', 'da', 'di', 'san', 'sta', 'sto', 'van', 'von'];
+function listName(p) {
+  if (!p) return '';
+  if (p.lastName) {
+    const rest = [p.firstName, p.middleName, p.suffix].filter(Boolean).join(' ');
+    return rest ? p.lastName + ', ' + rest : p.lastName;
+  }
+  const bare = w => w.toLowerCase().replace(/[.,']/g, '');
+  const words = String(p.name || '').trim().split(/\s+/).filter(Boolean);
+  while (words.length > 1 && _NAME_TITLES.indexOf(bare(words[0])) !== -1) words.shift();
+  let suffix = '';
+  if (words.length > 1 && _NAME_SUFFIXES.indexOf(bare(words[words.length - 1])) !== -1) suffix = words.pop();
+  if (words.length < 2) return words.concat(suffix ? [suffix] : []).join(' ');
+  let start = words.length - 1;
+  while (start > 1 && _NAME_PARTICLES.indexOf(bare(words[start - 1])) !== -1) start--;
+  const rest = words.slice(0, start).concat(suffix ? [suffix] : []).join(' ');
+  return words.slice(start).join(' ') + ', ' + rest;
 }
