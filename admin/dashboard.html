@@ -366,6 +366,8 @@ async function loadFromFirebase() {
     // Only a complete pull makes the local copy safe to push back up.
     if (!_staleCollections.length) window._firestoreLoadClean = true;
     window._firestoreLoadAttempted = true;
+    // Close and clear an evaluation period whose deadline has passed.
+    if (!_staleCollections.length && typeof checkAndAutoFinalize === 'function') checkAndAutoFinalize();
     // Stamp the time of a CLEAN pull only, so a partial load never looks fresh.
     if (!_staleCollections.length) {
       try { localStorage.setItem('_lastSync', new Date().toISOString()); } catch (e) {}

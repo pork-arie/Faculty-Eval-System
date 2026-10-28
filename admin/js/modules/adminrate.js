@@ -43,21 +43,27 @@ window.SUPERVISOR_CATEGORIES = [
 // Final 60/40 composite (not CMO 19) lives in admin-scoring.js.
 
 
-// Check and auto-finalize evaluation period
+// Once the deadline day is over: close the period (if open), clear both dates,
+// and log it in the audit trail. Students can still submit ON the deadline day.
 window.checkAndAutoFinalize = function() {
     const period = getData('evalPeriod', {});
-    if (!period.open) return;
-    
-    if (period.deadline) {
-        const today = new Date().toISOString().split('T')[0];
-        if (today >= period.deadline) {
-            period.open = false;
-            setData('evalPeriod', period);
-            addAudit('Auto-Finalize', 'Evaluation period automatically closed on due date');
-            generateFinalReports();
-            showToast('Evaluation period has been automatically finalized per due date.', 'info');
-        }
-    }
+    if (!period.deadline) return;
+
+    const today = new Date().toLocaleDateString('en-CA');   // YYYY-MM-DD, local time
+    if (today <= period.deadline) return;
+
+    const wasOpen   = !!period.open;
+    const startDate = period.startDate || 'not set';
+    const deadline  = period.deadline;
+    period.open      = false;
+    period.startDate = '';
+    period.deadline  = '';
+    setData('evalPeriod', period);
+    addAudit('Auto-Finalize', 'Deadline passed: evaluation period ' + startDate + ' to ' + deadline
+        + (wasOpen ? ' closed automatically' : ' ended') + '; start date and deadline cleared');
+    if (wasOpen) generateFinalReports();
+    showToast('The evaluation deadline (' + deadline + ') has passed. The period was closed and its dates cleared.', 'info');
+    if (typeof renderEvalControl === 'function' && document.querySelector('#page-evalControl.active')) renderEvalControl();
 };
 
 // Generate final reports for all faculty (CMO 19: SET and SEF displayed separately)

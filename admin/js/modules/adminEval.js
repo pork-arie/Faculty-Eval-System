@@ -223,7 +223,7 @@ window.canStudentEvaluate = function(studentId, subjectId) {
         return { allowed: false, reason: 'Evaluation period is currently closed.' };
     }
     if (period.startDate && new Date().toLocaleDateString('en-CA') < period.startDate) {
-        return { allowed: false, reason: 'Evaluation starts on ' + period.startDate + '.' };
+        return { allowed: false, reason: 'The evaluation has not started yet.' };
     }
 
     const existing = getData('evaluations', []).find(e =>

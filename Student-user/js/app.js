@@ -496,9 +496,6 @@ async function renderDashboard() {
       const _notStarted = _period.open === true && !!_period.startDate
         && new Date().toLocaleDateString('en-CA') < _period.startDate;
       const _isOpen = _period.open === true && !_notStarted;
-      const startStr = _period.startDate
-        ? new Date(_period.startDate + 'T00:00:00').toLocaleDateString('en-PH', { year:'numeric', month:'long', day:'numeric' })
-        : '';
       const deadlineDate = _period.deadline ? new Date(_period.deadline) : null;
       const now = new Date();
       const daysLeft = deadlineDate ? Math.ceil((deadlineDate - now) / (1000 * 60 * 60 * 24)) : null;
@@ -515,19 +512,13 @@ async function renderDashboard() {
             <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.08em; margin-bottom:3px;">Semester</div>
             <div style="font-size:1rem; font-weight:800; color:var(--ink);">${activeSem.label || activeSem.sem}</div>
           </div>
-          ${startStr ? `
-          <div>
-            <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.08em; margin-bottom:3px;">Starts</div>
-            <div style="font-size:0.9rem; font-weight:700; color:var(--ink);">${startStr}</div>
-          </div>
-          ` : ''}
           ${daysLeft !== null ? `
           <div>
             <div style="font-size:0.7rem; color:var(--muted); text-transform:uppercase; font-weight:700; letter-spacing:0.08em; margin-bottom:3px;">Deadline</div>
             <div style="font-size:0.9rem; font-weight:700; color:${daysLeft <= 3 ? 'var(--warning)' : 'var(--success)'};">${deadlineStr}${daysLeft > 0 ? ` (${daysLeft}d left)` : ' <span style="color:var(--danger);">Expired</span>'}</div>
           </div>
           ` : ''}
-          <span class="badge ${_isOpen ? 'badge-success' : _notStarted ? 'badge-warning' : 'badge-danger'}" style="margin-left:auto;">● Evaluation ${_isOpen ? 'Open' : _notStarted ? 'Opens ' + startStr : 'Closed'}</span>
+          <span class="badge ${_isOpen ? 'badge-success' : _notStarted ? 'badge-warning' : 'badge-danger'}" style="margin-left:auto;">● Evaluation ${_isOpen ? 'Open' : _notStarted ? 'Not Yet Open' : 'Closed'}</span>
         </div>`;
     }
   } catch(e) {}

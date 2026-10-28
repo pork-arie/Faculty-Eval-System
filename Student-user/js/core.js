@@ -80,7 +80,7 @@ async function checkCanSubmit() {
   if (period.startDate) {
     const localToday = new Date().toLocaleDateString('en-CA');   // YYYY-MM-DD, local time
     if (localToday < period.startDate)
-      return { ok: false, reason: 'The evaluation starts on ' + period.startDate + '.' };
+      return { ok: false, reason: 'The evaluation has not started yet.' };
   }
 
   if (period.deadline) {
