@@ -10,6 +10,7 @@
   const LIMIT = 300;
   const live = { loginLogs: [], activityLogs: [] };
   let unsubs = [];
+  let alertsOpen = false;   // suspicious-activity list starts collapsed
 
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -153,10 +154,24 @@
     document.getElementById('monCrit').textContent =
       events.filter(e => e.time && e.time.toDateString() === today && e.sev === 'Critical').length;
     drawChart(events);
+    // Suspicious-activity alert: a collapsed button; click to see the list.
     const box = document.getElementById('monAlerts');
     box.style.display = alerts.length ? 'block' : 'none';
-    box.innerHTML = alerts.length ? '<strong>&#9888; Suspicious activity: repeated failed logins</strong><br>' +
-      alerts.map(a => `ID <strong>${esc(a.user)}</strong> — ${a.count} failed attempts (3+ within 10 minutes), latest ${esc(fmt(a.last))}`).join('<br>') : '';
+    box.style.padding = '0';
+    alerts.sort((a, b) => b.last - a.last);
+    box.innerHTML = !alerts.length ? '' : `
+      <button type="button" onclick="toggleMonitorAlerts()" aria-expanded="${alertsOpen}"
+        style="all:unset;box-sizing:border-box;width:100%;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;">
+        <span><strong>&#9888; Suspicious activity:</strong> ${alerts.length} ID${alerts.length === 1 ? '' : 's'} with repeated failed logins</span>
+        <span style="font-weight:700;white-space:nowrap;">${alertsOpen ? 'Hide &#9650;' : 'Show &#9660;'}</span>
+      </button>
+      ${alertsOpen ? `<div style="padding:0 16px 12px;border-top:1px solid rgba(220,38,38,0.2);">` +
+        alerts.map(a => `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid rgba(220,38,38,0.12);">
+            <span>ID <strong>${esc(a.user)}</strong> — ${a.count} failed attempts (3+ within 10 minutes), latest ${esc(fmt(a.last))}</span>
+            <button type="button" class="btn btn-sm" onclick="showMonitorUser(${esc(JSON.stringify(a.user))})"
+              style="border:1px solid currentColor;background:transparent;color:inherit;border-radius:6px;padding:3px 10px;font-size:0.75rem;cursor:pointer;">View attempts</button>
+          </div>`).join('') + `</div>` : ''}`;
 
     const f = document.getElementById('monFilter').value;
     const sv = document.getElementById('monSev').value;
@@ -195,6 +210,16 @@
     if (!unsubs.length) startListening();
   };
   window.drawMonitor = draw;
+  window.toggleMonitorAlerts = function () { alertsOpen = !alertsOpen; draw(); };
+  // Filter the table to one ID's failed logins and scroll to it.
+  window.showMonitorUser = function (user) {
+    document.getElementById('monSearch').value = user;
+    document.getElementById('monFilter').value = 'Login Failed';
+    document.getElementById('monSev').value = '';
+    draw();
+    const t = document.getElementById('monRows');
+    if (t) t.closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   // Stop the live listeners when the admin leaves the tab.
   const prevShowPage = window.showPage;
