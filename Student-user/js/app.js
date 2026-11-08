@@ -265,7 +265,7 @@ async function startSef(teacherId) {
 
 // SEF submit. Doc id includes the term so next semester does not overwrite.
 // System monitoring: record important actions in activityLogs (append-only,
-// read by admins on /monitor/). Best-effort - never blocks the user's action.
+// read by admins on the System Monitor tab). Best-effort - never blocks the user's action.
 async function logActivity(type, detail, evalId) {
   try {
     const u = fbAuth.currentUser;
