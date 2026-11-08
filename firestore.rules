@@ -129,6 +129,17 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // System monitoring: important user actions (e.g. Evaluation Submitted).
+    // Anyone signed in may append an entry about themselves; only admins read.
+    match /activityLogs/{doc} {
+      allow read:   if isAdmin();
+      allow create: if signedIn()
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.type is string
+                    && request.resource.data.timestamp is string;
+      allow update, delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
