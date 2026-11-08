@@ -51,6 +51,9 @@
   const fmt = d => d ? d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric',
     hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '—';
 
+  const anonDetail = (sup, term) =>
+    (sup ? 'Supervisor evaluation submitted' : 'Student evaluation submitted') + (term ? ' · ' + term : '');
+
   function allEvents() {
     const ev = [];
     live.loginLogs.forEach(l => ev.push({
@@ -73,7 +76,7 @@
         (Array.isArray(list) ? list : []).forEach(r => { if (r && r.id) m[r.id] = r; });
         return m;
       };
-      const students = byId('students'), teachers = byId('teachers'), subjects = byId('subjects');
+      const students = byId('students'), teachers = byId('teachers');
       evals.forEach(r => {
         if (!r) return;
         const t = timeOf({ serverTime: r.serverTime, timestamp: r.timestamp || r.submittedAt || r.createdAt || r.date });
@@ -81,17 +84,14 @@
         seen.add(r.id);
         const sup = r.evaluatorType === 'supervisor';
         const stu = students[r.studentId] || {};
-        const sub = subjects[r.subjectId] || {};
-        const fac = teachers[r.teacherId] || {};
         const who = sup ? (r.supervisorTid || (teachers[r.supervisorId] || {}).tid || r.supervisorId || '')
                         : (stu.sid || r.studentId || '');
-        const what = sup ? 'Supervisor evaluation of ' + (fac.name || r.teacherId || 'faculty')
-                         : [sub.code && sub.name ? sub.code + ': ' + sub.name : (sub.code || r.subjectId || 'Subject'),
-                            fac.name ? 'for ' + fac.name : ''].filter(Boolean).join(' ');
+        // ANONYMITY: never show the subject or the teacher that was rated -
+        // with the evaluator's ID that would reveal who rated whom.
         ev.push({
           time: t, type: 'Evaluation Submitted', badge: 'badge-eval', kind: 'act',
           user: who, role: sup ? 'supervisor' : 'student',
-          detail: what + (r.schoolYear ? ' (' + r.schoolYear + (r.semester ? ', ' + r.semester : '') + ')' : '')
+          detail: anonDetail(sup, r.schoolYear ? r.schoolYear + (r.semester ? ', ' + r.semester : '') : '')
         });
       });
     }
@@ -99,7 +99,11 @@
     live.activityLogs.filter(a => !(a.type === 'Evaluation Submitted' && seen.has(a.evalId))).forEach(a => ev.push({
       time: timeOf(a),
       type: a.type || 'Activity', badge: 'badge-eval', kind: 'act',
-      user: a.userId || a.uid || '', role: a.role || '', detail: a.detail || ''
+      user: a.userId || a.uid || '', role: a.role || '',
+      // Older entries stored the subject/teacher; keep only the term.
+      detail: a.type === 'Evaluation Submitted'
+        ? anonDetail(a.role === 'supervisor', ((String(a.detail || '').match(/\(([^()]*)\)\s*$/) || [])[1]) || '')
+        : (a.detail || '')
     }));
     const audit = (typeof getData === 'function') ? getData('auditLog', []) : [];
     (Array.isArray(audit) ? audit : []).forEach(a => a && ev.push({
@@ -232,7 +236,7 @@
       <tr>
         <td style="white-space:nowrap;">${esc(fmt(e.time))}</td>
         <td><span class="badge" style="white-space:nowrap;background:${SEV[e.sev].bg};color:${SEV[e.sev].color};">${e.sev === 'Critical' ? '&#9888; ' : ''}${e.sev}</span></td>
-        <td><span class="badge ${e.badge}"${e.badge === 'badge-eval' ? ' style="background:#ede9fe;color:#6d28d9;"' : ''}>${esc(e.type)}</span></td>
+        <td><span class="badge ${e.badge}" style="white-space:nowrap;${e.badge === 'badge-eval' ? 'background:#ede9fe;color:#6d28d9;' : ''}">${esc(e.type)}</span></td>
         <td>${esc(e.user)}${e.role ? `<div style="color:var(--muted);font-size:0.72rem;">${esc(e.role)}</div>` : ''}</td>
         <td>${esc(e.detail)}</td>
       </tr>`).join('')
@@ -265,7 +269,7 @@
   const isToday = e => e.time && e.time.toDateString() === new Date().toDateString();
   const EVENT_COLS = ['Date & Time', 'Severity', 'Event Type', 'User / Source', 'Role', 'Details'];
   const sevBadge = sev => `<span class="badge" style="white-space:nowrap;background:${SEV[sev].bg};color:${SEV[sev].color};">${sev === 'Critical' ? '&#9888; ' : ''}${sev}</span>`;
-  const typeBadge = e => `<span class="badge ${e.badge}"${e.badge === 'badge-eval' ? ' style="background:#ede9fe;color:#6d28d9;"' : ''}>${esc(e.type)}</span>`;
+  const typeBadge = e => `<span class="badge ${e.badge}" style="white-space:nowrap;${e.badge === 'badge-eval' ? 'background:#ede9fe;color:#6d28d9;' : ''}">${esc(e.type)}</span>`;
   const eventRow = e => ({
     search: [fmt(e.time), e.sev, e.type, e.user, e.role, e.detail].join(' ').toLowerCase(),
     cells: [`<span style="white-space:nowrap;">${esc(fmt(e.time))}</span>`, sevBadge(e.sev), typeBadge(e),
@@ -326,7 +330,7 @@
       + '</div>'
       + (cfg.note ? '<p style="font-size:0.8rem;color:var(--muted);margin:-6px 0 12px;">' + esc(cfg.note) + '</p>' : '')
       + '<div class="card"><div class="table-wrap"><table class="data-table"><thead><tr>'
-        + cfg.columns.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr></thead><tbody id="monListBody">'
+        + cfg.columns.map(c => '<th style="white-space:nowrap;">' + esc(c) + '</th>').join('') + '</tr></thead><tbody id="monListBody">'
         + (cfg.rows.length ? cfg.rows.map(r =>
             '<tr data-s="' + esc(r.search) + '"' + (r.onclick ? ' onclick="' + r.onclick + '" style="cursor:pointer;"' : '') + '>'
             + r.cells.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('') : empty)

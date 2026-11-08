@@ -330,7 +330,8 @@ async function submitSef() {
 
   try {
     await db.collection('evaluations').doc(rec.id).set(rec);
-    logActivity('Evaluation Submitted', `Supervisor evaluation of ${fac.name || teacherId} (${_sefTerm.year}, ${_sefTerm.sem})`, rec.id);
+    // Anonymity: log only the term - never the faculty member being rated.
+    logActivity('Evaluation Submitted', `(${_sefTerm.year}, ${_sefTerm.sem})`, rec.id);
     mySef = mySef.filter(e => e.id !== rec.id);
     mySef.push(rec);
 
@@ -812,7 +813,8 @@ async function submitEvaluation() {
 
   try {
     await db.collection('evaluations').doc(evalRecord.id).set(evalRecord);
-    logActivity('Evaluation Submitted', `${subObj.code}: ${subObj.name} (${_term.year}, ${_term.sem})`, evalRecord.id);
+    // Anonymity: log only the term - never the subject or teacher being rated.
+    logActivity('Evaluation Submitted', `(${_term.year}, ${_term.sem})`, evalRecord.id);
     myEvals.push(evalRecord);
 
     document.getElementById('resultScore').textContent   = finalScore;
