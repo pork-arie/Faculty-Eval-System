@@ -27,7 +27,17 @@
   }
 
   // Prefer serverTime (set by Firestore, cannot be faked) over the browser's clock.
-  const timeOf = d => (d.serverTime && typeof d.serverTime.toDate === 'function') ? d.serverTime.toDate() : parseTime(d.timestamp);
+  // Firestore timestamps arrive as Timestamp objects (live) or {seconds}
+  // (cached in localStorage); some apps store milliseconds.
+  function anyTime(v) {
+    if (v == null || v === '') return null;
+    if (typeof v.toDate === 'function') return v.toDate();
+    if (typeof v === 'object' && typeof v.seconds === 'number') return new Date(v.seconds * 1000);
+    if (typeof v === 'object' && typeof v._seconds === 'number') return new Date(v._seconds * 1000);
+    if (typeof v === 'number') return new Date(v < 1e12 ? v * 1000 : v);
+    return parseTime(v);
+  }
+  const timeOf = d => anyTime(d.serverTime) || anyTime(d.timestamp);
 
   function deviceOf(ua) {
     ua = String(ua || '');
@@ -50,7 +60,43 @@
       user: l.username || '(blank)', role: l.loginType || '',
       detail: (l.success ? 'Signed in' : 'Sign-in attempt rejected') + ' · ' + deviceOf(l.userAgent)
     }));
-    live.activityLogs.forEach(a => ev.push({
+    // Evaluation Submitted comes from the evaluations themselves, so every
+    // app that saves an evaluation (web portal, student webapp, Android app)
+    // shows up - nothing extra has to be logged. The dashboard already keeps
+    // the evaluations current in this browser.
+    const evals = (typeof getData === 'function') ? getData('evaluations', [], { includeHidden: true }) : [];
+    const seen = new Set();
+    if (Array.isArray(evals) && evals.length) {
+      const byId = key => {
+        const m = {};
+        const list = getData(key, []);
+        (Array.isArray(list) ? list : []).forEach(r => { if (r && r.id) m[r.id] = r; });
+        return m;
+      };
+      const students = byId('students'), teachers = byId('teachers'), subjects = byId('subjects');
+      evals.forEach(r => {
+        if (!r) return;
+        const t = timeOf({ serverTime: r.serverTime, timestamp: r.timestamp || r.submittedAt || r.createdAt || r.date });
+        if (!t) return;
+        seen.add(r.id);
+        const sup = r.evaluatorType === 'supervisor';
+        const stu = students[r.studentId] || {};
+        const sub = subjects[r.subjectId] || {};
+        const fac = teachers[r.teacherId] || {};
+        const who = sup ? (r.supervisorTid || (teachers[r.supervisorId] || {}).tid || r.supervisorId || '')
+                        : (stu.sid || r.studentId || '');
+        const what = sup ? 'Supervisor evaluation of ' + (fac.name || r.teacherId || 'faculty')
+                         : [sub.code && sub.name ? sub.code + ': ' + sub.name : (sub.code || r.subjectId || 'Subject'),
+                            fac.name ? 'for ' + fac.name : ''].filter(Boolean).join(' ');
+        ev.push({
+          time: t, type: 'Evaluation Submitted', badge: 'badge-eval', kind: 'act',
+          user: who, role: sup ? 'supervisor' : 'student',
+          detail: what + (r.schoolYear ? ' (' + r.schoolYear + (r.semester ? ', ' + r.semester : '') + ')' : '')
+        });
+      });
+    }
+    // Older activity-log entries for the same evaluations would be duplicates.
+    live.activityLogs.filter(a => !(a.type === 'Evaluation Submitted' && seen.has(a.evalId))).forEach(a => ev.push({
       time: timeOf(a),
       type: a.type || 'Activity', badge: 'badge-eval', kind: 'act',
       user: a.userId || a.uid || '', role: a.role || '', detail: a.detail || ''

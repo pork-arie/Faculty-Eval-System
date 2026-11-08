@@ -441,7 +441,7 @@ function _rerenderCurrentPage() {
     dashboard:  'renderDashboard',  schoolYear: 'renderSchoolYear', students: 'renderStudents',
     teachers:   'renderTeachers',   subjects:   'renderSubjects',   reports:  'renderReports',
     evalControl:'renderEvalControl',auditLog:   'renderAuditLog',   feedback: 'renderFeedbackPage',
-    monitor: 'renderMonitor', monitorList: 'renderMonitorList',
+    monitor: 'renderMonitor', monitorList: 'renderMonitor',
     supervisor: 'renderSupervisorList', rptViewAll: 'renderRptViewAll',
     dept: 'renderDeptPage', deptManage: 'renderDeptManagePage'
   }[page];
@@ -461,7 +461,7 @@ const LIVE_COLLECTIONS = {
   // Students/teachers also redraw evaluation pages (countedEvaluations).
   students:    { redraw: ['students', 'dashboard', 'supervisor', 'dept', 'evalControl', 'feedback'] },
   teachers:    { redraw: ['teachers', 'dashboard', 'supervisor', 'dept', 'evalControl', 'feedback'] },
-  evaluations: { redraw: ['dashboard', 'evalControl', 'dept', 'supervisor', 'feedback'],
+  evaluations: { redraw: ['dashboard', 'evalControl', 'dept', 'supervisor', 'feedback', 'monitor', 'monitorList'],
                  notify: ['reports', 'rptViewAll'] }
 };
 
