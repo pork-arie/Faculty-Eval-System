@@ -10,7 +10,7 @@
   const LIMIT = 300;
   const live = { loginLogs: [], activityLogs: [] };
   let unsubs = [];
-  let alertsOpen = false;   // suspicious-activity list starts collapsed
+  let lastAlerts = [];      // for the suspicious-activity window
 
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -154,24 +154,20 @@
     document.getElementById('monCrit').textContent =
       events.filter(e => e.time && e.time.toDateString() === today && e.sev === 'Critical').length;
     drawChart(events);
-    // Suspicious-activity alert: a collapsed button; click to see the list.
-    const box = document.getElementById('monAlerts');
-    box.style.display = alerts.length ? 'block' : 'none';
-    box.style.padding = '0';
+    // Suspicious-activity alert: a small pill; click it to open the list in its own window.
     alerts.sort((a, b) => b.last - a.last);
+    lastAlerts = alerts;
+    const box = document.getElementById('monAlerts');
+    box.style.cssText = alerts.length ? 'display:block;margin-bottom:16px;' : 'display:none;';
     box.innerHTML = !alerts.length ? '' : `
-      <button type="button" onclick="toggleMonitorAlerts()" aria-expanded="${alertsOpen}"
-        style="all:unset;box-sizing:border-box;width:100%;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;">
-        <span><strong>&#9888; Suspicious activity:</strong> ${alerts.length} ID${alerts.length === 1 ? '' : 's'} with repeated failed logins</span>
-        <span style="font-weight:700;white-space:nowrap;">${alertsOpen ? 'Hide &#9650;' : 'Show &#9660;'}</span>
-      </button>
-      ${alertsOpen ? `<div style="padding:0 16px 12px;border-top:1px solid rgba(220,38,38,0.2);">` +
-        alerts.map(a => `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid rgba(220,38,38,0.12);">
-            <span>ID <strong>${esc(a.user)}</strong> — ${a.count} failed attempts (3+ within 10 minutes), latest ${esc(fmt(a.last))}</span>
-            <button type="button" class="btn btn-sm" onclick="showMonitorUser(${esc(JSON.stringify(a.user))})"
-              style="border:1px solid currentColor;background:transparent;color:inherit;border-radius:6px;padding:3px 10px;font-size:0.75rem;cursor:pointer;">View attempts</button>
-          </div>`).join('') + `</div>` : ''}`;
+      <button type="button" onclick="openMonitorAlerts()" title="Show suspicious activity"
+        style="display:inline-flex;align-items:center;gap:8px;border:1px solid var(--danger);background:var(--danger-light);color:var(--danger);
+               border-radius:999px;padding:7px 14px;font:inherit;font-size:0.8rem;font-weight:700;cursor:pointer;">
+        &#9888; ${alerts.length} suspicious ID${alerts.length === 1 ? '' : 's'}
+        <span style="font-weight:600;opacity:0.85;">· repeated failed logins</span>
+        <span style="background:var(--danger);color:#fff;border-radius:999px;padding:1px 9px;font-size:0.72rem;">View</span>
+      </button>`;
+    if (document.getElementById('monAlertsModal').classList.contains('open')) drawAlertsModal();
 
     const f = document.getElementById('monFilter').value;
     const sv = document.getElementById('monSev').value;
@@ -210,9 +206,35 @@
     if (!unsubs.length) startListening();
   };
   window.drawMonitor = draw;
-  window.toggleMonitorAlerts = function () { alertsOpen = !alertsOpen; draw(); };
+  // Suspicious-activity window.
+  function drawAlertsModal() {
+    const body = document.getElementById('monAlertsBody');
+    const q = (document.getElementById('monAlertsSearch').value || '').trim().toLowerCase();
+    const list = lastAlerts.filter(a => !q || a.user.toLowerCase().includes(q));
+    document.getElementById('monAlertsCount').textContent =
+      lastAlerts.length + ' ID' + (lastAlerts.length === 1 ? '' : 's') + ' with 3+ failed logins within 10 minutes';
+    body.innerHTML = list.length ? `
+      <table class="data-table">
+        <thead><tr><th>ID / Account</th><th>Failed attempts</th><th>Latest attempt</th><th></th></tr></thead>
+        <tbody>${list.map(a => `
+          <tr>
+            <td><strong>${esc(a.user)}</strong></td>
+            <td><span class="badge badge-danger">${a.count}</span></td>
+            <td style="white-space:nowrap;">${esc(fmt(a.last))}</td>
+            <td style="text-align:right;"><button type="button" class="btn btn-ghost btn-sm" onclick="showMonitorUser(${esc(JSON.stringify(a.user))})">View attempts</button></td>
+          </tr>`).join('')}</tbody>
+      </table>`
+      : '<p style="text-align:center;color:var(--muted);padding:20px;">No matching IDs.</p>';
+  }
+  window.drawMonitorAlerts = drawAlertsModal;
+  window.openMonitorAlerts = function () {
+    document.getElementById('monAlertsSearch').value = '';
+    drawAlertsModal();
+    openModal('monAlertsModal');
+  };
   // Filter the table to one ID's failed logins and scroll to it.
   window.showMonitorUser = function (user) {
+    closeModal('monAlertsModal');
     document.getElementById('monSearch').value = user;
     document.getElementById('monFilter').value = 'Login Failed';
     document.getElementById('monSev').value = '';

@@ -992,7 +992,7 @@ window.addEventListener('load', async () => {
         <div class="stat-card"><div class="value" id="monEval">0</div><div class="label">Evaluations submitted today</div></div>
         <div class="stat-card"><div class="value" id="monCrit" style="color:var(--danger);">0</div><div class="label">Critical events today</div></div>
       </div>
-      <div id="monAlerts" style="display:none;background:var(--danger-light);color:var(--danger);border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:0.82rem;line-height:1.6;"></div>
+      <div id="monAlerts" style="display:none;"></div>
       <div class="card" style="margin-bottom:16px;"><div class="card-body">
         <div style="font-weight:700;font-size:0.9rem;margin-bottom:10px;">Activity today (events per hour)</div>
         <div id="monChart"></div>
@@ -1176,6 +1176,26 @@ window.addEventListener('load', async () => {
     </div>
 
     <!-- EDIT DEPT MODAL -->
+    <!-- System Monitor: suspicious activity window -->
+    <div class="modal-overlay" id="monAlertsModal">
+      <div class="modal modal-lg" style="max-width:760px;">
+        <div class="modal-header">
+          <div>
+            <h3 style="color:var(--danger);">&#9888; Suspicious activity</h3>
+            <div id="monAlertsCount" style="font-size:0.78rem;color:var(--muted);margin-top:2px;"></div>
+          </div>
+          <button class="modal-close" onclick="closeModal('monAlertsModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <div class="search-box" style="margin-bottom:12px;">
+            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="monAlertsSearch" placeholder="Search ID..." oninput="drawMonitorAlerts()"/>
+          </div>
+          <div class="table-wrap" id="monAlertsBody"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="editDeptModal">
       <div class="modal" style="max-width:520px;">
         <div class="modal-header">
