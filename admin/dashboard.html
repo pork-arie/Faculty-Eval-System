@@ -441,6 +441,7 @@ function _rerenderCurrentPage() {
     dashboard:  'renderDashboard',  schoolYear: 'renderSchoolYear', students: 'renderStudents',
     teachers:   'renderTeachers',   subjects:   'renderSubjects',   reports:  'renderReports',
     evalControl:'renderEvalControl',auditLog:   'renderAuditLog',   feedback: 'renderFeedbackPage',
+    monitor: 'renderMonitor',
     supervisor: 'renderSupervisorList', rptViewAll: 'renderRptViewAll',
     dept: 'renderDeptPage', deptManage: 'renderDeptManagePage'
   }[page];
@@ -637,6 +638,9 @@ window.addEventListener('load', async () => {
 
       <div class="nav-item" onclick="showPage('auditLog')">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Audit Log
+      </div>
+      <div class="nav-item" onclick="showPage('monitor')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>System Monitor
       </div>
       
       
@@ -976,6 +980,49 @@ window.addEventListener('load', async () => {
           <input type="text" placeholder="Search audit logs..." oninput="renderAuditLog(this.value)"/>
         </div>
         <div id="auditLogList"></div>
+      </div></div>
+    </div>
+
+    <!-- SYSTEM MONITOR (IT401 System Monitoring Activity) -->
+    <div class="page" id="page-monitor">
+      <div class="page-header"><div class="page-title"><h1>System Monitor</h1><p>Logins, failed logins, evaluations and admin actions &middot; updates live</p></div></div>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="value" id="monOk">0</div><div class="label">Successful logins today</div></div>
+        <div class="stat-card"><div class="value" id="monBad">0</div><div class="label">Failed logins today</div></div>
+        <div class="stat-card"><div class="value" id="monEval">0</div><div class="label">Evaluations submitted today</div></div>
+        <div class="stat-card"><div class="value" id="monCrit" style="color:var(--danger);">0</div><div class="label">Critical events today</div></div>
+      </div>
+      <div id="monAlerts" style="display:none;background:var(--danger-light);color:var(--danger);border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:0.82rem;line-height:1.6;"></div>
+      <div class="card" style="margin-bottom:16px;"><div class="card-body">
+        <div style="font-weight:700;font-size:0.9rem;margin-bottom:10px;">Activity today (events per hour)</div>
+        <div id="monChart"></div>
+      </div></div>
+      <div class="card"><div class="card-body">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+          <div class="search-box" style="flex:1 1 240px;margin:0;">
+            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="monSearch" placeholder="Search user, event or details..." oninput="drawMonitor()"/>
+          </div>
+          <select class="form-control" id="monFilter" onchange="drawMonitor()" style="flex:0 1 220px;width:auto;">
+            <option value="">All events</option>
+            <option value="Login Success">Login Success</option>
+            <option value="Login Failed">Login Failed</option>
+            <option value="Evaluation Submitted">Evaluation Submitted</option>
+            <option value="admin">Admin Actions</option>
+          </select>
+          <select class="form-control" id="monSev" onchange="drawMonitor()" style="flex:0 1 180px;width:auto;">
+            <option value="">All severities</option>
+            <option value="Info">Info</option>
+            <option value="Warning">Warning</option>
+            <option value="Critical">Critical</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Date &amp; Time</th><th>Severity</th><th>Event Type</th><th>User / Source</th><th>Details</th></tr></thead>
+            <tbody id="monRows"></tbody>
+          </table>
+        </div>
       </div></div>
     </div>
 
@@ -1654,6 +1701,7 @@ window.addEventListener('load', async () => {
     <script src="js/modules/adminEval.js"></script>
     <script src="js/modules/adminfeatures.js"></script>
     <script src="js/modules/adminQuestions.js"></script>
+    <script src="js/modules/adminMonitor.js"></script>
     
     <script src="js/core/admin-router.js"></script>
 

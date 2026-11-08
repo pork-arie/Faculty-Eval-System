@@ -152,7 +152,8 @@ async function logLogin(username, success, loginType) {
   try {
     await db.collection('loginLogs').add({
       username: username, success: success, timestamp: new Date().toISOString(),
-      userAgent: navigator.userAgent, loginType: loginType
+      userAgent: String(navigator.userAgent).slice(0, 500), loginType: loginType,
+      serverTime: firebase.firestore.FieldValue.serverTimestamp()
     });
   } catch (e) { /* the log is best-effort; never block a login on it */ }
 }

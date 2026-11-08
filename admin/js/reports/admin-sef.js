@@ -107,7 +107,8 @@ function renderAuditLog(search = '') {
     .filter(l => {
       if (!q) return true;
       return String(l.action || '').toLowerCase().includes(q)
-          || String(l.detail || '').toLowerCase().includes(q);
+          || String(l.detail || '').toLowerCase().includes(q)
+          || String(l.by || '').toLowerCase().includes(q);
     })
     .sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
 
@@ -126,6 +127,7 @@ function renderAuditLog(search = '') {
           <span class="audit-time">${escapeHtml(l.timestamp || '')}</span>
         </div>
         <div style="font-size:0.75rem;color:var(--muted);margin-top:4px;">${escapeHtml(l.detail || '')}</div>
+        ${l.by ? `<div style="font-size:0.7rem;color:var(--muted);margin-top:2px;">By ${escapeHtml(l.by)}</div>` : ''}
       </div>
     </div>
   `).join('');

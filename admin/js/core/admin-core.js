@@ -367,6 +367,7 @@ window.addAudit = function(action, detail) {
         id: 'audit' + Date.now(),
         action: action,
         detail: detail,
+        by: (window.fbAuth && fbAuth.currentUser && (fbAuth.currentUser.email || fbAuth.currentUser.uid)) || '',
         timestamp: new Date().toISOString().slice(0, 19).replace('T', ' ')
     });
     while (log.length > 500) log.pop();

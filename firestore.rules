@@ -123,20 +123,65 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Login trail. Failed logins come from people who are NOT signed in yet,
+    // so create must stay open - but every entry is validated:
+    //  - only the expected fields, with types and size limits (no junk/flooding
+    //    with huge documents);
+    //  - serverTime must be the server's clock (request.time), so the time of
+    //    an entry cannot be faked;
+    //  - a SUCCESSFUL login can only be written by that signed-in user about
+    //    themselves, so nobody can forge "X logged in".
+    function validLoginLog(d) {
+      return d.keys().hasOnly(['username', 'success', 'timestamp', 'userAgent', 'loginType', 'serverTime'])
+        && d.username is string && d.username.size() > 0 && d.username.size() <= 100
+        && d.success is bool
+        && d.timestamp is string && d.timestamp.size() <= 40
+        && d.get('userAgent', '') is string && d.get('userAgent', '').size() <= 500
+        && d.get('loginType', '') is string && d.get('loginType', '').size() <= 30
+        && d.serverTime == request.time;
+    }
+    function isOwnLogin(d) {
+      return signedIn()
+        && request.auth.token.email is string
+        && (d.username.lower() == signedInId()
+            || d.username.lower() == request.auth.token.email.lower());
+    }
     match /loginLogs/{doc} {
       allow read:   if isAdmin();
-      allow create: if true;
+      allow create: if validLoginLog(request.resource.data)
+                    && (request.resource.data.success == false
+                        || isOwnLogin(request.resource.data));
       allow update, delete: if false;
     }
 
     // System monitoring: important user actions (e.g. Evaluation Submitted).
     // Anyone signed in may append an entry about themselves; only admins read.
+    // An "Evaluation Submitted" entry is only accepted if that evaluation
+    // really exists and was submitted by the same signed-in user, so the
+    // entry cannot be faked. serverTime must be the server's clock.
+    function realEvaluationBy(evalId, uid) {
+      return exists(/databases/$(database)/documents/evaluations/$(evalId))
+        && get(/databases/$(database)/documents/evaluations/$(evalId)).data.get('evaluatorUid', '') == uid;
+    }
     match /activityLogs/{doc} {
       allow read:   if isAdmin();
       allow create: if signedIn()
+                    && request.resource.data.keys().hasOnly(
+                         ['type', 'detail', 'userId', 'role', 'uid', 'userAgent', 'timestamp', 'evalId', 'serverTime'])
                     && request.resource.data.uid == request.auth.uid
-                    && request.resource.data.type is string
-                    && request.resource.data.timestamp is string;
+                    && request.resource.data.type == 'Evaluation Submitted'
+                    && request.resource.data.timestamp is string
+                    && request.resource.data.serverTime == request.time
+                    && request.resource.data.get('detail', '') is string
+                    && request.resource.data.get('detail', '').size() <= 300
+                    && request.resource.data.get('userId', '') is string
+                    && request.resource.data.get('userId', '').size() <= 60
+                    && request.resource.data.get('role', '') is string
+                    && request.resource.data.get('role', '').size() <= 20
+                    && request.resource.data.get('userAgent', '') is string
+                    && request.resource.data.get('userAgent', '').size() <= 500
+                    && request.resource.data.evalId is string
+                    && realEvaluationBy(request.resource.data.evalId, request.auth.uid);
       allow update, delete: if false;
     }
 

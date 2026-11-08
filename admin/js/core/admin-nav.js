@@ -24,6 +24,7 @@ function showPage(page) {
     evalControl: renderEvalControl, 
     reports: renderReports, 
     auditLog: renderAuditLog,
+    monitor: window.renderMonitor,
     supervisor: renderSupervisorList,
     rptViewAll: renderRptViewAll
   };

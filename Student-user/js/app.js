@@ -266,7 +266,7 @@ async function startSef(teacherId) {
 // SEF submit. Doc id includes the term so next semester does not overwrite.
 // System monitoring: record important actions in activityLogs (append-only,
 // read by admins on /monitor/). Best-effort - never blocks the user's action.
-async function logActivity(type, detail) {
+async function logActivity(type, detail, evalId) {
   try {
     const u = fbAuth.currentUser;
     if (!u) return;
@@ -276,8 +276,10 @@ async function logActivity(type, detail) {
       userId:    (currentStudent && (currentStudent.sid || currentStudent.tid)) || '',
       role:      (currentStudent && currentStudent.facultyType === 'supervisor') ? 'supervisor' : 'student',
       uid:       u.uid,
-      userAgent: navigator.userAgent,
-      timestamp: new Date().toISOString()
+      userAgent: String(navigator.userAgent).slice(0, 500),
+      evalId:    evalId,
+      timestamp: new Date().toISOString(),
+      serverTime: firebase.firestore.FieldValue.serverTimestamp()
     });
   } catch (e) { /* monitoring is best-effort */ }
 }
@@ -328,7 +330,7 @@ async function submitSef() {
 
   try {
     await db.collection('evaluations').doc(rec.id).set(rec);
-    logActivity('Evaluation Submitted', `Supervisor evaluation of ${fac.name || teacherId} (${_sefTerm.year}, ${_sefTerm.sem})`);
+    logActivity('Evaluation Submitted', `Supervisor evaluation of ${fac.name || teacherId} (${_sefTerm.year}, ${_sefTerm.sem})`, rec.id);
     mySef = mySef.filter(e => e.id !== rec.id);
     mySef.push(rec);
 
@@ -810,7 +812,7 @@ async function submitEvaluation() {
 
   try {
     await db.collection('evaluations').doc(evalRecord.id).set(evalRecord);
-    logActivity('Evaluation Submitted', `${subObj.code}: ${subObj.name} (${_term.year}, ${_term.sem})`);
+    logActivity('Evaluation Submitted', `${subObj.code}: ${subObj.name} (${_term.year}, ${_term.sem})`, evalRecord.id);
     myEvals.push(evalRecord);
 
     document.getElementById('resultScore').textContent   = finalScore;

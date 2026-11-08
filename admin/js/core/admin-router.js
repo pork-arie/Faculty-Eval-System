@@ -4,7 +4,7 @@
 (function () {
   const KNOWN = ['dashboard', 'schoolYear', 'students', 'teachers', 'subjects',
                  'evalControl', 'reports', 'auditLog', 'supervisor', 'feedback',
-                 'dept', 'deptManage'];
+                 'dept', 'deptManage', 'monitor'];
 
   let applyingFromHash = false;   // stops showPage -> hashchange -> showPage loops
 

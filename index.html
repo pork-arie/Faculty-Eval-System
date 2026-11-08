@@ -125,8 +125,9 @@ async function logLoginToFirebase(username, success) {
     await db.collection('loginLogs').add({
       username, success,
       timestamp: new Date().toISOString(),
-      userAgent: navigator.userAgent,
-      loginType: 'admin'
+      userAgent: String(navigator.userAgent).slice(0, 500),
+      loginType: 'admin',
+      serverTime: firebase.firestore.FieldValue.serverTimestamp()
     });
   } catch (e) { console.warn('Login log error:', e.message); }
 }
