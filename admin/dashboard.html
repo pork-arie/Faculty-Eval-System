@@ -441,7 +441,7 @@ function _rerenderCurrentPage() {
     dashboard:  'renderDashboard',  schoolYear: 'renderSchoolYear', students: 'renderStudents',
     teachers:   'renderTeachers',   subjects:   'renderSubjects',   reports:  'renderReports',
     evalControl:'renderEvalControl',auditLog:   'renderAuditLog',   feedback: 'renderFeedbackPage',
-    monitor: 'renderMonitor',
+    monitor: 'renderMonitor', monitorList: 'renderMonitorList',
     supervisor: 'renderSupervisorList', rptViewAll: 'renderRptViewAll',
     dept: 'renderDeptPage', deptManage: 'renderDeptManagePage'
   }[page];
@@ -987,10 +987,10 @@ window.addEventListener('load', async () => {
     <div class="page" id="page-monitor">
       <div class="page-header"><div class="page-title"><h1>System Monitor</h1><p>Logins, failed logins, evaluations and admin actions &middot; updates live</p></div></div>
       <div class="stats-grid">
-        <div class="stat-card"><div class="value" id="monOk">0</div><div class="label">Successful logins today</div></div>
-        <div class="stat-card"><div class="value" id="monBad">0</div><div class="label">Failed logins today</div></div>
-        <div class="stat-card"><div class="value" id="monEval">0</div><div class="label">Evaluations submitted today</div></div>
-        <div class="stat-card"><div class="value" id="monCrit" style="color:var(--danger);">0</div><div class="label">Critical events today</div></div>
+        <div class="stat-card stat-card-clickable" role="button" tabindex="0" title="View today's successful logins" onclick="openMonitorList('success')" onkeydown="if(event.key==='Enter')openMonitorList('success')"><div class="value" id="monOk">0</div><div class="label">Successful logins today</div></div>
+        <div class="stat-card stat-card-clickable" role="button" tabindex="0" title="View today's failed logins" onclick="openMonitorList('failed')" onkeydown="if(event.key==='Enter')openMonitorList('failed')"><div class="value" id="monBad">0</div><div class="label">Failed logins today</div></div>
+        <div class="stat-card stat-card-clickable" role="button" tabindex="0" title="View today's evaluations submitted" onclick="openMonitorList('eval')" onkeydown="if(event.key==='Enter')openMonitorList('eval')"><div class="value" id="monEval">0</div><div class="label">Evaluations submitted today</div></div>
+        <div class="stat-card stat-card-clickable" role="button" tabindex="0" title="View today's critical events" onclick="openMonitorList('critical')" onkeydown="if(event.key==='Enter')openMonitorList('critical')"><div class="value" id="monCrit" style="color:var(--danger);">0</div><div class="label">Critical events today</div></div>
       </div>
       <div id="monAlerts" style="display:none;"></div>
       <div class="card" style="margin-bottom:16px;"><div class="card-body">
@@ -1176,26 +1176,6 @@ window.addEventListener('load', async () => {
     </div>
 
     <!-- EDIT DEPT MODAL -->
-    <!-- System Monitor: suspicious activity window -->
-    <div class="modal-overlay" id="monAlertsModal">
-      <div class="modal modal-lg" style="max-width:760px;">
-        <div class="modal-header">
-          <div>
-            <h3 style="color:var(--danger);">&#9888; Suspicious activity</h3>
-            <div id="monAlertsCount" style="font-size:0.78rem;color:var(--muted);margin-top:2px;"></div>
-          </div>
-          <button class="modal-close" onclick="closeModal('monAlertsModal')"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-        </div>
-        <div class="modal-body">
-          <div class="search-box" style="margin-bottom:12px;">
-            <svg class="search-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" id="monAlertsSearch" placeholder="Search ID..." oninput="drawMonitorAlerts()"/>
-          </div>
-          <div class="table-wrap" id="monAlertsBody"></div>
-        </div>
-      </div>
-    </div>
-
     <div class="modal-overlay" id="editDeptModal">
       <div class="modal" style="max-width:520px;">
         <div class="modal-header">
