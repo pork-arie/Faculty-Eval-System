@@ -56,7 +56,12 @@
 
   function allEvents() {
     const ev = [];
-    live.loginLogs.forEach(l => ev.push({
+    live.loginLogs.forEach(l => ev.push(l.loginType === 'lockout' ? {
+      time: timeOf(l),
+      type: 'Account Locked', badge: 'badge-danger', kind: 'bad',
+      user: l.username || '(blank)', role: 'lockout',
+      detail: 'Locked for 15 minutes after 5 failed attempts · ' + deviceOf(l.userAgent)
+    } : {
       time: timeOf(l),
       type: l.success ? 'Login Success' : 'Login Failed',
       badge: l.success ? 'badge-success' : 'badge-danger', kind: l.success ? 'ok' : 'bad',
@@ -137,6 +142,7 @@
     Critical: { color: '#b91c1c', bg: '#fee2e2', rank: 3 }
   };
   function severityOf(e, flaggedUsers) {
+    if (e.type === 'Account Locked') return 'Critical';
     if (e.type === 'Login Failed') return flaggedUsers.has(e.user) ? 'Critical' : 'Warning';
     if (e.admin) {
       if (/delete|purge|remove/i.test(e.type)) return 'Critical';

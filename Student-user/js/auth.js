@@ -147,14 +147,72 @@ async function reclaimMyEvaluations(rosterDocId) {
   }
 }
 
+// ============================================================
+// LOGIN LOCKOUT (rate limiting)
+// 5 failed attempts for the same ID within 15 minutes locks that ID on this
+// device for 15 minutes. The lock is checked before anything is sent to
+// Firebase. It is kept in this browser (localStorage), so it slows down
+// password guessing from one device; server-side enforcement would need
+// Cloud Functions.
+// ============================================================
+const LOCK_MAX_FAILS = 5;
+const LOCK_WINDOW_MS = 15 * 60 * 1000;
+const LOCK_TIME_MS   = 15 * 60 * 1000;
+let _lockNotice = '';
+
+function _lockKey(id) { return 'loginLock:' + String(id || '').trim().toLowerCase(); }
+function _lockRead(id) {
+  try { return JSON.parse(localStorage.getItem(_lockKey(id))) || { fails: [], until: 0 }; }
+  catch (e) { return { fails: [], until: 0 }; }
+}
+function _lockWrite(id, s) { try { localStorage.setItem(_lockKey(id), JSON.stringify(s)); } catch (e) {} }
+
+// Milliseconds until this ID may try again (0 = not locked).
+function loginLockRemaining(id) { return Math.max(0, (_lockRead(id).until || 0) - Date.now()); }
+
+function lockMessage(ms) {
+  const min = Math.max(1, Math.ceil(ms / 60000));
+  return 'Too many failed attempts. This ID is locked for ' + min + ' more minute' + (min === 1 ? '' : 's') + '.';
+}
+
+// Returns true when this failure locks the ID.
+function noteFailedLogin(id) {
+  const now = Date.now();
+  const s = _lockRead(id);
+  s.fails = (s.fails || []).filter(t => now - t < LOCK_WINDOW_MS);
+  s.fails.push(now);
+  if (s.fails.length >= LOCK_MAX_FAILS) {
+    s.until = now + LOCK_TIME_MS;
+    s.fails = [];
+    _lockWrite(id, s);
+    _lockNotice = lockMessage(LOCK_TIME_MS);
+    return true;
+  }
+  _lockWrite(id, s);
+  const left = LOCK_MAX_FAILS - s.fails.length;
+  _lockNotice = left <= 3 ? '(' + left + ' attempt' + (left === 1 ? '' : 's') + ' left before a 15-minute lock.)' : '';
+  return false;
+}
+function clearFailedLogins(id) { try { localStorage.removeItem(_lockKey(id)); } catch (e) {} }
+
 // Append-only login trail. Failures are never fatal.
 async function logLogin(username, success, loginType) {
+  // Count failures toward the lockout; a successful login clears them.
+  let locked = false;
+  if (success) clearFailedLogins(username); else locked = noteFailedLogin(username);
   try {
     await db.collection('loginLogs').add({
       username: username, success: success, timestamp: new Date().toISOString(),
       userAgent: String(navigator.userAgent).slice(0, 500), loginType: loginType,
       serverTime: firebase.firestore.FieldValue.serverTimestamp()
     });
+    if (locked) {
+      await db.collection('loginLogs').add({
+        username: username, success: false, timestamp: new Date().toISOString(),
+        userAgent: String(navigator.userAgent).slice(0, 500), loginType: 'lockout',
+        serverTime: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
   } catch (e) { /* the log is best-effort; never block a login on it */ }
 }
 
@@ -168,6 +226,11 @@ async function doLogin() {
 
   err.style.display = 'none';
   if (!sid || !pass) { err.textContent = 'Please fill in all fields.'; err.style.display = 'block'; return; }
+
+  // Locked out: refuse before contacting Firebase.
+  const lockLeft = loginLockRemaining(sid);
+  if (lockLeft) { err.textContent = lockMessage(lockLeft); err.style.display = 'block'; return; }
+  _lockNotice = '';
 
   btn.disabled = true;
   btn.innerHTML = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Signing in…`;
@@ -219,6 +282,7 @@ async function doLogin() {
 
     const snap = await db.collection('students').where('sid', '==', sid).get();
     if (snap.empty) {
+      await logLogin(sid, false, 'unknown');
       showLoginError('ID not found. If you are a supervisor, ask your admin to open the admin panel once to sync your account, then try again.');
       return;
     }
@@ -273,6 +337,11 @@ function toggleLoginPw() {
 function showLoginError(msg) {
   const err = document.getElementById('loginError');
   const btn = document.getElementById('loginBtn');
+  // A lockout replaces the message; otherwise warn how many tries are left.
+  if (_lockNotice) {
+    msg = /^Too many failed attempts/.test(_lockNotice) ? _lockNotice : msg + ' ' + _lockNotice;
+    _lockNotice = '';
+  }
   err.textContent = msg;
   err.style.display = 'block';
   btn.disabled = false;
